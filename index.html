@@ -3655,7 +3655,7 @@ function buildCascadeHTML() {
     + '<table style="width:100%;border-collapse:collapse;font-size:12px">'
     +   '<thead><tr style="background:var(--brand-blue-dark);color:var(--white)">'
     +     '<th style="text-align:left;padding:6px 8px;font-size:10px;letter-spacing:1px;text-transform:uppercase">Segment</th>'
-    +     '<th ' + th + '>Size</th><th ' + th + '>Length m</th><th ' + th + '>Flow l/s</th>'
+    +     '<th ' + th + '>Size</th><th ' + th + '>Flow Leg m</th><th ' + th + '>Flow l/s</th>'
     +     '<th ' + th + '>T in \u00b0C</th><th ' + th + '>T out \u00b0C</th><th ' + th + '>Drop K</th><th ' + th + '>Loss kW</th>'
     +   '</tr></thead><tbody>' + rows + '</tbody></table>'
     + (function () {
@@ -4155,7 +4155,7 @@ function buildExportRows() {
 
   const colHeaders = [
     'Reference','Mode','Material','Input kW','Input l/s','ΔT (K)',
-    'Straight Length (m)','Fittings %','Equivalent Length (m)','Consumer Load (kPa)',
+    'Flow Length (m)','Return Length (m)','Total Length (m)','Fittings %','Equivalent Length (m)','Consumer Load (kPa)',
     'Mass Flow kg/s','Vol Flow l/s','Vol Flow m³/h','Duty kW',
     'Recommended Size','OD×Wall mm','ID mm','Velocity m/s','Pressure Drop Pa/m','% of Limit',
     'Pipe Loss (kPa)','Total Loss (kPa)','Total Loss (m H₂O)','Total Loss (bar)',
@@ -4167,7 +4167,7 @@ function buildExportRows() {
     const r = calculateCircuit(c);
     const modeLabel = c.mode === 'fromKw' ? 'Size from kW' : 'Size from l/s';
     if (r.error) {
-      return [c.ref, modeLabel, MAT_LABEL[c.material], c.kw, c.lps, c.dT, c.length, c.fittings, '', c.consumerLoad,
+      return [c.ref, modeLabel, MAT_LABEL[c.material], c.kw, c.lps, c.dT, lengthFlow(c), lengthReturn(c), (Math.round(lengthTotal(c)*100)/100), c.fittings, '', c.consumerLoad,
               '','','','', '','','','','','', '','','','', '','','','','','','', r.error];
     }
     const rec = r.recommended;
@@ -4179,7 +4179,9 @@ function buildExportRows() {
       c.mode === 'fromKw' ? c.kw : '',
       c.mode === 'fromFlow' ? c.lps : '',
       c.dT,
-      c.length,
+      lengthFlow(c),
+      lengthReturn(c),
+      (Math.round(lengthTotal(c)*100)/100),
       c.fittings,
       r.effectiveLength.toFixed(2),
       c.consumerLoad,
@@ -4228,7 +4230,7 @@ function buildExportRows() {
   const designKg = filledKg * (1 + upliftPct / 100);
 
   const totalRow = [
-    'TOTAL','','','','','','','','','',
+    'TOTAL','','','','','','','','','','','',
     totalMdot.toFixed(3), totalLps.toFixed(3), totalM3h.toFixed(2), totalKw.toFixed(2),
     '','','','','','',
     '', sumLoss.toFixed(2), '', '',
@@ -4543,7 +4545,7 @@ function exportPDFReport() {
       const estMark = (h.valveEstimated && (nv > 0 || nf > 0)) ? ' *' : '';
       return '<tr><td>'+escHtml(c.ref)+(c.isIndex?' <span class="tag">INDEX</span>':'')+'</td>'
         + '<td class="n">'+r.recommended.nom+'</td><td class="n">'+h.thickness_mm+'</td>'
-        + '<td class="n">'+(parseFloat(c.length)||0)+'</td>'
+        + '<td class="n">'+(Math.round(lengthTotal(c)*100)/100)+'</td>'
         + '<td class="n">'+h.wPerM.toFixed(1)+'</td><td class="n">'+h.pipeW.toFixed(0)+'</td>'
         + '<td class="n">'+nv+'</td><td class="n">'+h.valveW.toFixed(0)+estMark+'</td>'
         + '<td class="n">'+nf+'</td><td class="n">'+h.flangeW.toFixed(0)+'</td>'
@@ -4577,7 +4579,7 @@ function exportPDFReport() {
       + '<p>At the design \u0394T the split is pipework <strong>'+dsn.pipeW.toFixed(0)+' W</strong>, valve jackets <strong>'+dsn.valveW.toFixed(0)+' W</strong> ('+totV+' items) and flange covers <strong>'+dsn.flangeW.toFixed(0)+' W</strong> ('+totF+' items). '
       + 'With no heat input the system contents ('+base.waterKg.toFixed(0)+' kg) fall approximately <strong>'+drop.toFixed(2)+' \u00b0C over '+mins+' minutes</strong>, assuming perfect mixing.</p>'
       + '<h3 style="font-size:11px;color:#0b2a38;margin:14px 0 6px">Circuit heat loss schedule</h3>'
-      + '<table class="rpt"><thead><tr><th>Circuit</th><th class="n">Size</th><th class="n">Insul. mm</th><th class="n">Length m</th>'
+      + '<table class="rpt"><thead><tr><th>Circuit</th><th class="n">Size</th><th class="n">Insul. mm</th><th class="n">Length m<br><span style="font-weight:400;font-size:8px;opacity:.75">flow + return</span></th>'
       + '<th class="n">W/m</th><th class="n">Pipe W</th><th class="n">Valves</th><th class="n">Valve W</th><th class="n">Flanges</th><th class="n">Flange W</th><th class="n">Total W</th></tr></thead><tbody>'
       + (hlRows || '<tr><td colspan="11">No circuits.</td></tr>') + '</tbody></table>'
       + (anyEst ? '<p style="font-size:8.5pt;color:#c28a00">* Valve jacket coefficient extrapolated beyond the DN25\u2013DN150 supplied data \u2014 treat as an estimate.</p>' : '')
@@ -4600,7 +4602,7 @@ function exportPDFReport() {
         + '<p>Water flowing along the index path loses heat, so the delivered temperature falls segment by segment. '
         + 'Each segment is evaluated as T_out = T_amb + (T_in \u2212 T_amb) \u00d7 exp(\u2212UA / (\u1e41\u00b7c\u209a)), which is exact for steady flow with constant ambient. '
         + 'Segments are taken in schedule order from plant to index terminal. The drop is inversely proportional to flow, so it increases at part load.</p>'
-        + '<table class="rpt"><thead><tr><th>Segment</th><th class="n">Size</th><th class="n">Length m</th><th class="n">Flow l/s</th>'
+        + '<table class="rpt"><thead><tr><th>Segment</th><th class="n">Size</th><th class="n">Flow Leg m</th><th class="n">Flow l/s</th>'
         + '<th class="n">T in \u00b0C</th><th class="n">T out \u00b0C</th><th class="n">Drop K</th><th class="n">Loss kW</th></tr></thead><tbody>'
         + cr + '</tbody></table>'
         + '<p>Delivered at the index terminal: <strong>'+cas.Tend.toFixed(2)+' \u00b0C</strong>, a total drop of <strong>'+cas.totalDrop.toFixed(3)+' K</strong> from '+cas.Tstart.toFixed(1)+' \u00b0C at the plant.</p>';
