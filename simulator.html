@@ -1,0 +1,1472 @@
+
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Hydronic Network Simulator &mdash; adi Climate Systems</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink:      #16212b;
+    --ink-2:    #24333f;
+    --paper:    #eef2f5;
+    --white:    #ffffff;
+    --line:     #cfdae1;
+    --line-2:   #b3c3ce;
+    --muted:    #64798a;
+    --flow:     #c0392b;
+    --return:   #2471a3;
+    --live:     #15803d;
+    --shut:     #7c8b99;
+    --warn:     #b45309;
+    --alarm:    #b91c1c;
+    --accent:   #0f766e;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+
+  /* ---------- top bar ---------- */
+  .topbar {
+    background: var(--ink);
+    color: var(--white);
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+    border-bottom: 3px solid var(--accent);
+    position: sticky;
+    top: 0;
+    z-index: 40;
+  }
+  .topbar h1 {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .topbar .sub {
+    font-size: 11px;
+    color: #8fa6b5;
+    font-weight: 400;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .topbar .spacer { flex: 1; }
+
+  button {
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 4px;
+    border: 1px solid var(--line-2);
+    background: var(--white);
+    color: var(--ink);
+    padding: 8px 13px;
+    cursor: pointer;
+    min-height: 38px;
+  }
+  button:hover:not(:disabled) { background: var(--paper); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.primary { background: var(--accent); color: var(--white); border-color: var(--accent); }
+  button.primary:hover { background: #0d635c; }
+  button.ghost { background: transparent; color: #cfe0e8; border-color: #3d5060; }
+  button.ghost:hover { background: #24333f; }
+
+  input, select {
+    font-family: inherit;
+    font-size: 14px;
+    padding: 7px 9px;
+    border: 1px solid var(--line-2);
+    border-radius: 4px;
+    background: var(--white);
+    color: var(--ink);
+    width: 100%;
+    min-height: 38px;
+  }
+  input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  input[type=number] { -moz-appearance: textfield; }
+  input[type=number]::-webkit-outer-spin-button,
+  input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+  .wrap { max-width: 1680px; margin: 0 auto; padding: 18px 20px 60px; }
+
+  .panel {
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    margin-bottom: 16px;
+  }
+  .panel-hd {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .panel-hd h2 {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .panel-hd .note { font-size: 12px; color: var(--muted); font-weight: 400; }
+  .panel-bd { padding: 16px; }
+
+  .grid { display: grid; gap: 12px; }
+  .g2 { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+  .g3 { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+
+  label.fld { display: block; }
+  label.fld > span {
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  label.fld .u { text-transform: none; letter-spacing: 0; font-weight: 400; }
+
+  /* ---------- readout strip ---------- */
+  .readout {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .cell { background: var(--white); padding: 12px 14px; }
+  .cell .k {
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .cell .v {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 21px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 2px 0 1px;
+  }
+  .cell .u { font-size: 10.5px; color: var(--muted); }
+  .cell.hi { background: var(--ink); }
+  .cell.hi .k { color: #8fa6b5; }
+  .cell.hi .v { color: #6ee7b7; }
+  .cell.hi .u { color: #8fa6b5; }
+
+  /* ---------- diagram viewport ---------- */
+  .viewport {
+    background: var(--ink);
+    border-radius: 6px;
+    overflow: auto;
+    padding: 10px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .viewport svg { display: block; }
+
+  /* ---------- consumer list ---------- */
+  .clist { display: flex; flex-direction: column; gap: 8px; }
+  .crow {
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 10px 12px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 10px 12px;
+    align-items: center;
+    background: var(--white);
+  }
+  .crow.off { background: #f7f9fa; border-color: var(--line); }
+  .crow.off .cname { color: var(--shut); text-decoration: line-through; }
+  .cname { font-weight: 600; font-size: 13.5px; }
+  .cmeta { font-size: 11px; color: var(--muted); }
+  .crow .ctrls { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+
+  .sw {
+    position: relative;
+    width: 44px; height: 25px;
+    background: var(--shut);
+    border-radius: 13px;
+    cursor: pointer;
+    border: none;
+    padding: 0;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  .sw::after {
+    content: '';
+    position: absolute;
+    top: 3px; left: 3px;
+    width: 19px; height: 19px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.15s;
+  }
+  .sw[aria-pressed="true"] { background: var(--live); }
+  .sw[aria-pressed="true"]::after { transform: translateX(19px); }
+  .sw:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .tag {
+    display: inline-block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: var(--paper);
+    color: var(--muted);
+    border: 1px solid var(--line);
+  }
+  .tag.ok   { background: #ecfdf3; color: #15803d; border-color: #a7f3d0; }
+  .tag.warn { background: #fffbeb; color: var(--warn); border-color: #fde68a; }
+  .tag.bad  { background: #fef2f2; color: var(--alarm); border-color: #fecaca; }
+
+  table.data { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.data th {
+    text-align: left;
+    padding: 8px 10px;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    background: var(--ink);
+    color: var(--white);
+    white-space: nowrap;
+  }
+  table.data th.n, table.data td.n { text-align: right; }
+  table.data td { padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  table.data td.n { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+  table.data tr.dim td { color: var(--shut); background: #f7f9fa; }
+
+  .msg { padding: 11px 14px; border-radius: 5px; font-size: 13px; line-height: 1.55; margin-bottom: 10px; border-left: 3px solid; }
+  .msg.info { background: #f0fdfa; border-color: var(--accent); }
+  .msg.warn { background: #fffbeb; border-color: var(--warn); }
+  .msg.bad  { background: #fef2f2; border-color: var(--alarm); }
+  .msg strong { font-weight: 600; }
+
+  .empty { text-align: center; padding: 48px 20px; color: var(--muted); }
+  .empty h3 { font-size: 16px; font-weight: 600; color: var(--ink); margin: 0 0 6px; }
+
+  .split { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+  @media (max-width: 1100px) { .split { grid-template-columns: minmax(0, 1fr); } }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 12px 12px 48px; }
+    .topbar { padding: 10px 12px; gap: 10px; }
+    .topbar h1 { font-size: 13.5px; }
+    input, select { font-size: 16px; }
+    .cell .v { font-size: 18px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+
+  @media print {
+    .topbar, .no-print { display: none !important; }
+    .viewport { background: #fff; }
+    .panel { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div>
+    <h1>Hydronic Network Simulator</h1>
+    <div class="sub">adi Climate Systems &middot; two-pipe flow &amp; return</div>
+  </div>
+  <div class="spacer"></div>
+  <button class="ghost" id="btnImport">Import project</button>
+  <button class="ghost" id="btnDemo">Load example</button>
+  <button class="ghost" id="btnPrint">Print</button>
+  <input type="file" id="fileIn" accept=".json,application/json" style="display:none">
+</div>
+
+<div class="wrap">
+
+  <div id="emptyState" class="panel">
+    <div class="empty">
+      <h3>No system loaded</h3>
+      <p>Import a project saved from the Pipework Sizer to build the network, or load the worked example to see how it behaves.</p>
+      <div style="display:flex;gap:10px;justify-content:center;margin-top:16px;flex-wrap:wrap">
+        <button class="primary" id="btnImport2">Import project file</button>
+        <button id="btnDemo2">Load example</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="main" style="display:none">
+
+    <div class="readout" id="readout"></div>
+
+    <div class="split">
+      <div>
+        <div class="panel">
+          <div class="panel-hd">
+            <h2>System diagram</h2>
+            <span class="note">flow and return, not to scale &middot; line weight tracks actual flow</span>
+          </div>
+          <div class="panel-bd" style="padding:8px">
+            <div class="viewport" id="viewport"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-hd">
+            <h2>Branch results</h2>
+            <span class="note">solved at the current valve positions</span>
+          </div>
+          <div class="panel-bd" style="padding:0;overflow-x:auto">
+            <table class="data" id="branchTable"></table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-hd"><h2>Diagnostics</h2></div>
+          <div class="panel-bd" id="diagnostics"></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="panel">
+          <div class="panel-hd">
+            <h2>Pump</h2>
+            <span class="note">generic curve</span>
+          </div>
+          <div class="panel-bd">
+            <div id="pumpChart" style="margin-bottom:12px"></div>
+            <div class="grid g2">
+              <label class="fld"><span>Design flow <span class="u">l/s</span></span>
+                <input type="number" id="pQ" step="0.1" min="0.1"></label>
+              <label class="fld"><span>Design head <span class="u">kPa</span></span>
+                <input type="number" id="pH" step="1" min="1"></label>
+              <label class="fld"><span>Shut-off head <span class="u">% of design</span></span>
+                <input type="number" id="pShut" step="5" min="105" max="200" value="125"></label>
+              <label class="fld"><span>Running pumps</span>
+                <select id="pCount">
+                  <option value="1" selected>1 duty</option>
+                  <option value="2">2 parallel</option>
+                  <option value="3">3 parallel</option>
+                </select></label>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-hd">
+            <h2>Consumers</h2>
+            <span class="note" id="consumerCount"></span>
+          </div>
+          <div class="panel-bd">
+            <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
+              <button id="btnAllOn" style="flex:1">All on</button>
+              <button id="btnAllOff" style="flex:1">All off</button>
+              <button class="primary" id="btnBalance" style="flex:1 1 100%">Calculate balancing</button>
+              <button id="btnClearBal" style="flex:1 1 100%">Clear balancing</button>
+            </div>
+            <div class="clist" id="consumerList"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-hd"><h2>Assumptions</h2></div>
+          <div class="panel-bd">
+            <div class="grid g2">
+              <label class="fld"><span>Valve authority target</span>
+                <input type="number" id="aTarget" step="0.05" min="0.1" max="0.9" value="0.5"></label>
+              <label class="fld"><span>PICV minimum <span class="u">kPa</span></span>
+                <input type="number" id="picvMin" step="5" min="0" value="25"></label>
+              <label class="fld"><span>PICV maximum <span class="u">kPa</span></span>
+                <input type="number" id="picvMax" step="10" min="50" value="400"></label>
+              <label class="fld"><span>Bypass flow <span class="u">% of branch</span></span>
+                <input type="number" id="bypassPct" step="5" min="5" max="100" value="100"></label>
+            </div>
+            <p style="font-size:11.5px;color:var(--muted);line-height:1.6;margin:12px 0 0">
+              Component resistances use standard velocity-head factors (CIBSE&nbsp;C / Crane&nbsp;TP-410) rather than
+              manufacturer data: butterfly&nbsp;0.35, gate&nbsp;0.15, strainer&nbsp;2.5, regulating set&nbsp;3.0,
+              check&nbsp;2.0. Control valves are sized to the authority target above. Replace with selected
+              products before issue.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+/* ==========================================================================
+   HYDRONIC NETWORK SIMULATOR
+   Solves a two-pipe tree network for actual flows and pressures at any set
+   of valve positions, then intersects the system curve with a pump curve.
+
+   The sizer answers "what pipe do I need for this flow".
+   This answers "given these pipes and these valves, what flow do I get".
+   ========================================================================== */
+
+/* ---------- pipe dimension tables (nominal, OD mm, wall mm) ---------- */
+const TABLES = {
+  truboreMetric: [['DN15',18,1.5],['DN20',23,1.5],['DN25',28,1.5],['DN32',35,1.5],['DN40',43,1.5],
+    ['DN50',53,1.5],['DN65',69,2],['DN80',84,2],['DN100',104,2],['DN125',129,2],['DN150',154,2],
+    ['DN200',204,2],['DN250',254,2],['DN300',304,2],['DN350',355,2.5],['DN400',406,3],['DN450',456,3],
+    ['DN500',506,3],['DN600',606,3],['DN700',708,4],['DN800',808,4],['DN900',908,4],['DN1000',1008,4]],
+  trubore: [['DN15',21.3,2],['DN20',26.9,2],['DN25',33.7,2],['DN32',42.4,2],['DN40',48.3,2],
+    ['DN50',60.3,2],['DN65',76.1,2],['DN80',88.9,2],['DN100',114.3,2],['DN125',139.7,2],['DN150',168.3,2],
+    ['DN200',219.1,3],['DN250',273,3],['DN300',323.9,4],['DN350',355.6,4],['DN400',406.4,4],
+    ['DN450',457,3],['DN500',508,4],['DN600',609.6,4],['DN700',711,4],['DN800',813,4]],
+  carbon: [['15',21.3,2.6],['20',26.9,2.6],['25',33.7,3.2],['32',42.4,3.2],['40',48.3,3.2],
+    ['50',60.3,3.6],['65',76.1,3.6],['80',88.9,4.0],['100',114.3,4.5],['125',139.7,5.0],['150',165.1,5.0]],
+  copper: [['15mm',15,0.7],['22mm',22,0.9],['28mm',28,0.9],['35mm',35,1.2],['42mm',42,1.2],
+    ['54mm',54,1.2],['67mm',66.7,1.5],['76mm',76.1,1.5],['108mm',108,1.5]],
+};
+TABLES.truboreMetric316 = TABLES.truboreMetric;
+TABLES.trubore316 = TABLES.trubore;
+TABLES.stainless = TABLES.trubore;
+TABLES.stainless304 = TABLES.trubore;
+TABLES.mlcp = TABLES.copper;
+
+const ROUGH = { truboreMetric: 1.5e-5, truboreMetric316: 1.5e-5, trubore: 1.5e-5, trubore316: 1.5e-5,
+  stainless: 1.5e-5, stainless304: 1.5e-5, carbon: 4.6e-5, copper: 1.5e-6, mlcp: 7e-6 };
+
+/* ---------- fluid ---------- */
+function waterRho(T) { return ((1.051865e-05*T - 5.171329e-03)*T - 6.179237e-03)*T + 1000.068; }
+function waterCp(T)  { return (((1.606849e-09*T - 4.736562e-07)*T + 5.721385e-05)*T - 2.586464e-03)*T + 4.215269; }
+function waterMu(T)  { return 1.78e-3 / (1 + 0.0337*T + 0.000221*T*T); }   // Pa.s, Poiseuille fit
+
+/* ---------- state ---------- */
+let PROJECT = null;      // imported settings
+let NODES = [];          // working circuits
+let SOLUTION = null;
+
+const FLUID = { rho: 977.9, cp: 4.19, mu: 4.0e-4, Tm: 70 };
+
+/* ---------- velocity-head factors for fixed components (CIBSE C / Crane TP-410) ---------- */
+const KFACTOR = { butterfly: 0.35, gate: 0.15, strainer: 2.5, drv: 3.0, check: 2.0, tee: 1.0 };
+
+/* Valve arrangements. `closedR` describes what the branch becomes when the
+   consumer is satisfied and its control valve closes. */
+const ARRANGEMENTS = {
+  twoPort:   { label: '2-port only',            shuts: true,  bypass: false },
+  twoPortBp: { label: '2-port + bypass (DRV)',  shuts: false, bypass: true  },
+  threePort: { label: '3-port diverting',       shuts: false, bypass: true  },
+  picv:      { label: 'PICV',                   shuts: true,  bypass: false },
+};
+
+/* ---------- hydraulics ---------- */
+function frictionFactor(Re, relRough) {
+  if (Re < 2300) return 64 / Math.max(Re, 1);
+  const t = relRough / 3.7 + 5.74 / Math.pow(Re, 0.9);
+  return 0.25 / Math.pow(Math.log10(t), 2);
+}
+
+// Pressure gradient Pa/m and velocity for a flow through a bore
+function pipeHydraulics(lps, id_mm, roughness) {
+  const d = id_mm / 1000;
+  if (d <= 0 || lps <= 0) return { v: 0, paPerM: 0 };
+  const A = Math.PI * d * d / 4;
+  const v = (lps / 1000) / A;
+  const Re = FLUID.rho * v * d / FLUID.mu;
+  const f = frictionFactor(Re, roughness / d);
+  return { v, paPerM: f * (FLUID.rho * v * v) / (2 * d) };
+}
+
+// Select the pipe the sizer would have chosen
+function selectPipe(node) {
+  const tbl = TABLES[node.material] || TABLES.truboreMetric;
+  const rough = ROUGH[node.material] || 1.5e-5;
+  const lim = PROJECT.limitPd, vMax = PROJECT.vMax, vMin = PROJECT.vMin;
+  const lps = node.designLps;
+  let chosen = null;
+  for (const [nom, od, wall] of tbl) {
+    const id = od - 2 * wall;
+    const h = pipeHydraulics(lps, id, rough);
+    if (h.paPerM <= lim && h.v <= vMax) { chosen = { nom, od, wall, id, ...h }; break; }
+  }
+  if (!chosen) {
+    const [nom, od, wall] = tbl[tbl.length - 1];
+    const id = od - 2 * wall;
+    chosen = { nom, od, wall, id, ...pipeHydraulics(lps, id, rough), oversize: true };
+  }
+  // apply any manual step the sizer recorded
+  const step = parseInt(node.sizeOverride) || 0;
+  if (step !== 0) {
+    const i = tbl.findIndex(r => r[0] === chosen.nom);
+    const j = Math.min(tbl.length - 1, Math.max(0, i + step));
+    const [nom, od, wall] = tbl[j];
+    const id = od - 2 * wall;
+    chosen = { nom, od, wall, id, ...pipeHydraulics(lps, id, rough), stepped: step };
+  }
+  chosen.vMinFail = chosen.v < vMin;
+  return chosen;
+}
+
+/* Pressure drop through a node's pipework at an arbitrary flow, kPa.
+   Recomputed properly rather than scaled, so part-load turbulence is right. */
+function pipeDrop(node, lps) {
+  if (lps <= 0) return 0;
+  const rough = ROUGH[node.material] || 1.5e-5;
+  const h = pipeHydraulics(lps, node.pipe.id, rough);
+  const L = node.lengthTotal * (1 + node.fittings / 100);
+  return h.paPerM * L / 1000;
+}
+
+/* Velocity-head loss for a fitted component, kPa */
+function kDrop(k, lps, id_mm) {
+  if (lps <= 0) return 0;
+  const d = id_mm / 1000;
+  const A = Math.PI * d * d / 4;
+  const v = (lps / 1000) / A;
+  return k * FLUID.rho * v * v / 2 / 1000;
+}
+
+/* ---------- build the network from an imported project ---------- */
+function buildNetwork(data) {
+  const s = data.settings || {};
+  const supply = parseFloat(s.fluidTemp) || 80;
+  const ret = parseFloat(s.returnTemp) || 60;
+  FLUID.Tm = (supply + ret) / 2;
+  FLUID.rho = parseFloat(s.rho) || waterRho(FLUID.Tm);
+  FLUID.cp = parseFloat(s.cp) || waterCp(FLUID.Tm);
+  FLUID.mu = waterMu(FLUID.Tm);
+
+  PROJECT = {
+    ref: s.projectRef || 'Untitled',
+    engineer: s.engineer || '',
+    supply, ret,
+    limitPd: parseFloat(s.limitPd) || 300,
+    vMin: parseFloat(s.vMin) || 0.3,
+    vMax: parseFloat(s.vMax) || 3.0,
+  };
+
+  const raw = (data.circuits || []).filter(c => c && c.ref);
+  const byId = {};
+  NODES = raw.map(c => {
+    const lenF = parseFloat(c.length) || 0;
+    const lenR = (c.lengthsPaired === false) ? (parseFloat(c.lengthReturn) || 0) : lenF;
+    const n = {
+      id: c.id,
+      ref: c.ref,
+      type: c.circuitType || 'main',
+      parentId: (c.parentId === undefined) ? null : c.parentId,
+      material: TABLES[c.material] ? c.material : 'truboreMetric',
+      lengthTotal: lenF + lenR,
+      fittings: parseFloat(c.fittings) || 20,
+      dT: Math.abs(parseFloat(c.dT)) || 20,
+      coilKpa: parseFloat(c.consumerLoad) || 0,
+      sizeOverride: c.sizeOverride || 0,
+      mode: c.mode || 'fromFlow',
+      kw: parseFloat(c.kw) || 0,
+      lps: parseFloat(c.lps) || 0,
+      // simulator state
+      open: true,
+      arrangement: 'twoPort',
+      isolation: 'butterfly',
+      strainer: true,
+      children: [],
+    };
+    byId[n.id] = n;
+    return n;
+  });
+
+  NODES.forEach(n => {
+    const p = byId[n.parentId];
+    if (p && p !== n) { n.parent = p; p.children.push(n); }
+    else { n.parent = null; n.parentId = null; }
+  });
+
+  // design duty: consumers carry their own, mains roll up
+  const ownKw = n => {
+    // A distribution main carries what is downstream of it, not a load of its
+    // own — unless nothing IS downstream, in which case it is a terminal
+    // whatever it was labelled. That keeps files without topology usable.
+    const isLeaf = n.children.length === 0;
+    if (!isLeaf && (n.type === 'main' || n.type === 'plant')) return 0;
+    if (n.mode === 'fromKw') return n.kw;
+    if (n.mode === 'fromFlow') return (n.lps / 1000) * FLUID.rho * FLUID.cp * n.dT;
+    return 0;
+  };
+  const rollKw = (n, seen) => {
+    seen = seen || new Set();
+    if (seen.has(n.id)) return 0;
+    seen.add(n.id);
+    return ownKw(n) + n.children.reduce((s, k) => s + rollKw(k, seen), 0);
+  };
+
+  NODES.forEach(n => {
+    n.designKw = rollKw(n);
+    n.ownKw = ownKw(n);
+    n.designLps = n.designKw > 0
+      ? (n.designKw / (FLUID.cp * n.dT)) / FLUID.rho * 1000
+      : (parseFloat(n.lps) || 0.01);
+    if (n.designLps <= 0) n.designLps = 0.01;
+  });
+
+  NODES.forEach(n => { n.pipe = selectPipe(n); });
+
+  // consumers default to a sensible arrangement: PICV where the coil drop is
+  // known, otherwise a plain 2-port
+  NODES.forEach(n => {
+    n.isConsumer = (n.children.length === 0) || n.ownKw > 0;
+    if (n.isConsumer && n.coilKpa > 0) n.arrangement = 'twoPort';
+  });
+
+  sizeControlValves();
+  return NODES;
+}
+
+/* Control valve Kvs from the authority target:
+   N = dP_valve / (dP_valve + dP_variable), so dP_valve = N/(1-N) * dP_variable */
+function sizeControlValves() {
+  const N = clamp(parseFloat(el('aTarget').value) || 0.5, 0.1, 0.9);
+  NODES.forEach(n => {
+    if (!n.isConsumer) return;
+    const q = n.designLps;
+    const variable = pipeDrop(n, q) + n.coilKpa;
+    const dpValve = variable * N / (1 - N);
+    n.cvDp = dpValve;
+    n.cvKvs = kvsFor(q, dpValve);
+    n.authority = dpValve > 0 ? dpValve / (dpValve + variable) : 0;
+  });
+}
+
+// Kv = flow (m3/h) at 1 bar. dP in kPa.
+function kvsFor(lps, dpKpa) {
+  if (dpKpa <= 0) return 0;
+  const m3h = lps * 3.6;
+  return m3h / Math.sqrt(dpKpa / 100);
+}
+function kvDrop(lps, kvs) {
+  if (kvs <= 0 || lps <= 0) return 0;
+  const m3h = lps * 3.6;
+  return 100 * Math.pow(m3h / kvs, 2);
+}
+
+/* ---------- branch resistance, kPa per (l/s)^2 ----------
+   Every element is evaluated at design flow to fix a coefficient, which is
+   then applied as dP = R*Q^2. Pipe friction is recomputed at the solved flow
+   afterwards so the reported drops stay honest at part load. */
+function fixedComponentsDrop(n, lps) {
+  let dp = 0;
+  if (n.isolation && KFACTOR[n.isolation]) dp += 2 * kDrop(KFACTOR[n.isolation], lps, n.pipe.id);
+  if (n.strainer) dp += kDrop(KFACTOR.strainer, lps, n.pipe.id);
+  return dp;
+}
+
+function branchResistance(n) {
+  const q = n.designLps;
+  if (q <= 0) return Infinity;
+  let dp = pipeDrop(n, q) + fixedComponentsDrop(n, q) + (n.balanceKpa || 0);
+
+  if (n.isConsumer) {
+    if (n.open) {
+      dp += n.coilKpa;
+      if (n.arrangement === 'picv') dp += n.cvDp;
+      else dp += kvDrop(q, n.cvKvs);
+    } else {
+      const a = ARRANGEMENTS[n.arrangement];
+      if (a.shuts) return Infinity;
+      // diverted through the bypass: coil is out of circuit, regulating set in
+      const frac = clamp((parseFloat(el('bypassPct').value) || 100) / 100, 0.05, 1);
+      const qb = q * frac;
+      dp = pipeDrop(n, qb) + fixedComponentsDrop(n, qb) + kDrop(KFACTOR.drv, qb, n.pipe.id);
+      return dp / (qb * qb);
+    }
+  }
+  return dp / (q * q);
+}
+
+/* ---------- series/parallel reduction over the tree ---------- */
+function parallelR(list) {
+  let s = 0;
+  list.forEach(R => { if (isFinite(R) && R > 0) s += 1 / Math.sqrt(R); });
+  return s > 0 ? 1 / (s * s) : Infinity;
+}
+
+function reduceNode(n, picvR) {
+  const own = (n.isConsumer && picvR[n.id] !== undefined) ? picvR[n.id] : branchResistance(n);
+  n._Rpipe = (n.designLps > 0)
+    ? (pipeDrop(n, n.designLps) + fixedComponentsDrop(n, n.designLps)) / (n.designLps * n.designLps)
+    : 0;
+
+  if (n.children.length === 0) { n._R = own; return n._R; }
+
+  const downstream = n.children.map(k => reduceNode(k, picvR));
+  if (n.isConsumer && n.ownKw > 0) {
+    // terminal sits in parallel with the onward route
+    const termOnly = own - n._Rpipe;
+    downstream.push(Math.max(termOnly, 1e-9));
+  }
+  const Rd = parallelR(downstream);
+  n._R = n._Rpipe + (isFinite(Rd) ? Rd : Infinity);
+  return n._R;
+}
+
+function distribute(n, Q, picvR) {
+  n.flow = Q;
+  if (Q <= 0 || !isFinite(Q)) { n.flow = 0; n.children.forEach(k => distribute(k, 0, picvR)); return; }
+  const paths = [];
+  n.children.forEach(k => paths.push({ node: k, R: k._R }));
+  if (n.isConsumer && n.ownKw > 0 && n.children.length > 0) {
+    const own = (picvR[n.id] !== undefined) ? picvR[n.id] : branchResistance(n);
+    paths.push({ node: null, R: Math.max(own - n._Rpipe, 1e-9) });
+  }
+  if (paths.length === 0) return;
+  let s = 0;
+  paths.forEach(p => { if (isFinite(p.R) && p.R > 0) s += 1 / Math.sqrt(p.R); });
+  paths.forEach(p => {
+    const share = (isFinite(p.R) && p.R > 0 && s > 0) ? (1 / Math.sqrt(p.R)) / s : 0;
+    if (p.node) distribute(p.node, Q * share, picvR);
+    else n.terminalFlow = Q * share;
+  });
+}
+
+/* ---------- pump ---------- */
+function pumpCurve() {
+  const Qd = Math.max(0.01, parseFloat(el('pQ').value) || 1);
+  const Hd = Math.max(1, parseFloat(el('pH').value) || 100);
+  const shutPct = clamp(parseFloat(el('pShut').value) || 125, 105, 200) / 100;
+  const nPumps = parseInt(el('pCount').value) || 1;
+  const H0 = Hd * shutPct;
+  // one pump passes Qd/nPumps at Hd when running in parallel
+  const qEach = Qd / nPumps;
+  const k = (H0 - Hd) / (qEach * qEach);
+  return { H0, k, nPumps, Qd, Hd,
+    head: Q => H0 - k * Math.pow(Q / nPumps, 2) };
+}
+
+/* ---------- proportional balancing ----------
+   Every branch is throttled with a regulating set until it passes design
+   flow. The branch with the least available margin ends up fully open and
+   becomes the index; everything else takes the difference. This is the
+   commissioning schedule the system would need. */
+function calculateBalance() {
+  NODES.forEach(n => { n.balanceKpa = 0; });
+  const cons = NODES.filter(n => n.isConsumer && n.open);
+  if (cons.length === 0) { refresh(); return; }
+
+  // Target total flow is the sum of the branches that are actually open
+  const targetQ = cons.reduce((s, n) => s + n.designLps, 0);
+
+  // Outer loop trims the pump head until the balanced system passes design
+  // flow — throttling every branch raises system resistance, so the duty the
+  // pump needs is an OUTPUT of balancing, not an input to it.
+  for (let outer = 0; outer < 20; outer++) {
+    for (let it = 0; it < 60; it++) {
+      solve();
+      let worst = 0;
+      cons.forEach(n => {
+        const avail = availableDp(n, SOLUTION.pump, SOLUTION.Q, SOLUTION.sysR);
+        const natural = (branchResistance(n) - (n.balanceKpa || 0) / (n.designLps * n.designLps))
+                        * n.designLps * n.designLps;
+        const want = Math.max(0, avail - natural);
+        worst = Math.max(worst, Math.abs(want - (n.balanceKpa || 0)));
+        n.balanceKpa = Math.max(0, (n.balanceKpa || 0) + 0.6 * (want - (n.balanceKpa || 0)));
+      });
+      if (worst < 0.05) break;
+    }
+    // least-throttled branch is the index: fully open, everything else relative to it
+    const minBal = Math.min(...cons.map(n => n.balanceKpa || 0));
+    cons.forEach(n => { n.balanceKpa = Math.max(0, (n.balanceKpa || 0) - minBal); });
+
+    solve();
+    const err = (SOLUTION.Q - targetQ) / targetQ;
+    if (Math.abs(err) < 0.004) break;
+    const H = parseFloat(el('pH').value) || 100;
+    const scale = clamp(Math.pow(targetQ / Math.max(SOLUTION.Q, 1e-6), 2), 0.7, 1.5);
+    el('pH').value = clamp(H * scale, 5, 100000).toFixed(0);
+  }
+  requiredHead = parseFloat(el('pH').value) || 0;
+
+  NODES.forEach(n => {
+    if (!n.isConsumer) return;
+    n.balanceKv = n.balanceKpa > 0.05 ? kvsFor(n.designLps, n.balanceKpa) : null;
+  });
+  balanced = true;
+  refresh();
+}
+
+function clearBalance() {
+  NODES.forEach(n => { n.balanceKpa = 0; n.balanceKv = null; });
+  balanced = false;
+  refresh();
+}
+
+let balanced = false;
+let requiredHead = 0;
+
+/* ---------- solve ---------- */
+function solve() {
+  if (NODES.length === 0) return null;
+  sizeControlValves();
+  const pump = pumpCurve();
+  const picvMin = parseFloat(el('picvMin').value) || 0;
+  const picvMax = parseFloat(el('picvMax').value) || 400;
+
+  const roots = NODES.filter(n => !n.parent);
+  const picvR = {};
+  let Q = 0, sysR = Infinity, iterations = 0;
+
+  for (let it = 0; it < 40; it++) {
+    iterations = it + 1;
+    const Rs = roots.map(r => reduceNode(r, picvR));
+    sysR = parallelR(Rs);
+    if (!isFinite(sysR)) { Q = 0; break; }
+
+    // H0 - k(Q/n)^2 = sysR*Q^2
+    const a = pump.k / (pump.nPumps * pump.nPumps) + sysR;
+    Q = Math.sqrt(Math.max(0, pump.H0 / a));
+
+    // push flows down
+    let s = 0;
+    Rs.forEach(R => { if (isFinite(R) && R > 0) s += 1 / Math.sqrt(R); });
+    roots.forEach((r, i) => {
+      const share = (isFinite(Rs[i]) && Rs[i] > 0 && s > 0) ? (1 / Math.sqrt(Rs[i])) / s : 0;
+      distribute(r, Q * share, picvR);
+    });
+
+    // PICVs hold their set flow while they have the differential to do it
+    let changed = false;
+    NODES.forEach(n => {
+      if (!n.isConsumer || n.arrangement !== 'picv' || !n.open) { delete picvR[n.id]; return; }
+      const avail = availableDp(n, pump, Q, sysR);
+      n.picvAvail = avail;
+      if (avail >= picvMin && avail <= picvMax) {
+        const target = n.designLps;
+        const want = avail / (target * target);
+        if (picvR[n.id] === undefined || Math.abs(picvR[n.id] - want) / Math.max(want, 1e-9) > 1e-4) {
+          picvR[n.id] = want; changed = true;
+        }
+        n.picvHolding = true;
+      } else {
+        if (picvR[n.id] !== undefined) { delete picvR[n.id]; changed = true; }
+        n.picvHolding = false;
+      }
+    });
+    if (!changed) break;
+  }
+
+  // differential available at each branch, and honest recomputed drops
+  const pumpHead = pump.head(Q);
+  NODES.forEach(n => {
+    n.dpPipe = pipeDrop(n, n.flow) + fixedComponentsDrop(n, n.flow);
+    if (n.isConsumer) {
+      n.dpCoil = n.open ? n.coilKpa * Math.pow(n.flow / Math.max(n.designLps, 1e-9), 2) : 0;
+      n.dpValve = n.open
+        ? (n.arrangement === 'picv' ? Math.max(0, (n.picvAvail || 0) - n.dpPipe - n.dpCoil) : kvDrop(n.flow, n.cvKvs))
+        : kDrop(KFACTOR.drv, n.flow, n.pipe.id);
+      n.dpTotal = n.dpPipe + n.dpCoil + n.dpValve;
+    } else {
+      n.dpTotal = n.dpPipe;
+    }
+    n.pctDesign = n.designLps > 0 ? n.flow / n.designLps * 100 : 0;
+    n.velocity = pipeHydraulics(n.flow, n.pipe.id, ROUGH[n.material] || 1.5e-5).v;
+    n.kwActual = n.flow / 1000 * FLUID.rho * FLUID.cp * n.dT;
+  });
+
+  SOLUTION = { Q, sysR, pump, pumpHead, iterations,
+    designQ: pump.Qd, designH: pump.Hd,
+    picvMin, picvMax };
+  return SOLUTION;
+}
+
+// pressure differential across a branch = pump head less everything upstream of it
+function availableDp(n, pump, Q, sysR) {
+  let upstream = 0;
+  let p = n.parent;
+  const seen = new Set();
+  while (p && !seen.has(p.id)) {
+    seen.add(p.id);
+    upstream += p._Rpipe * p.flow * p.flow;
+    p = p.parent;
+  }
+  return Math.max(0, pump.head(Q) - upstream);
+}
+
+/* ---------- helpers ---------- */
+function el(id) { return document.getElementById(id); }
+function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmt(v, d) { return (isFinite(v) ? v : 0).toFixed(d === undefined ? 1 : d); }
+/* ==========================================================================
+   DIAGRAM
+   Two-pipe schematic. Flow rail red above, return rail blue below, consumers
+   dropping between them. Sub-mains get their own rail pair one tier down.
+   Line weight tracks solved flow, so shutting valves visibly thins the mains.
+   ========================================================================== */
+const GEO = { rail: 26, drop: 46, coilH: 46, tier: 170, slot: 138, pad: 30, plantW: 96, top: 44 };
+
+function layoutSpine(n, x, y, state) {
+  n._x0 = x; n._y = y;
+  let cur = x + GEO.pad;
+  let maxY = y + GEO.rail + GEO.drop + GEO.coilH;
+
+  const drops = [];
+  if (n.isConsumer && n.ownKw > 0 && n.children.length > 0) drops.push(n);
+
+  n.children.forEach(k => {
+    if (k.children.length === 0) drops.push(k);
+  });
+
+  drops.forEach(k => { k._dropX = cur + GEO.slot / 2; k._dropY = y; cur += GEO.slot; });
+
+  n.children.filter(k => k.children.length > 0).forEach(k => {
+    const r = layoutSpine(k, cur, y + GEO.tier, state);
+    k._joinX = cur + GEO.pad;
+    cur += r.width;
+    maxY = Math.max(maxY, r.maxY);
+  });
+
+  n._x1 = Math.max(cur + GEO.pad, x + GEO.pad * 2 + 40);
+  state.maxX = Math.max(state.maxX, n._x1);
+  return { width: n._x1 - x, maxY };
+}
+
+function svgEl(tag, attrs, inner) {
+  let s = '<' + tag;
+  for (const k in attrs) s += ' ' + k + '="' + attrs[k] + '"';
+  return inner === undefined ? s + '/>' : s + '>' + inner + '</' + tag + '>';
+}
+
+function weightFor(flow, maxFlow) {
+  if (flow <= 0) return 1.2;
+  return 1.6 + 4.6 * Math.sqrt(flow / Math.max(maxFlow, 1e-9));
+}
+
+function valveSymbol(x, y, type, open) {
+  const c = open ? '#6ee7b7' : '#8fa6b5';
+  const w = 7;
+  if (type === 'picv') {
+    return svgEl('rect', { x: x - w, y: y - w, width: w * 2, height: w * 2, rx: 2,
+      fill: '#16212b', stroke: c, 'stroke-width': 1.6 })
+      + svgEl('text', { x: x, y: y + 3.5, 'text-anchor': 'middle', 'font-size': 8,
+        'font-family': 'IBM Plex Mono, monospace', fill: c, 'font-weight': 600 }, 'P');
+  }
+  if (type === 'threePort') {
+    return svgEl('path', { d: `M${x-w} ${y-w} L${x+w} ${y+w} L${x+w} ${y-w} L${x-w} ${y+w} Z`,
+      fill: 'none', stroke: c, 'stroke-width': 1.6 })
+      + svgEl('path', { d: `M${x} ${y} L${x+w+5} ${y}`, stroke: c, 'stroke-width': 1.6, fill: 'none' });
+  }
+  // two-port bowtie
+  return svgEl('path', { d: `M${x-w} ${y-w} L${x+w} ${y+w} L${x+w} ${y-w} L${x-w} ${y+w} Z`,
+    fill: open ? 'none' : '#33454f', stroke: c, 'stroke-width': 1.6 });
+}
+
+function renderDiagram() {
+  const vp = el('viewport');
+  if (!SOLUTION || NODES.length === 0) { vp.innerHTML = ''; return; }
+
+  const roots = NODES.filter(n => !n.parent);
+  const state = { maxX: 0 };
+  let maxY = 0, y = GEO.top;
+  roots.forEach(r => {
+    const res = layoutSpine(r, GEO.plantW + 30, y, state);
+    y = res.maxY + GEO.tier;
+    maxY = Math.max(maxY, res.maxY);
+  });
+
+  const W = Math.max(state.maxX + 40, 720);
+  const H = maxY + 90;
+  const maxFlow = Math.max(...NODES.map(n => n.flow || 0), 0.001);
+
+  let rails = '', drops = '', labels = '', plant = '';
+
+  // ----- plant / pump -----
+  const pumpOn = SOLUTION.Q > 0.001;
+  plant += svgEl('rect', { x: 16, y: GEO.top - 14, width: GEO.plantW, height: maxY - GEO.top + 60,
+    rx: 5, fill: '#0d1720', stroke: '#33454f', 'stroke-width': 1.4 });
+  plant += svgEl('text', { x: 16 + GEO.plantW / 2, y: GEO.top + 14, 'text-anchor': 'middle',
+    'font-size': 11, 'font-weight': 700, 'font-family': 'IBM Plex Sans, sans-serif',
+    fill: pumpOn ? '#6ee7b7' : '#8fa6b5', 'letter-spacing': '0.08em' }, 'PLANT');
+  plant += svgEl('circle', { cx: 16 + GEO.plantW / 2, cy: GEO.top + 44, r: 15,
+    fill: 'none', stroke: pumpOn ? '#6ee7b7' : '#8fa6b5', 'stroke-width': 1.8 });
+  plant += svgEl('path', { d: `M${16 + GEO.plantW/2 - 6} ${GEO.top + 38} L${16 + GEO.plantW/2 + 7} ${GEO.top + 44} L${16 + GEO.plantW/2 - 6} ${GEO.top + 50} Z`,
+    fill: pumpOn ? '#6ee7b7' : '#8fa6b5' });
+  plant += svgEl('text', { x: 16 + GEO.plantW / 2, y: GEO.top + 76, 'text-anchor': 'middle',
+    'font-size': 10.5, 'font-family': 'IBM Plex Mono, monospace', fill: '#cfe0e8' },
+    fmt(SOLUTION.Q, 2) + ' l/s');
+  plant += svgEl('text', { x: 16 + GEO.plantW / 2, y: GEO.top + 91, 'text-anchor': 'middle',
+    'font-size': 10.5, 'font-family': 'IBM Plex Mono, monospace', fill: '#cfe0e8' },
+    fmt(SOLUTION.pumpHead, 0) + ' kPa');
+
+  // ----- rails -----
+  NODES.forEach(n => {
+    if (n._x0 === undefined) return;
+    const flowing = n.flow > 0.0005;
+    const w = weightFor(n.flow, maxFlow);
+    const dash = flowing ? '' : '6 5';
+
+    rails += svgEl('line', { x1: n._x0, y1: n._y, x2: n._x1, y2: n._y,
+      stroke: flowing ? '#c0392b' : '#4a5b68', 'stroke-width': w,
+      'stroke-dasharray': dash, 'stroke-linecap': 'round' });
+    rails += svgEl('line', { x1: n._x0, y1: n._y + GEO.rail, x2: n._x1, y2: n._y + GEO.rail,
+      stroke: flowing ? '#2471a3' : '#4a5b68', 'stroke-width': w,
+      'stroke-dasharray': dash, 'stroke-linecap': 'round' });
+
+    // connect a sub-main up to its parent spine
+    if (n.parent && n._joinX !== undefined) {
+      const py = n.parent._y;
+      rails += svgEl('path', { d: `M${n._joinX} ${py} V${n._y}`,
+        stroke: flowing ? '#c0392b' : '#4a5b68', 'stroke-width': w, fill: 'none',
+        'stroke-dasharray': dash });
+      rails += svgEl('path', { d: `M${n._joinX + 14} ${n._y + GEO.rail} V${py + GEO.rail}`,
+        stroke: flowing ? '#2471a3' : '#4a5b68', 'stroke-width': w, fill: 'none',
+        'stroke-dasharray': dash });
+    } else if (!n.parent) {
+      rails += svgEl('path', { d: `M${16 + GEO.plantW} ${n._y} H${n._x0}`,
+        stroke: flowing ? '#c0392b' : '#4a5b68', 'stroke-width': w, fill: 'none', 'stroke-dasharray': dash });
+      rails += svgEl('path', { d: `M${n._x0} ${n._y + GEO.rail} H${16 + GEO.plantW}`,
+        stroke: flowing ? '#2471a3' : '#4a5b68', 'stroke-width': w, fill: 'none', 'stroke-dasharray': dash });
+    }
+
+    // spine label
+    labels += svgEl('text', { x: n._x0 + 4, y: n._y - 9, 'font-size': 10.5, 'font-weight': 600,
+      'font-family': 'IBM Plex Sans, sans-serif', fill: '#cfe0e8' }, esc(n.ref));
+    labels += svgEl('text', { x: n._x0 + 4, y: n._y + GEO.rail + 15, 'font-size': 9.5,
+      'font-family': 'IBM Plex Mono, monospace', fill: '#8fa6b5' },
+      n.pipe.nom + ' \u00b7 ' + fmt(n.lengthTotal, 0) + 'm \u00b7 ' + fmt(n.flow, 2) + ' l/s \u00b7 ' + fmt(n.dpTotal, 1) + ' kPa');
+  });
+
+  // ----- consumer drops -----
+  NODES.forEach(n => {
+    if (n._dropX === undefined) return;
+    const x = n._dropX, y = n._dropY;
+    const flowing = n.flow > 0.0005;
+    const w = weightFor(n.flow, maxFlow);
+    const dash = flowing ? '' : '6 5';
+    const coilTop = y + GEO.rail + GEO.drop;
+    const boxW = GEO.slot - 34;
+
+    drops += svgEl('path', { d: `M${x - 15} ${y} V${coilTop + 8}`,
+      stroke: flowing ? '#c0392b' : '#4a5b68', 'stroke-width': w, fill: 'none', 'stroke-dasharray': dash });
+    drops += svgEl('path', { d: `M${x + 15} ${coilTop + 8} V${y + GEO.rail}`,
+      stroke: flowing ? '#2471a3' : '#4a5b68', 'stroke-width': w, fill: 'none', 'stroke-dasharray': dash });
+
+    // valve on the return leg
+    drops += valveSymbol(x + 15, y + GEO.rail + 20, n.arrangement, n.open);
+
+    // bypass link for arrangements that keep flowing when shut
+    const arr = ARRANGEMENTS[n.arrangement];
+    if (arr && arr.bypass) {
+      drops += svgEl('path', { d: `M${x - 15} ${y + GEO.rail + 34} H${x + 15}`,
+        stroke: n.open ? '#4a5b68' : '#6ee7b7', 'stroke-width': n.open ? 1.3 : w,
+        fill: 'none', 'stroke-dasharray': n.open ? '4 4' : '' });
+      drops += svgEl('circle', { cx: x, cy: y + GEO.rail + 34, r: 3.5, fill: 'none',
+        stroke: n.open ? '#4a5b68' : '#6ee7b7', 'stroke-width': 1.4 });
+    }
+
+    // coil box
+    const bad = n.open && (n.pctDesign < 85 || n.pctDesign > 118);
+    drops += svgEl('rect', { x: x - boxW / 2, y: coilTop, width: boxW, height: GEO.coilH, rx: 4,
+      fill: n.open ? '#1e2f3a' : '#161f27',
+      stroke: !n.open ? '#4a5b68' : (bad ? '#d97706' : '#6ee7b7'), 'stroke-width': 1.5 });
+    drops += svgEl('text', { x: x, y: coilTop + 17, 'text-anchor': 'middle', 'font-size': 10.5,
+      'font-weight': 600, 'font-family': 'IBM Plex Sans, sans-serif',
+      fill: n.open ? '#ffffff' : '#7c8b99' }, esc(String(n.ref).slice(0, 15)));
+    drops += svgEl('text', { x: x, y: coilTop + 31, 'text-anchor': 'middle', 'font-size': 9.5,
+      'font-family': 'IBM Plex Mono, monospace', fill: n.open ? '#cfe0e8' : '#5d6d7a' },
+      fmt(n.flow, 2) + ' l/s');
+    drops += svgEl('text', { x: x, y: coilTop + 42, 'text-anchor': 'middle', 'font-size': 9,
+      'font-family': 'IBM Plex Mono, monospace',
+      fill: !n.open ? '#5d6d7a' : (bad ? '#fbbf24' : '#8fa6b5') },
+      n.open ? fmt(n.pctDesign, 0) + '% design' : 'shut');
+  });
+
+  const legend =
+      svgEl('line', { x1: 20, y1: H - 22, x2: 44, y2: H - 22, stroke: '#c0392b', 'stroke-width': 3 })
+    + svgEl('text', { x: 50, y: H - 18, 'font-size': 10, fill: '#8fa6b5', 'font-family': 'IBM Plex Sans, sans-serif' }, 'Flow')
+    + svgEl('line', { x1: 92, y1: H - 22, x2: 116, y2: H - 22, stroke: '#2471a3', 'stroke-width': 3 })
+    + svgEl('text', { x: 122, y: H - 18, 'font-size': 10, fill: '#8fa6b5', 'font-family': 'IBM Plex Sans, sans-serif' }, 'Return')
+    + svgEl('line', { x1: 174, y1: H - 22, x2: 198, y2: H - 22, stroke: '#4a5b68', 'stroke-width': 3, 'stroke-dasharray': '6 5' })
+    + svgEl('text', { x: 204, y: H - 18, 'font-size': 10, fill: '#8fa6b5', 'font-family': 'IBM Plex Sans, sans-serif' }, 'No flow')
+    + svgEl('text', { x: W - 16, y: H - 18, 'text-anchor': 'end', 'font-size': 9.5, fill: '#5d6d7a',
+        'font-family': 'IBM Plex Sans, sans-serif' }, 'Connectivity only \u2014 not to scale');
+
+  vp.innerHTML = '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">'
+    + plant + rails + drops + labels + legend + '</svg>';
+}
+
+/* ==========================================================================
+   PUMP CHART
+   ========================================================================== */
+function renderPumpChart() {
+  if (!SOLUTION) { el('pumpChart').innerHTML = ''; return; }
+  const W = 300, H = 168, ml = 40, mb = 26, mt = 10, mr = 8;
+  const pump = SOLUTION.pump;
+  const Qmax = Math.max(pump.Qd * 1.6, SOLUTION.Q * 1.25, 0.1);
+  const Hmax = Math.max(pump.H0 * 1.08, SOLUTION.pumpHead * 1.15, 1);
+  const px = q => ml + (q / Qmax) * (W - ml - mr);
+  const py = h => H - mb - (h / Hmax) * (H - mb - mt);
+
+  let pumpPath = '', sysPath = '';
+  for (let i = 0; i <= 60; i++) {
+    const q = Qmax * i / 60;
+    const hp = Math.max(0, pump.head(q));
+    pumpPath += (i ? 'L' : 'M') + px(q).toFixed(1) + ' ' + py(hp).toFixed(1);
+    const hs = isFinite(SOLUTION.sysR) ? SOLUTION.sysR * q * q : Hmax * 2;
+    if (hs <= Hmax * 1.02) sysPath += (sysPath ? 'L' : 'M') + px(q).toFixed(1) + ' ' + py(hs).toFixed(1);
+  }
+
+  let g = '';
+  for (let i = 0; i <= 4; i++) {
+    const h = Hmax * i / 4;
+    g += svgEl('line', { x1: ml, y1: py(h), x2: W - mr, y2: py(h), stroke: '#dde5ea', 'stroke-width': 1 });
+    g += svgEl('text', { x: ml - 6, y: py(h) + 3.5, 'text-anchor': 'end', 'font-size': 9,
+      'font-family': 'IBM Plex Mono, monospace', fill: '#64798a' }, h.toFixed(0));
+  }
+  for (let i = 0; i <= 4; i++) {
+    const q = Qmax * i / 4;
+    g += svgEl('text', { x: px(q), y: H - 8, 'text-anchor': 'middle', 'font-size': 9,
+      'font-family': 'IBM Plex Mono, monospace', fill: '#64798a' }, q.toFixed(1));
+  }
+
+  const opX = px(SOLUTION.Q), opY = py(SOLUTION.pumpHead);
+  const dsX = px(pump.Qd), dsY = py(pump.Hd);
+
+  el('pumpChart').innerHTML =
+    '<svg width="100%" viewBox="0 0 ' + W + ' ' + H + '" style="display:block">'
+    + g
+    + svgEl('path', { d: sysPath, fill: 'none', stroke: '#2471a3', 'stroke-width': 1.8, 'stroke-dasharray': '5 4' })
+    + svgEl('path', { d: pumpPath, fill: 'none', stroke: '#16212b', 'stroke-width': 2.2 })
+    + svgEl('circle', { cx: dsX, cy: dsY, r: 4, fill: 'none', stroke: '#64798a', 'stroke-width': 1.5 })
+    + svgEl('line', { x1: opX, y1: H - mb, x2: opX, y2: opY, stroke: '#0f766e', 'stroke-width': 1, 'stroke-dasharray': '3 3' })
+    + svgEl('circle', { cx: opX, cy: opY, r: 5.5, fill: '#0f766e' })
+    + svgEl('text', { x: 6, y: 12, 'font-size': 9, fill: '#64798a', 'font-family': 'IBM Plex Sans, sans-serif' }, 'kPa')
+    + svgEl('text', { x: W - mr, y: H - 8, 'text-anchor': 'end', 'font-size': 9, fill: '#64798a',
+        'font-family': 'IBM Plex Sans, sans-serif' }, 'l/s')
+    + '</svg>'
+    + '<div style="display:flex;gap:14px;font-size:10.5px;color:var(--muted);margin-top:6px;flex-wrap:wrap">'
+    + '<span><span style="display:inline-block;width:14px;height:2px;background:#16212b;vertical-align:middle"></span> Pump</span>'
+    + '<span><span style="display:inline-block;width:14px;height:2px;background:#2471a3;vertical-align:middle"></span> System</span>'
+    + '<span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#0f766e;vertical-align:middle"></span> Operating</span>'
+    + '<span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;border:1.5px solid #64798a;vertical-align:middle"></span> Design</span>'
+    + '</div>';
+}
+
+/* ==========================================================================
+   READOUTS, TABLES, DIAGNOSTICS
+   ========================================================================== */
+function renderReadout() {
+  if (!SOLUTION) return;
+  const openN = NODES.filter(n => n.isConsumer && n.open).length;
+  const totalN = NODES.filter(n => n.isConsumer).length;
+  const dQ = SOLUTION.designQ > 0 ? (SOLUTION.Q / SOLUTION.designQ - 1) * 100 : 0;
+  const kw = SOLUTION.Q / 1000 * FLUID.rho * FLUID.cp * (PROJECT.supply - PROJECT.ret);
+
+  const cell = (k, v, u, hi) =>
+    '<div class="cell' + (hi ? ' hi' : '') + '"><div class="k">' + k + '</div><div class="v">' + v + '</div><div class="u">' + u + '</div></div>';
+
+  el('readout').innerHTML =
+      cell('System flow', fmt(SOLUTION.Q, 2), 'l/s &middot; ' + (dQ >= 0 ? '+' : '') + fmt(dQ, 0) + '% of design', true)
+    + cell('Pump head', fmt(SOLUTION.pumpHead, 0), 'kPa &middot; ' + fmt(SOLUTION.pumpHead / 9.81, 1) + ' m')
+    + cell('Heat carried', fmt(kw, 0), 'kW at &Delta;T ' + fmt(PROJECT.supply - PROJECT.ret, 0))
+    + cell('Consumers open', openN + ' / ' + totalN, 'branches')
+    + cell('System resistance', isFinite(SOLUTION.sysR) ? fmt(SOLUTION.sysR, 2) : '&infin;', 'kPa per (l/s)&sup2;');
+}
+
+function renderBranchTable() {
+  if (!SOLUTION) return;
+  const rows = NODES.filter(n => n.isConsumer).map(n => {
+    const pct = n.pctDesign;
+    let tag = '<span class="tag">shut</span>';
+    if (n.open) {
+      if (pct < 85) tag = '<span class="tag bad">starved</span>';
+      else if (pct > 118) tag = '<span class="tag warn">over-flowing</span>';
+      else tag = '<span class="tag ok">on design</span>';
+    }
+    const auth = n.authority || 0;
+    const authTag = n.arrangement === 'picv'
+      ? (n.picvHolding ? '<span class="tag ok">holding</span>' : '<span class="tag warn">out of range</span>')
+      : (auth < 0.25 ? '<span class="tag bad">' + fmt(auth, 2) + '</span>'
+        : auth < 0.4 ? '<span class="tag warn">' + fmt(auth, 2) + '</span>'
+        : '<span class="tag ok">' + fmt(auth, 2) + '</span>');
+    return '<tr' + (n.open ? '' : ' class="dim"') + '>'
+      + '<td>' + esc(n.ref) + '</td>'
+      + '<td class="n">' + n.pipe.nom + '</td>'
+      + '<td class="n">' + fmt(n.designLps, 2) + '</td>'
+      + '<td class="n"><strong>' + fmt(n.flow, 2) + '</strong></td>'
+      + '<td class="n">' + (n.open ? fmt(pct, 0) + '%' : '&mdash;') + '</td>'
+      + '<td class="n">' + fmt(n.velocity, 2) + '</td>'
+      + '<td class="n">' + fmt(n.dpTotal, 1) + '</td>'
+      + '<td class="n">' + (n.arrangement === 'picv' ? fmt(n.picvAvail || 0, 0) : fmt(n.dpValve, 1)) + '</td>'
+      + '<td class="n">' + (n.balanceKpa > 0.05
+          ? fmt(n.balanceKpa, 1) + ' <span style="color:var(--muted)">Kv ' + fmt(n.balanceKv, 1) + '</span>'
+          : (balanced ? '<span class="tag ok">open</span>' : '&mdash;')) + '</td>'
+      + '<td class="n">' + authTag + '</td>'
+      + '<td>' + tag + '</td></tr>';
+  }).join('');
+
+  el('branchTable').innerHTML =
+      '<thead><tr><th>Consumer</th><th class="n">Size</th><th class="n">Design l/s</th>'
+    + '<th class="n">Actual l/s</th><th class="n">%</th><th class="n">m/s</th>'
+    + '<th class="n">Branch kPa</th><th class="n">Valve kPa</th><th class="n">Regulating</th><th class="n">Authority</th><th>Status</th></tr></thead>'
+    + '<tbody>' + (rows || '<tr><td colspan="11">No consumers in this network.</td></tr>') + '</tbody>';
+}
+
+function renderDiagnostics() {
+  if (!SOLUTION) return;
+  const msgs = [];
+  const open = NODES.filter(n => n.isConsumer && n.open);
+  const closed = NODES.filter(n => n.isConsumer && !n.open);
+
+  if (open.length === 0) {
+    const anyBypass = closed.some(n => ARRANGEMENTS[n.arrangement] && ARRANGEMENTS[n.arrangement].bypass);
+    msgs.push({ t: anyBypass ? 'warn' : 'bad',
+      h: anyBypass ? 'Every consumer is shut &mdash; flow is on bypass only'
+                   : 'Every consumer is shut and there is no bypass',
+      b: anyBypass
+        ? 'The pump is circulating ' + fmt(SOLUTION.Q, 2) + ' l/s through the bypass legs. Check this is at or above the pump\u2019s minimum continuous flow.'
+        : 'All branches use 2-port valves with no bypass, so the pump is dead-heading against a closed system. Add a bypass, fit three-port valves on at least one branch, or specify a differential pressure control valve across the mains.' });
+  }
+
+  const starved = open.filter(n => n.pctDesign < 85);
+  if (starved.length) msgs.push({ t: 'bad', h: starved.length + ' consumer' + (starved.length === 1 ? ' is' : 's are') + ' below 85% of design flow',
+    b: starved.map(n => esc(n.ref) + ' at ' + fmt(n.pctDesign, 0) + '%').join(', ')
+      + '. The pump cannot deliver the head these branches need at the current valve positions.' });
+
+  const over = open.filter(n => n.pctDesign > 118);
+  if (over.length) msgs.push({ t: 'warn', h: over.length + ' consumer' + (over.length === 1 ? ' is' : 's are') + ' over-flowing',
+    b: over.map(n => esc(n.ref) + ' at ' + fmt(n.pctDesign, 0) + '%').join(', ')
+      + '. Regulating valves need setting to hold design flow, otherwise these branches steal from the index run.' });
+
+  const lowAuth = NODES.filter(n => n.isConsumer && n.arrangement !== 'picv' && (n.authority || 0) < 0.25);
+  if (lowAuth.length) msgs.push({ t: 'bad', h: lowAuth.length + ' control valve' + (lowAuth.length === 1 ? ' has' : 's have') + ' authority below 0.25',
+    b: lowAuth.map(n => esc(n.ref) + ' at ' + fmt(n.authority, 2)).join(', ')
+      + '. Below about 0.25 the valve does most of its work in the first part of its travel and control becomes unstable. Either reduce the valve Kvs, or fit a PICV so authority stops mattering.' });
+
+  const picvOut = NODES.filter(n => n.isConsumer && n.open && n.arrangement === 'picv' && !n.picvHolding);
+  if (picvOut.length) msgs.push({ t: 'warn', h: picvOut.length + ' PICV outside its differential range',
+    b: picvOut.map(n => esc(n.ref) + ' sees ' + fmt(n.picvAvail || 0, 0) + ' kPa').join(', ')
+      + '. Working range is ' + SOLUTION.picvMin + '&ndash;' + SOLUTION.picvMax + ' kPa; outside it the valve cannot hold its set flow.' });
+
+  const fast = NODES.filter(n => n.flow > 0 && n.velocity > PROJECT.vMax);
+  if (fast.length) msgs.push({ t: 'warn', h: fast.length + ' section above the ' + PROJECT.vMax + ' m/s velocity limit',
+    b: fast.map(n => esc(n.ref) + ' at ' + fmt(n.velocity, 2) + ' m/s').join(', ') + '. Expect noise and erosion risk.' });
+
+  if (SOLUTION.Q > SOLUTION.designQ * 1.15) msgs.push({ t: 'warn',
+    h: 'Pump is running out along its curve',
+    b: 'System flow is ' + fmt(SOLUTION.Q / SOLUTION.designQ * 100, 0) + '% of design. Check the motor is not overloading and that NPSH available still suits.' });
+
+  if (balanced) {
+    msgs.push({ t: 'info', h: 'Balanced — pump duty derived from the regulated system',
+      b: 'With every branch regulated to design flow the pump needs <strong>'
+        + fmt(SOLUTION.Q, 2) + ' l/s at ' + fmt(SOLUTION.pumpHead, 0) + ' kPa ('
+        + fmt(SOLUTION.pumpHead / 9.81, 1) + ' m). The regulating column in the table is the commissioning schedule; '
+        + 'the branch showing <em>open</em> is the index and sets the head.' });
+  }
+
+  if (!balanced && open.length > 1) {
+    const spread = open.map(n => n.pctDesign);
+    const lo = Math.min(...spread), hi = Math.max(...spread);
+    if (hi - lo > 12) msgs.push({ t: 'warn', h: 'System is unbalanced',
+      b: 'Branch flows range from ' + fmt(lo, 0) + '% to ' + fmt(hi, 0) + '% of design because nothing is regulating them. '
+        + 'Run <strong>Calculate balancing</strong> to get the regulating drop each branch needs, which is the commissioning schedule for the system.' });
+  }
+
+  if (msgs.length === 0) msgs.push({ t: 'info', h: 'No issues at these valve positions',
+    b: 'Every open branch is within 85&ndash;118% of design flow, control valve authorities are acceptable and velocities are inside the limits.' });
+
+  el('diagnostics').innerHTML = msgs.map(m =>
+    '<div class="msg ' + m.t + '"><strong>' + m.h + '</strong><br>' + m.b + '</div>').join('');
+}
+
+function renderConsumers() {
+  const list = NODES.filter(n => n.isConsumer);
+  el('consumerCount').textContent = list.length + ' branches';
+  el('consumerList').innerHTML = list.map(n =>
+    '<div class="crow' + (n.open ? '' : ' off') + '">'
+    + '<button class="sw" aria-pressed="' + (n.open ? 'true' : 'false') + '" data-id="' + n.id
+    + '" aria-label="' + esc(n.ref) + ' open"></button>'
+    + '<div><div class="cname">' + esc(n.ref) + '</div>'
+    + '<div class="cmeta">' + n.pipe.nom + ' &middot; ' + fmt(n.designLps, 2) + ' l/s design &middot; '
+    + fmt(n.coilKpa, 0) + ' kPa coil</div></div>'
+    + '<div class="ctrls">'
+    + '<select data-arr="' + n.id + '">'
+    + Object.keys(ARRANGEMENTS).map(k => '<option value="' + k + '"'
+        + (n.arrangement === k ? ' selected' : '') + '>' + ARRANGEMENTS[k].label + '</option>').join('')
+    + '</select>'
+    + '<label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted);white-space:nowrap">'
+    + '<input type="checkbox" data-str="' + n.id + '"' + (n.strainer ? ' checked' : '')
+    + ' style="width:16px;height:16px;min-height:16px"> strainer</label>'
+    + '</div></div>').join('');
+}
+
+function refresh() {
+  solve();
+  renderReadout();
+  renderDiagram();
+  renderPumpChart();
+  renderBranchTable();
+  renderDiagnostics();
+}
+/* ==========================================================================
+   IMPORT AND WIRING
+   ========================================================================== */
+function loadProject(data) {
+  if (!data || data.app !== 'adi-pipework-sizer' || !Array.isArray(data.circuits)) {
+    alert('That is not a project file saved from the Pipework Sizer.');
+    return false;
+  }
+  if (data.circuits.length === 0) { alert('That project has no circuits in it.'); return false; }
+
+  buildNetwork(data);
+
+  // Seed the pump so its curve passes through the design point: reduce the
+  // network with everything open, then take the head that resistance needs
+  // at design flow. Anything else would start the model off-design.
+  const roots = NODES.filter(n => !n.parent);
+  const designQ = roots.reduce((s, r) => s + r.designLps, 0) || 1;
+  const Rs = roots.map(r => reduceNode(r, {}));
+  const sysR0 = parallelR(Rs);
+  const designH = isFinite(sysR0)
+    ? Math.max(sysR0 * designQ * designQ, 20)
+    : 100;
+
+  el('pQ').value = designQ.toFixed(2);
+  el('pH').value = designH.toFixed(0);
+
+  const hasTopology = (data.circuits || []).some(c =>
+    c.parentId !== null && c.parentId !== undefined) ||
+    (data.circuits || []).some(c => c.circuitType);
+  const flat = NODES.filter(n => !n.parent).length === NODES.length && NODES.length > 1;
+  if (!hasTopology || flat) {
+    alert('This project has no circuit tree \u2014 every line is shown fed directly from the plant, '
+      + 'in parallel.\n\nOpen it in the Pipework Sizer, set the Type and Fed-from columns on each '
+      + 'circuit, save it again, and re-import to model the real network.');
+  }
+
+  el('emptyState').style.display = 'none';
+  el('main').style.display = '';
+  document.title = PROJECT.ref + ' \u2014 Hydronic Network Simulator';
+
+  renderConsumers();
+  refresh();
+  return true;
+}
+
+function handleFile(evt) {
+  const f = evt.target.files && evt.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    let d;
+    try { d = JSON.parse(r.result); }
+    catch (e) { alert('That file could not be read as JSON.'); evt.target.value = ''; return; }
+    loadProject(d);
+    evt.target.value = '';
+  };
+  r.onerror = () => { alert('That file could not be read.'); evt.target.value = ''; };
+  r.readAsText(f);
+}
+
+/* A small worked example so the behaviour can be seen without a project file */
+function demoProject() {
+  const c = (id, ref, type, parentId, kw, len, coil) => ({
+    id, ref, circuitType: type, parentId,
+    mode: kw ? 'fromKw' : 'fromFlow', kw: kw || 0, lps: kw ? 0 : 12,
+    dT: 20, length: len, lengthsPaired: true, fittings: 20,
+    consumerLoad: coil || 0, material: 'truboreMetric', sizeOverride: 0,
+  });
+  return {
+    app: 'adi-pipework-sizer', schema: 1,
+    settings: { projectRef: 'Worked example \u2014 two-pipe LPHW', engineer: '',
+      fluidTemp: 80, returnTemp: 60, rho: 977.9, cp: 4.19,
+      limitPd: 300, vMin: 0.3, vMax: 3.0 },
+    circuits: [
+      c(1, 'Mains from plant', 'main', null, 0, 90, 0),
+      c(2, 'AHU 1', 'consumer', 1, 240, 22, 45),
+      c(3, 'AHU 2', 'consumer', 1, 240, 26, 45),
+      c(4, 'Main to process', 'main', 1, 0, 55, 0),
+      c(5, 'Test bath A', 'consumer', 4, 200, 18, 60),
+      c(6, 'Test bath B', 'consumer', 4, 200, 24, 60),
+      c(7, 'Gasser', 'consumer', 4, 120, 30, 35),
+      c(8, 'Main to west', 'main', 1, 0, 40, 0),
+      c(9, 'Radiant panels', 'consumer', 8, 85, 34, 25),
+      c(10, 'Door heaters', 'consumer', 8, 45, 28, 20),
+    ],
+    nextId: 11,
+  };
+}
+
+/* ---------- events ---------- */
+el('btnImport').addEventListener('click', () => el('fileIn').click());
+el('btnImport2').addEventListener('click', () => el('fileIn').click());
+el('fileIn').addEventListener('change', handleFile);
+el('btnDemo').addEventListener('click', () => loadProject(demoProject()));
+el('btnDemo2').addEventListener('click', () => loadProject(demoProject()));
+el('btnPrint').addEventListener('click', () => window.print());
+el('btnBalance').addEventListener('click', calculateBalance);
+el('btnClearBal').addEventListener('click', clearBalance);
+
+el('btnAllOn').addEventListener('click', () => {
+  NODES.forEach(n => { if (n.isConsumer) n.open = true; });
+  renderConsumers(); refresh();
+});
+el('btnAllOff').addEventListener('click', () => {
+  NODES.forEach(n => { if (n.isConsumer) n.open = false; });
+  renderConsumers(); refresh();
+});
+
+el('consumerList').addEventListener('click', e => {
+  const sw = e.target.closest('.sw');
+  if (!sw) return;
+  const n = NODES.find(x => x.id == sw.dataset.id);
+  if (!n) return;
+  n.open = !n.open;
+  renderConsumers(); refresh();
+});
+
+el('consumerList').addEventListener('change', e => {
+  const t = e.target;
+  if (t.dataset.arr !== undefined) {
+    const n = NODES.find(x => x.id == t.dataset.arr);
+    if (n) { n.arrangement = t.value; renderConsumers(); refresh(); }
+  } else if (t.dataset.str !== undefined) {
+    const n = NODES.find(x => x.id == t.dataset.str);
+    if (n) { n.strainer = t.checked; refresh(); }
+  }
+});
+
+['pQ', 'pH', 'pShut', 'pCount', 'aTarget', 'picvMin', 'picvMax', 'bypassPct'].forEach(id => {
+  const e = el(id);
+  if (e) e.addEventListener('input', () => { if (NODES.length) refresh(); });
+});
+
+// number fields must not change on scroll — same safety rule as the sizer
+document.addEventListener('wheel', e => {
+  if (e.target && e.target.type === 'number' && document.activeElement === e.target) e.target.blur();
+}, { passive: true });
+document.addEventListener('keydown', e => {
+  if (e.target && e.target.type === 'number' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) e.preventDefault();
+});
+</script>
+</body>
+</html>
