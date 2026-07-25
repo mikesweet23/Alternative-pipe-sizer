@@ -306,6 +306,7 @@
     <div class="sub">adi Climate Systems &middot; two-pipe flow &amp; return</div>
   </div>
   <div class="spacer"></div>
+  <a href="./index.html" class="ghost" style="text-decoration:none;font-family:inherit;font-size:13px;font-weight:600;border-radius:4px;border:1px solid #3d5060;background:transparent;color:#cfe0e8;padding:9px 13px;display:inline-flex;align-items:center;min-height:38px">← Pipework Sizer</a>
   <button class="ghost" id="btnImport">Import project</button>
   <button class="ghost" id="btnDemo">Load example</button>
   <button class="ghost" id="btnPrint">Print</button>
@@ -378,6 +379,14 @@
                   <option value="2">2 parallel</option>
                   <option value="3">3 parallel</option>
                 </select></label>
+              <label class="fld"><span>Control</span>
+                <select id="pMode">
+                  <option value="fixed" selected>Fixed speed</option>
+                  <option value="constant">Constant pressure</option>
+                  <option value="proportional">Proportional pressure</option>
+                </select></label>
+              <label class="fld"><span>Setpoint <span class="u">% of design head</span></span>
+                <input type="number" id="pSet" step="5" min="20" max="150" value="100"></label>
             </div>
           </div>
         </div>
@@ -395,6 +404,20 @@
               <button id="btnClearBal" style="flex:1 1 100%">Clear balancing</button>
             </div>
             <div class="clist" id="consumerList"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-hd">
+            <h2>Mains</h2>
+            <span class="note">end-of-main bypass</span>
+          </div>
+          <div class="panel-bd">
+            <p style="font-size:11.5px;color:var(--muted);margin:0 0 10px;line-height:1.55">
+              A bypass across the ends of a main keeps water moving when the two-port valves shut.
+              Leave the flow blank for 10% of that main's design flow.
+            </p>
+            <div class="clist" id="mainsList"></div>
           </div>
         </div>
 
@@ -589,6 +612,8 @@ function buildNetwork(data) {
       // simulator state
       open: true,
       arrangement: 'twoPort',
+      eomBypass: false,      // end-of-main bypass to hold minimum flow
+      eomLps: '',            // blank = 10% of this main's design flow
       isolation: 'butterfly',
       strainer: true,
       children: [],
@@ -681,6 +706,11 @@ function fixedComponentsDrop(n, lps) {
   return dp;
 }
 
+function eomFlow(n) {
+  const v = parseFloat(n.eomLps);
+  return isNaN(v) ? n.designLps * 0.10 : Math.max(0, v);
+}
+
 function branchResistance(n) {
   const q = n.designLps;
   if (q <= 0) return Infinity;
@@ -720,6 +750,7 @@ function reduceNode(n, picvR) {
   if (n.children.length === 0) { n._R = own; return n._R; }
 
   const downstream = n.children.map(k => reduceNode(k, picvR));
+  if (n._eomR) downstream.push(n._eomR);
   if (n.isConsumer && n.ownKw > 0) {
     // terminal sits in parallel with the onward route
     const termOnly = own - n._Rpipe;
@@ -735,6 +766,7 @@ function distribute(n, Q, picvR) {
   if (Q <= 0 || !isFinite(Q)) { n.flow = 0; n.children.forEach(k => distribute(k, 0, picvR)); return; }
   const paths = [];
   n.children.forEach(k => paths.push({ node: k, R: k._R }));
+  if (n._eomR) paths.push({ node: null, eom: true, R: n._eomR });
   if (n.isConsumer && n.ownKw > 0 && n.children.length > 0) {
     const own = (picvR[n.id] !== undefined) ? picvR[n.id] : branchResistance(n);
     paths.push({ node: null, R: Math.max(own - n._Rpipe, 1e-9) });
@@ -745,22 +777,44 @@ function distribute(n, Q, picvR) {
   paths.forEach(p => {
     const share = (isFinite(p.R) && p.R > 0 && s > 0) ? (1 / Math.sqrt(p.R)) / s : 0;
     if (p.node) distribute(p.node, Q * share, picvR);
+    else if (p.eom) n.eomActual = Q * share;
     else n.terminalFlow = Q * share;
   });
 }
 
 /* ---------- pump ---------- */
+/* Pump control.
+     fixed        — fixed speed, the operating point simply walks up the curve
+     constant     — variable speed holding a set differential; as 2-ports close
+                    the pressure would rise, so the drive slows to hold it
+     proportional — variable speed on a rising setpoint, the usual VSD setting
+                    where the held pressure falls off with flow                  */
 function pumpCurve() {
   const Qd = Math.max(0.01, parseFloat(el('pQ').value) || 1);
   const Hd = Math.max(1, parseFloat(el('pH').value) || 100);
   const shutPct = clamp(parseFloat(el('pShut').value) || 125, 105, 200) / 100;
   const nPumps = parseInt(el('pCount').value) || 1;
+  const mode = (el('pMode') || {}).value || 'fixed';
+  const setPct = clamp(parseFloat((el('pSet') || {}).value) || 100, 20, 150) / 100;
   const H0 = Hd * shutPct;
-  // one pump passes Qd/nPumps at Hd when running in parallel
   const qEach = Qd / nPumps;
   const k = (H0 - Hd) / (qEach * qEach);
-  return { H0, k, nPumps, Qd, Hd,
-    head: Q => H0 - k * Math.pow(Q / nPumps, 2) };
+  const Hset = Hd * setPct;
+  return { H0, k, nPumps, Qd, Hd, mode, Hset,
+    // full-speed curve
+    head: Q => H0 - k * Math.pow(Q / nPumps, 2),
+    // what the control is asking for at a given flow
+    setpoint: Q => mode === 'constant' ? Hset
+                 : mode === 'proportional' ? (Hset * 0.5 + Hset * 0.5 * Math.min(Q / Qd, 1.6))
+                 : null };
+}
+
+/* Speed ratio needed to sit at (Q,H), from the affinity laws.
+   Scaled curve is H = s^2*H0 - k*Q^2, so s = sqrt((H + kQ^2)/H0). */
+function speedRatio(pump, Q, H) {
+  const qe = Q / pump.nPumps;
+  const s = Math.sqrt(Math.max(0, (H + pump.k * qe * qe) / pump.H0));
+  return s;
 }
 
 /* ---------- proportional balancing ----------
@@ -833,6 +887,15 @@ function solve() {
 
   const roots = NODES.filter(n => !n.parent);
   const picvR = {};
+  // Seed each end-of-main bypass at its design duty; the loop below trims it
+  // to whatever differential that main actually sees.
+  NODES.forEach(n => {
+    if (n.eomBypass && !n.isConsumer) {
+      const qb = eomFlow(n);
+      n._eomR = qb > 0 ? Math.max(n._eomR || 0, 1e-6) || (pump0Head() / (qb * qb)) : null;
+      if (!isFinite(n._eomR) || n._eomR <= 0) n._eomR = pump0Head() / Math.max(qb * qb, 1e-9);
+    } else { n._eomR = null; }
+  });
   let Q = 0, sysR = Infinity, iterations = 0;
 
   for (let it = 0; it < 40; it++) {
@@ -841,9 +904,22 @@ function solve() {
     sysR = parallelR(Rs);
     if (!isFinite(sysR)) { Q = 0; break; }
 
-    // H0 - k(Q/n)^2 = sysR*Q^2
-    const a = pump.k / (pump.nPumps * pump.nPumps) + sysR;
-    Q = Math.sqrt(Math.max(0, pump.H0 / a));
+    // Where the control mode puts the operating point
+    const kEff = pump.k / (pump.nPumps * pump.nPumps);
+    const Qfull = Math.sqrt(Math.max(0, pump.H0 / (kEff + sysR)));   // full speed
+    if (pump.mode === 'constant') {
+      // hold Hset: sysR*Q^2 = Hset
+      Q = Math.sqrt(Math.max(0, pump.Hset / sysR));
+      if (Q > Qfull) Q = Qfull;            // drive already flat out
+    } else if (pump.mode === 'proportional') {
+      // Hset/2 + (Hset/2)(Q/Qd) = sysR*Q^2  ->  solve the quadratic in Q
+      const A = sysR, B = -(pump.Hset * 0.5 / pump.Qd), C = -(pump.Hset * 0.5);
+      const disc = B * B - 4 * A * C;
+      Q = (A > 0 && disc >= 0) ? (-B + Math.sqrt(disc)) / (2 * A) : Qfull;
+      if (Q > Qfull) Q = Qfull;
+    } else {
+      Q = Qfull;
+    }
 
     // push flows down
     let s = 0;
@@ -853,8 +929,22 @@ function solve() {
       distribute(r, Q * share, picvR);
     });
 
+    let changed = false, changedEom = false;
+
+    // Regulating set on each end-of-main bypass: throttled to pass its set
+    // flow at the differential available where it sits.
+    NODES.forEach(n => {
+      if (!n.eomBypass || n.isConsumer) return;
+      const qb = eomFlow(n);
+      if (qb <= 0) { n._eomR = null; return; }
+      const avail = availableDpAt(n, pump, Q);
+      const want = Math.max(avail, 0.5) / (qb * qb);
+      if (Math.abs((n._eomR || 0) - want) / Math.max(want, 1e-9) > 1e-4) {
+        n._eomR = want; changedEom = true;
+      }
+    });
+
     // PICVs hold their set flow while they have the differential to do it
-    let changed = false;
     NODES.forEach(n => {
       if (!n.isConsumer || n.arrangement !== 'picv' || !n.open) { delete picvR[n.id]; return; }
       const avail = availableDp(n, pump, Q, sysR);
@@ -871,11 +961,15 @@ function solve() {
         n.picvHolding = false;
       }
     });
-    if (!changed) break;
+    if (!changed && !changedEom) break;
   }
 
   // differential available at each branch, and honest recomputed drops
-  const pumpHead = pump.head(Q);
+  const atFullSpeed = pump.head(Q);
+  const wanted = pump.setpoint(Q);
+  const pumpHead = (wanted === null) ? atFullSpeed : Math.min(wanted, atFullSpeed);
+  const speed = speedRatio(pump, Q, pumpHead);
+  const flatOut = speed >= 0.999;
   NODES.forEach(n => {
     n.dpPipe = pipeDrop(n, n.flow) + fixedComponentsDrop(n, n.flow);
     if (n.isConsumer) {
@@ -892,10 +986,27 @@ function solve() {
     n.kwActual = n.flow / 1000 * FLUID.rho * FLUID.cp * n.dT;
   });
 
-  SOLUTION = { Q, sysR, pump, pumpHead, iterations,
+  SOLUTION = { Q, sysR, pump, pumpHead, iterations, speed, flatOut, atFullSpeed,
     designQ: pump.Qd, designH: pump.Hd,
     picvMin, picvMax };
   return SOLUTION;
+}
+
+// differential at the far end of a main, past its own pipe run
+function availableDpAt(n, pump, Q) {
+  let upstream = n._Rpipe * n.flow * n.flow;
+  let p = n.parent;
+  const seen = new Set();
+  while (p && !seen.has(p.id)) { seen.add(p.id); upstream += p._Rpipe * p.flow * p.flow; p = p.parent; }
+  const w = pump.setpoint(Q);
+  const h = (w === null) ? pump.head(Q) : Math.min(w, pump.head(Q));
+  return Math.max(0, h - upstream);
+}
+
+function pump0Head() {
+  const Hd = Math.max(1, parseFloat(el('pH').value) || 100);
+  const shutPct = clamp(parseFloat(el('pShut').value) || 125, 105, 200) / 100;
+  return Hd * shutPct;
 }
 
 // pressure differential across a branch = pump head less everything upstream of it
@@ -908,7 +1019,9 @@ function availableDp(n, pump, Q, sysR) {
     upstream += p._Rpipe * p.flow * p.flow;
     p = p.parent;
   }
-  return Math.max(0, pump.head(Q) - upstream);
+  const w = pump.setpoint(Q);
+  const h = (w === null) ? pump.head(Q) : Math.min(w, pump.head(Q));
+  return Math.max(0, h - upstream);
 }
 
 /* ---------- helpers ---------- */
@@ -922,7 +1035,7 @@ function fmt(v, d) { return (isFinite(v) ? v : 0).toFixed(d === undefined ? 1 : 
    dropping between them. Sub-mains get their own rail pair one tier down.
    Line weight tracks solved flow, so shutting valves visibly thins the mains.
    ========================================================================== */
-const GEO = { rail: 26, drop: 46, coilH: 46, tier: 170, slot: 138, pad: 30, plantW: 96, top: 44 };
+const GEO = { rail: 26, drop: 46, coilH: 46, tier: 184, slot: 138, pad: 30, plantW: 96, top: 52 };
 
 function layoutSpine(n, x, y, state) {
   n._x0 = x; n._y = y;
@@ -936,15 +1049,21 @@ function layoutSpine(n, x, y, state) {
     if (k.children.length === 0) drops.push(k);
   });
 
-  drops.forEach(k => { k._dropX = cur + GEO.slot / 2; k._dropY = y; cur += GEO.slot; });
+  let lastConn = x + GEO.pad;
+  drops.forEach(k => { k._dropX = cur + GEO.slot / 2; k._dropY = y; lastConn = k._dropX; cur += GEO.slot; });
 
   n.children.filter(k => k.children.length > 0).forEach(k => {
     const r = layoutSpine(k, cur, y + GEO.tier, state);
     k._joinX = cur + GEO.pad;
+    lastConn = Math.max(lastConn, k._joinX + 14);
     cur += r.width;
     maxY = Math.max(maxY, r.maxY);
   });
 
+  // The rail stops just past its last connection rather than running on to the
+  // full width of everything hanging below it — a pipe drawn to nowhere reads
+  // as a real pipe.
+  n._railEnd = lastConn + 22;
   n._x1 = Math.max(cur + GEO.pad, x + GEO.pad * 2 + 40);
   state.maxX = Math.max(state.maxX, n._x1);
   return { width: n._x1 - x, maxY };
@@ -1024,12 +1143,16 @@ function renderDiagram() {
     const w = weightFor(n.flow, maxFlow);
     const dash = flowing ? '' : '6 5';
 
-    rails += svgEl('line', { x1: n._x0, y1: n._y, x2: n._x1, y2: n._y,
+    const xEnd = n._railEnd !== undefined ? n._railEnd : n._x1;
+    rails += svgEl('line', { x1: n._x0, y1: n._y, x2: xEnd, y2: n._y,
       stroke: flowing ? '#c0392b' : '#4a5b68', 'stroke-width': w,
       'stroke-dasharray': dash, 'stroke-linecap': 'round' });
-    rails += svgEl('line', { x1: n._x0, y1: n._y + GEO.rail, x2: n._x1, y2: n._y + GEO.rail,
+    rails += svgEl('line', { x1: n._x0, y1: n._y + GEO.rail, x2: xEnd, y2: n._y + GEO.rail,
       stroke: flowing ? '#2471a3' : '#4a5b68', 'stroke-width': w,
       'stroke-dasharray': dash, 'stroke-linecap': 'round' });
+    // closed end: the two rails are capped, so the run visibly terminates
+    rails += svgEl('line', { x1: xEnd, y1: n._y - 5, x2: xEnd, y2: n._y + GEO.rail + 5,
+      stroke: '#5d6d7a', 'stroke-width': 2, 'stroke-linecap': 'round' });
 
     // connect a sub-main up to its parent spine
     if (n.parent && n._joinX !== undefined) {
@@ -1047,12 +1170,28 @@ function renderDiagram() {
         stroke: flowing ? '#2471a3' : '#4a5b68', 'stroke-width': w, fill: 'none', 'stroke-dasharray': dash });
     }
 
+    // end-of-main bypass drawn across the closed end
+    if (n.eomBypass) {
+      const bx = xEnd - 12;
+      const on = (n.eomActual || 0) > 0.0005;
+      rails += svgEl('path', { d: `M${bx} ${n._y} V${n._y + GEO.rail}`,
+        stroke: on ? '#6ee7b7' : '#4a5b68', 'stroke-width': Math.max(2, w * 0.6), fill: 'none' });
+      rails += svgEl('circle', { cx: bx, cy: n._y + GEO.rail / 2, r: 5,
+        fill: '#16212b', stroke: on ? '#6ee7b7' : '#4a5b68', 'stroke-width': 1.6 });
+      rails += svgEl('text', { x: bx + 10, y: n._y + GEO.rail / 2 + 3.5, 'font-size': 8.5,
+        'font-family': 'IBM Plex Mono, monospace', fill: on ? '#6ee7b7' : '#5d6d7a' },
+        'BP ' + fmt(n.eomActual || 0, 2));
+    }
+
     // spine label
-    labels += svgEl('text', { x: n._x0 + 4, y: n._y - 9, 'font-size': 10.5, 'font-weight': 600,
+    const dataTxt = n.pipe.nom + '  ' + fmt(n.lengthTotal, 0) + 'm  ' + fmt(n.flow, 2) + ' l/s  ' + fmt(n.dpTotal, 1) + ' kPa';
+    const plateW = Math.max(esc(n.ref).length * 6.4, dataTxt.length * 5.5) + 14;
+    labels += svgEl('rect', { x: n._x0, y: n._y - 34, width: plateW, height: 30, rx: 3,
+      fill: '#0d1720', 'fill-opacity': 0.94 });
+    labels += svgEl('text', { x: n._x0 + 7, y: n._y - 22, 'font-size': 10.5, 'font-weight': 600,
       'font-family': 'IBM Plex Sans, sans-serif', fill: '#cfe0e8' }, esc(n.ref));
-    labels += svgEl('text', { x: n._x0 + 4, y: n._y + GEO.rail + 15, 'font-size': 9.5,
-      'font-family': 'IBM Plex Mono, monospace', fill: '#8fa6b5' },
-      n.pipe.nom + ' \u00b7 ' + fmt(n.lengthTotal, 0) + 'm \u00b7 ' + fmt(n.flow, 2) + ' l/s \u00b7 ' + fmt(n.dpTotal, 1) + ' kPa');
+    labels += svgEl('text', { x: n._x0 + 7, y: n._y - 9, 'font-size': 9.5,
+      'font-family': 'IBM Plex Mono, monospace', fill: '#8fa6b5' }, dataTxt);
   });
 
   // ----- consumer drops -----
@@ -1187,6 +1326,9 @@ function renderReadout() {
   el('readout').innerHTML =
       cell('System flow', fmt(SOLUTION.Q, 2), 'l/s &middot; ' + (dQ >= 0 ? '+' : '') + fmt(dQ, 0) + '% of design', true)
     + cell('Pump head', fmt(SOLUTION.pumpHead, 0), 'kPa &middot; ' + fmt(SOLUTION.pumpHead / 9.81, 1) + ' m')
+    + cell('Pump speed', fmt(SOLUTION.speed * 100, 0) + '%',
+        SOLUTION.pump.mode === 'fixed' ? 'fixed speed'
+        : (SOLUTION.flatOut ? 'at full speed' : 'holding setpoint'))
     + cell('Heat carried', fmt(kw, 0), 'kW at &Delta;T ' + fmt(PROJECT.supply - PROJECT.ret, 0))
     + cell('Consumers open', openN + ' / ' + totalN, 'branches')
     + cell('System resistance', isFinite(SOLUTION.sysR) ? fmt(SOLUTION.sysR, 2) : '&infin;', 'kPa per (l/s)&sup2;');
@@ -1275,6 +1417,21 @@ function renderDiagnostics() {
     h: 'Pump is running out along its curve',
     b: 'System flow is ' + fmt(SOLUTION.Q / SOLUTION.designQ * 100, 0) + '% of design. Check the motor is not overloading and that NPSH available still suits.' });
 
+  if (SOLUTION.pump.mode !== 'fixed') {
+    if (SOLUTION.flatOut) {
+      msgs.push({ t: 'warn', h: 'Drive is at full speed and cannot hold its setpoint',
+        b: 'The control is asking for ' + fmt(SOLUTION.pump.setpoint(SOLUTION.Q), 0)
+          + ' kPa but the pump can only make ' + fmt(SOLUTION.atFullSpeed, 0)
+          + ' kPa at this flow. Either the setpoint is too high or the pump is undersized for the network.' });
+    } else {
+      msgs.push({ t: 'info', h: 'Drive is throttling back to ' + fmt(SOLUTION.speed * 100, 0) + '% speed',
+        b: 'As the two-port valves close the differential would rise, so the drive slows to hold '
+          + (SOLUTION.pump.mode === 'constant' ? 'a constant ' : 'its proportional ')
+          + fmt(SOLUTION.pumpHead, 0) + ' kPa. Absorbed power falls roughly with the cube of speed, so this is about '
+          + fmt(Math.pow(SOLUTION.speed, 3) * 100, 0) + '% of full-speed power.' });
+    }
+  }
+
   if (balanced) {
     msgs.push({ t: 'info', h: 'Balanced — pump duty derived from the regulated system',
       b: 'With every branch regulated to design flow the pump needs <strong>'
@@ -1296,6 +1453,26 @@ function renderDiagnostics() {
 
   el('diagnostics').innerHTML = msgs.map(m =>
     '<div class="msg ' + m.t + '"><strong>' + m.h + '</strong><br>' + m.b + '</div>').join('');
+}
+
+function renderMains() {
+  const mains = NODES.filter(n => !n.isConsumer);
+  const box = el('mainsList');
+  if (!box) return;
+  if (mains.length === 0) { box.innerHTML = '<div style="font-size:12px;color:var(--muted)">No distribution mains in this network.</div>'; return; }
+  box.innerHTML = mains.map(n =>
+    '<div class="crow' + (n.eomBypass ? '' : ' off') + '">'
+    + '<button class="sw" aria-pressed="' + (n.eomBypass ? 'true' : 'false') + '" data-eom="' + n.id
+    + '" aria-label="' + esc(n.ref) + ' bypass"></button>'
+    + '<div><div class="cname" style="text-decoration:none;color:var(--ink)">' + esc(n.ref) + '</div>'
+    + '<div class="cmeta">' + n.pipe.nom + ' &middot; ' + fmt(n.designLps, 2) + ' l/s design'
+    + (n.eomBypass ? ' &middot; bypass passing ' + fmt(n.eomActual || 0, 2) + ' l/s' : '') + '</div></div>'
+    + (n.eomBypass
+        ? '<div class="ctrls"><label class="fld" style="margin:0"><span>Bypass flow <span class="u">l/s</span></span>'
+          + '<input type="number" step="0.1" min="0" value="' + (n.eomLps === '' ? '' : n.eomLps)
+          + '" placeholder="' + fmt(n.designLps * 0.1, 2) + '" data-eomq="' + n.id + '"></label><span></span></div>'
+        : '')
+    + '</div>').join('');
 }
 
 function renderConsumers() {
@@ -1326,6 +1503,7 @@ function refresh() {
   renderPumpChart();
   renderBranchTable();
   renderDiagnostics();
+  renderMains();
 }
 /* ==========================================================================
    IMPORT AND WIRING
@@ -1435,6 +1613,18 @@ el('btnAllOff').addEventListener('click', () => {
   renderConsumers(); refresh();
 });
 
+el('mainsList').addEventListener('click', e => {
+  const sw = e.target.closest('.sw');
+  if (!sw || sw.dataset.eom === undefined) return;
+  const n = NODES.find(x => x.id == sw.dataset.eom);
+  if (n) { n.eomBypass = !n.eomBypass; refresh(); }
+});
+el('mainsList').addEventListener('change', e => {
+  if (e.target.dataset.eomq === undefined) return;
+  const n = NODES.find(x => x.id == e.target.dataset.eomq);
+  if (n) { n.eomLps = e.target.value; refresh(); }
+});
+
 el('consumerList').addEventListener('click', e => {
   const sw = e.target.closest('.sw');
   if (!sw) return;
@@ -1455,7 +1645,7 @@ el('consumerList').addEventListener('change', e => {
   }
 });
 
-['pQ', 'pH', 'pShut', 'pCount', 'aTarget', 'picvMin', 'picvMax', 'bypassPct'].forEach(id => {
+['pQ', 'pH', 'pShut', 'pCount', 'pMode', 'pSet', 'aTarget', 'picvMin', 'picvMax', 'bypassPct'].forEach(id => {
   const e = el(id);
   if (e) e.addEventListener('input', () => { if (NODES.length) refresh(); });
 });
