@@ -157,29 +157,62 @@
       padding: 24px 14px;
     }
 
-    .circuits-table td {
+    /* Two fields per line with the label above the value. A stacked list of
+       27 full-width rows made one circuit two screenfuls tall; this packs the
+       same inputs into roughly a third of the height. */
+    .circuits-table tr {
       display: grid;
-      grid-template-columns: 130px 1fr;
-      gap: 10px;
-      padding: 7px 0;
-      border: none;
-      align-items: center;
-      font-size: 14px;
+      grid-template-columns: 1fr 1fr;
+      column-gap: 12px;
     }
 
-    .circuits-table td:not(:last-child) {
-      border-bottom: 1px solid var(--line);
+    .circuits-table td {
+      display: block;
+      padding: 6px 0;
+      border: none;
+      font-size: 14px;
+      min-width: 0;
     }
 
     .circuits-table td::before {
       content: attr(data-label);
+      display: block;
       font-family: 'Barlow Condensed', sans-serif;
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 700;
-      letter-spacing: 1px;
+      letter-spacing: 0.8px;
       text-transform: uppercase;
-      color: var(--ink-soft);
+      color: var(--muted);
+      margin-bottom: 3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
+
+    /* fields that need the full width */
+    .circuits-table td.td-ref,
+    .circuits-table td.td-out[data-label="Recommended"],
+    .circuits-table td[data-label="Weight &amp; Volume"],
+    .circuits-table td[data-label="Weight & Volume"],
+    .circuits-table td[data-label="Heat Loss"],
+    .circuits-table td[data-label="Fed from"],
+    .circuits-table td[data-label="Status"],
+    .circuits-table td.td-mob-sum { grid-column: 1 / -1; display: block; }
+
+    /* Calculated values are hidden until asked for — they are not what you
+       come to a phone to edit. The summary strip carries the headline result. */
+    body:not(.show-outputs) .circuits-table td.td-out { display: none; }
+
+    /* headline result, always visible */
+    .circuits-table td.td-mob-sum {
+      background: var(--off-white);
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      padding: 8px 10px;
+      margin: 4px 0 2px;
+      font-size: 13px;
+    }
+    .circuits-table td.td-mob-sum::before { display: none; }
 
     /* The delete button cell - put it top-right corner */
     .circuits-table td.td-delete {
@@ -791,6 +824,32 @@
   #thermalSummary td { padding: 5px 8px; border-bottom: 1px solid var(--line); }
   #thermalSummary td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
+  /* Type colour on the row edge — scannable without shouting over the
+     amber/red validation states already in use */
+  tr.t-main     td:first-child { box-shadow: inset 4px 0 0 #1a5670; }
+  tr.t-consumer td:first-child { box-shadow: inset 4px 0 0 #0b7a4b; }
+  tr.t-future   td:first-child { box-shadow: inset 4px 0 0 #c28a00; }
+  tr.t-plant    td:first-child { box-shadow: inset 4px 0 0 #5a3d8a; }
+
+  .tree-guide { color: var(--line-strong); font-family: monospace; white-space: pre; flex-shrink: 0; font-size: 12px; }
+  .collapse-btn {
+    background: transparent; border: none; cursor: pointer; padding: 0 3px;
+    font-size: 11px; color: var(--brand-blue-deep); font-weight: 700; line-height: 1;
+    flex-shrink: 0; min-width: 16px;
+  }
+  .collapse-btn:hover { color: var(--ink); }
+  .fold-count {
+    font-size: 9px; font-weight: 700; letter-spacing: 0.5px; color: var(--white);
+    background: var(--brand-blue-deep); border-radius: 8px; padding: 1px 6px; margin-left: 5px;
+  }
+
+  body.compact-rows .circuits-table td { padding-top: 3px; padding-bottom: 3px; }
+  body.compact-rows .circuits-table input,
+  body.compact-rows .circuits-table select { padding: 3px 5px; font-size: 12px; min-height: 28px; }
+  body.compact-rows .circuits-table td { font-size: 11.5px; }
+
+  .td-mob-sum { display: none; }     /* phone-only headline strip */
+
   /* Thermal columns are hidden until heat loss is enabled */
   body:not(.thermal-on) .th-thermal,
   body:not(.thermal-on) .td-thermal { display: none !important; }
@@ -839,9 +898,19 @@
     }
     .circuits-table thead { display: none !important; }
     .circuits-table tbody { display: block !important; width: 100% !important; }
-    .circuits-table tr { display: block !important; width: 100% !important; }
-    .circuits-table td { display: grid !important; width: 100% !important; }
-    .circuits-table td.td-ref { display: block !important; }
+    .circuits-table tr {
+      display: grid !important;
+      grid-template-columns: 1fr 1fr !important;
+      column-gap: 12px;
+      width: 100% !important;
+    }
+    .circuits-table td { display: block !important; width: auto !important; min-width: 0; }
+    .circuits-table td.td-ref,
+    .circuits-table td.td-mob-sum,
+    .circuits-table td.td-out[data-label="Recommended"],
+    .circuits-table td[data-label="Fed from"],
+    .circuits-table td[data-label="Status"] { grid-column: 1 / -1 !important; display: block !important; }
+    body:not(.show-outputs) .circuits-table td.td-out { display: none !important; }
     .circuits-table td.td-delete { display: flex !important; gap: 4px; }
     .row-dup { min-width: 40px; min-height: 40px; font-size: 18px; }
     .row-move { min-width: 34px; min-height: 40px; font-size: 13px; }
@@ -950,7 +1019,6 @@
   /* Very narrow phones (SE etc.) */
   @media (max-width: 400px) {
     .totals-bar { grid-template-columns: 1fr !important; }
-    .circuits-table td { grid-template-columns: 110px 1fr; }
     header .title-block h1 { font-size: 16px; }
     header .brand-logo { height: 32px !important; }
   }
@@ -1193,10 +1261,20 @@
           <label style="font-size:11.5px;color:var(--muted)">Tolerance
             <input type="number" id="rollupTol" value="0.25" step="0.25" min="0" style="width:56px;padding:5px 6px;font-size:12px;margin-left:5px" oninput="renderCircuits()"> %
           </label>
+          <button onclick="collapseAll()" title="Fold every main and its branches" style="background:var(--white);color:var(--ink);border:1px solid var(--line-strong);border-radius:5px;padding:8px 11px;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;min-height:38px">Fold all</button>
+          <button onclick="expandAll()" title="Show every circuit" style="background:var(--white);color:var(--ink);border:1px solid var(--line-strong);border-radius:5px;padding:8px 11px;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;min-height:38px">Unfold</button>
+          <button onclick="toggleOutputs()" title="Show or hide the calculated columns on a phone" style="background:var(--white);color:var(--ink);border:1px solid var(--line-strong);border-radius:5px;padding:8px 11px;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;min-height:38px">Calc values</button>
+          <button onclick="toggleCompact()" title="Tighter rows and smaller text" style="background:var(--white);color:var(--ink);border:1px solid var(--line-strong);border-radius:5px;padding:8px 11px;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;min-height:38px">Compact</button>
           <button onclick="setAllMainsAuto()" title="Set every distribution main that has branches to take its duty from the consumers beneath it" style="background:var(--white);color:var(--ink);border:1px solid var(--line-strong);border-radius:5px;padding:8px 12px;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;min-height:38px">Auto-size mains</button>
           <button onclick="autoAssignParents()" style="background:var(--white);color:var(--ink);border:1px solid var(--line-strong);border-radius:5px;padding:8px 12px;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;min-height:38px">Assign parents from order</button>
           <button onclick="applyCriticalPath()" style="background:var(--brand-blue-deep);color:var(--white);border:none;border-radius:5px;padding:8px 12px;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;min-height:38px">Find critical path</button>
         </div>
+      </div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-bottom:9px">
+        <span><span style="display:inline-block;width:10px;height:10px;background:#1a5670;border-radius:2px;vertical-align:middle"></span> Main</span>
+        <span><span style="display:inline-block;width:10px;height:10px;background:#0b7a4b;border-radius:2px;vertical-align:middle"></span> Consumer</span>
+        <span><span style="display:inline-block;width:10px;height:10px;background:#c28a00;border-radius:2px;vertical-align:middle"></span> Future</span>
+        <span><span style="display:inline-block;width:10px;height:10px;background:#5a3d8a;border-radius:2px;vertical-align:middle"></span> Plant</span>
       </div>
       <div id="topologySummary" style="font-size:12.5px;line-height:1.6"></div>
     </div>
@@ -2717,6 +2795,50 @@ function applyCriticalPath() {
   showToast('Index run set to ' + paths[0].terminal + ' (' + paths[0].kPa.toFixed(1) + ' kPa)');
 }
 
+/* ---- Tree display: collapse, colour and connectors ----
+   With thirty-odd circuits the list is hard to read as a structure, so a main
+   can be folded away with its whole branch, each row carries a colour edge for
+   its type, and continuous guides let a branch be traced back to its parent. */
+function isCollapsedAncestor(c) {
+  let p = (c.parentId === null || c.parentId === undefined) ? null : circuitById(c.parentId);
+  const seen = new Set();
+  while (p && !seen.has(p.id)) {
+    if (p.collapsed) return true;
+    seen.add(p.id);
+    p = (p.parentId === null || p.parentId === undefined) ? null : circuitById(p.parentId);
+  }
+  return false;
+}
+
+function toggleCollapse(id) {
+  const c = circuitById(id);
+  if (!c) return;
+  c.collapsed = !c.collapsed;
+  renderCircuits();
+}
+
+function expandAll()   { circuits.forEach(c => { c.collapsed = false; }); renderCircuits(); }
+function collapseAll() { circuits.forEach(c => { if (childrenOf(c.id).length) c.collapsed = true; }); renderCircuits(); }
+
+function descendantCount(c, seen) {
+  seen = seen || new Set();
+  if (seen.has(c.id)) return 0;
+  seen.add(c.id);
+  return childrenOf(c.id).reduce((s, k) => s + 1 + descendantCount(k, seen), 0);
+}
+
+function toggleOutputs() {
+  document.body.classList.toggle('show-outputs');
+  try { localStorage.setItem('adi_outputs', document.body.classList.contains('show-outputs') ? '1' : '0'); } catch (e) {}
+}
+
+function toggleCompact() {
+  document.body.classList.toggle('compact-rows');
+  try { localStorage.setItem('adi_compact', document.body.classList.contains('compact-rows') ? '1' : '0'); } catch (e) {}
+}
+
+function isCollapsedAncestor_end() {}
+
 function migrateLengths(list) {
   let legacy = 0, typesInferred = 0;
   list.forEach(c => {
@@ -3975,8 +4097,10 @@ function renderCircuits() {
   let totalPipeKg = 0, totalWaterKg = 0, totalWaterL = 0;
 
   circuits.forEach((c, idx) => {
+    if (isCollapsedAncestor(c)) return;   // folded away under a collapsed main
     const result = calculateCircuit(c);
     const tr = document.createElement('tr');
+    tr.classList.add('t-' + circuitType(c));
     if (c.isIndex) tr.classList.add('is-index-run');
     if (c.isLLH)   tr.classList.add('is-llh-row');
 
@@ -4112,6 +4236,17 @@ function renderCircuits() {
       + '<td class="td-index" data-label="Index Run"><div class="index-check-wrap"><input type="checkbox" class="index-check" ' + (c.isIndex ? 'checked' : '') + ' onchange="updateCircuitField(' + c.id + ',\'isIndex\',this.checked)"></div></td>'
       + '<td class="td-index" data-label="LLH Header"><div class="index-check-wrap"><input type="checkbox" class="index-check" ' + (c.isLLH ? 'checked' : '') + ' onchange="updateCircuitField(' + c.id + ',\'isLLH\',this.checked)" title="Size as low loss header"></div></td>'
       + '<td class="td-ref" data-label="Reference"><div style="display:flex;align-items:center;gap:0">'
+      +   (circuitDepth(c) > 0
+            ? '<span class="tree-guide">' + '\u2502  '.repeat(Math.max(0, circuitDepth(c) - 1)) + '\u2514\u2500</span>'
+            : '')
+      +   (childrenOf(c.id).length > 0
+            ? '<button class="collapse-btn" onclick="toggleCollapse(' + c.id + ')" title="'
+              + (c.collapsed ? 'Show branch' : 'Fold branch away') + '">'
+              + (c.collapsed ? '\u25b8' : '\u25be') + '</button>'
+            : '<span style="display:inline-block;width:16px;flex-shrink:0"></span>')
+      +   '<input type="text" value="' + c.ref.replace(/"/g,'&quot;') + '" onchange="updateCircuitField(' + c.id + ',\'ref\',this.value)">'
+      +   (c.collapsed ? '<span class="fold-count" title="branches hidden">+' + descendantCount(c) + '</span>' : '')
+      + '</div></td>'
       +   (circuitDepth(c) > 0 ? '<span style="color:var(--muted);font-size:11px;white-space:pre;flex-shrink:0">' + '\u2502  '.repeat(Math.max(0, circuitDepth(c) - 1)) + '\u2514\u2500 </span>' : '')
       +   '<input type="text" value="' + c.ref.replace(/"/g,'&quot;') + '" onchange="updateCircuitField(' + c.id + ',\'ref\',this.value)">'
       + '</div></td>'
@@ -4150,16 +4285,16 @@ function renderCircuits() {
       + '</div></td>'
       + '<td data-label="Fittings %"><input type="number" value="' + c.fittings + '" step="5" min="0" max="40" onchange="updateCircuitField(' + c.id + ',\'fittings\',this.value)"></td>'
       + '<td data-label="Consumer Load (kPa)"><input type="number" value="' + c.consumerLoad + '" step="1" min="0" onchange="updateCircuitField(' + c.id + ',\'consumerLoad\',this.value)" title="Equipment \u0394P: AHU coil, HX, FCU etc."></td>'
-      + '<td class="derived-cell" data-label="Mass Flow (kg/s)">' + mdotDerived + '</td>'
-      + '<td class="derived-cell" data-label="Vol Flow (l/s)">' + lpsDerived + '</td>'
-      + '<td class="derived-cell" data-label="Vol Flow (m\xb3/h)">' + m3hDerived + '</td>'
-      + '<td class="derived-cell td-duty" data-label="Duty (kW)" style="color:var(--brand-blue);background:var(--brand-blue-dark)">' + kwDerived + '</td>'
-      + '<td class="recommended-cell" data-label="Recommended">' + recText + '</td>'
-      + '<td class="derived-cell" data-label="Velocity (m/s)">' + velText + '</td>'
-      + '<td class="derived-cell" data-label="Pa/m">' + pdText + '</td>'
-      + '<td class="derived-cell" data-label="Pipe Loss (kPa)">' + pipeLossText + '</td>'
-      + '<td class="derived-cell" data-label="Total Loss">' + totalLossText + '</td>'
-      + '<td class="derived-cell" data-label="Weight &amp; Volume">' + weightText + '</td>'
+      + '<td class="derived-cell td-out" data-label="Mass Flow (kg/s)">' + mdotDerived + '</td>'
+      + '<td class="derived-cell td-out" data-label="Vol Flow (l/s)">' + lpsDerived + '</td>'
+      + '<td class="derived-cell td-out" data-label="Vol Flow (m\xb3/h)">' + m3hDerived + '</td>'
+      + '<td class="derived-cell td-duty td-out" data-label="Duty (kW)" style="color:var(--brand-blue);background:var(--brand-blue-dark)">' + kwDerived + '</td>'
+      + '<td class="recommended-cell td-out" data-label="Recommended">' + recText + '</td>'
+      + '<td class="derived-cell td-out" data-label="Velocity (m/s)">' + velText + '</td>'
+      + '<td class="derived-cell td-out" data-label="Pa/m">' + pdText + '</td>'
+      + '<td class="derived-cell td-out" data-label="Pipe Loss (kPa)">' + pipeLossText + '</td>'
+      + '<td class="derived-cell td-out" data-label="Total Loss">' + totalLossText + '</td>'
+      + '<td class="derived-cell td-out" data-label="Weight &amp; Volume">' + weightText + '</td>'
       + '<td data-label="Bypass"><div style="display:flex;flex-direction:column;gap:3px;align-items:center">'
       +   '<input type="checkbox" ' + (c.isBypass ? 'checked' : '') + ' onchange="toggleBypass(' + c.id + ',this.checked)" style="width:17px;height:17px;accent-color:var(--brand-blue);cursor:pointer">'
       +   (c.isBypass
@@ -4178,7 +4313,16 @@ function renderCircuits() {
       + '<td class="td-thermal" data-label="Flanges"><input type="number" value="' + effectiveFlangeCount(c) + '" step="1" min="0" onchange="updateCircuitField(' + c.id + ',\'flangeCount\',this.value); markFlangeOverride(' + c.id + ')">'
       +   '<div style="font-size:9px;font-weight:700;letter-spacing:0.5px;margin-top:2px;color:' + (c.flangeAuto !== false ? 'var(--brand-blue-deep)' : '#c28a00') + '">' + (c.flangeAuto !== false ? 'AUTO 1/6m' : 'OVERRIDE') + '</div></td>'
       + '<td class="td-thermal" data-label="Insul. mm"><input type="number" value="' + (c.insThickness === '' || c.insThickness === undefined ? '' : c.insThickness) + '" step="5" min="0" placeholder="' + (result.recommended ? insulationThicknessForOD(result.recommended.od) : '') + '" title="Blank = schedule default" onchange="updateCircuitField(' + c.id + ',\'insThickness\',this.value)"></td>'
-      + '<td class="derived-cell td-thermal" data-label="Heat Loss">' + heatText + '</td>'
+      + '<td class="derived-cell td-thermal td-out" data-label="Heat Loss">' + heatText + '</td>'
+      + '<td class="td-mob-sum" data-label="Result">'
+      +   (result.error
+            ? '<span style="color:#c74418;font-weight:600">' + escHtml(result.error) + '</span>'
+            : '<strong style="font-size:14px">' + (result.recommended ? result.recommended.nom : '\u2014') + '</strong>'
+              + '<span style="color:var(--muted)"> \u00b7 </span>' + (result.vflow_ls ? result.vflow_ls.toFixed(2) : '0') + ' l/s'
+              + '<span style="color:var(--muted)"> \u00b7 </span>' + (result.recommended ? result.recommended.v.toFixed(2) : '0') + ' m/s'
+              + '<span style="color:var(--muted)"> \u00b7 </span>' + result.totalLoss_kPa.toFixed(1) + ' kPa'
+              + '<span style="color:var(--muted)"> \u00b7 </span>' + result.kw.toFixed(0) + ' kW')
+      + '</td>'
       + '<td data-label="Status">' + statusBadge + '</td>';
 
     tbody.appendChild(tr);
@@ -5587,6 +5731,8 @@ if (!loadFromLocalStorage() || circuits.length === 0) {
   addCircuit({ ref: 'Primary/Secondary LLH',  mode: 'fromFlow', lps: 3.5, dT: 6, length: 1.5,fittings: 10, isIndex: false, consumerLoad: 0,  isLLH: true  });
 }
 
+try { if (localStorage.getItem('adi_compact') === '1') document.body.classList.add('compact-rows');
+      if (localStorage.getItem('adi_outputs') === '1') document.body.classList.add('show-outputs'); } catch (e) {}
 onBasisChange();   // sets fluid properties from the mean temperature, then renders
 </script>
 </body>
