@@ -848,7 +848,7 @@
   body.compact-rows .circuits-table select { padding: 3px 5px; font-size: 12px; min-height: 28px; }
   body.compact-rows .circuits-table td { font-size: 11.5px; }
 
-  .td-mob-sum { display: none; }     /* phone-only headline strip */
+  th.td-mob-sum, td.td-mob-sum { display: none; }   /* phone-only headline strip */
 
   /* Thermal columns are hidden until heat loss is enabled */
   body:not(.thermal-on) .th-thermal,
@@ -1331,6 +1331,7 @@
             <th class="th-thermal" title="Number of flange pairs on this circuit requiring insulation jackets">Flanges</th>
             <th class="th-thermal" title="Insulation thickness — blank uses the BS 5422 schedule for this pipe OD">Insul. mm</th>
             <th class="derived th-thermal" title="Heat loss from pipe, valve jackets and flange covers at the design ΔT">Heat Loss</th>
+            <th class="td-mob-sum">Result</th>
             <th class="derived">Status</th>
           </tr>
         </thead>
@@ -4246,9 +4247,6 @@ function renderCircuits() {
             : '<span style="display:inline-block;width:16px;flex-shrink:0"></span>')
       +   '<input type="text" value="' + c.ref.replace(/"/g,'&quot;') + '" onchange="updateCircuitField(' + c.id + ',\'ref\',this.value)">'
       +   (c.collapsed ? '<span class="fold-count" title="branches hidden">+' + descendantCount(c) + '</span>' : '')
-      + '</div></td>'
-      +   (circuitDepth(c) > 0 ? '<span style="color:var(--muted);font-size:11px;white-space:pre;flex-shrink:0">' + '\u2502  '.repeat(Math.max(0, circuitDepth(c) - 1)) + '\u2514\u2500 </span>' : '')
-      +   '<input type="text" value="' + c.ref.replace(/"/g,'&quot;') + '" onchange="updateCircuitField(' + c.id + ',\'ref\',this.value)">'
       + '</div></td>'
       + '<td data-label="Mode"><select class="mode-select" onchange="updateCircuitField(' + c.id + ',\'mode\',this.value)">'
       + '<option value="fromKw"' + (c.mode==='fromKw'?' selected':'') + '>Size from kW</option>'
