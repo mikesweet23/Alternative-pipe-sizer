@@ -493,13 +493,15 @@
 
         <div class="panel p-mains">
           <div class="panel-hd">
-            <h2>Mains</h2>
-            <span class="note">end-of-main bypass</span>
+            <h2>Bypasses</h2>
+            <span class="note">end-of-line, on mains or consumers</span>
           </div>
           <div class="panel-bd">
             <p style="font-size:11.5px;color:var(--muted);margin:0 0 10px;line-height:1.55">
-              A bypass across the ends of a main keeps water moving when the two-port valves shut.
-              Leave the flow blank for 10% of that main's design flow.
+              A bypass across the ends of a line keeps water moving when the two-port valves shut.
+              Set to <strong>Only as consumers shut</strong> it behaves like a differential-pressure or
+              minimum-flow valve &mdash; closed while the consumers are drawing, opening just enough to
+              hold the set flow as they close. Leave the flow blank for 10% of that line's design flow.
             </p>
             <div class="clist" id="mainsList"></div>
           </div>
@@ -696,8 +698,9 @@ function buildNetwork(data) {
       // simulator state
       open: true,
       arrangement: 'twoPort',
-      eomBypass: false,      // end-of-main bypass to hold minimum flow
-      eomLps: '',            // blank = 10% of this main's design flow
+      eomBypass: false,      // end-of-line bypass to hold minimum flow
+      eomLps: '',            // blank = 10% of this line's design flow
+      eomMode: 'onDemand',   // 'onDemand' opens only as consumers shut; 'always' is a fixed DRV
       isolation: 'butterfly',
       strainer: true,
       children: [],
@@ -831,7 +834,16 @@ function reduceNode(n, picvR) {
     ? (pipeDrop(n, n.designLps) + fixedComponentsDrop(n, n.designLps)) / (n.designLps * n.designLps)
     : 0;
 
-  if (n.children.length === 0) { n._R = own; return n._R; }
+  if (n.children.length === 0) {
+    if (n._eomR && isFinite(n._eomR)) {
+      // coil and bypass share the branch: both sit downstream of its pipework
+      const coilOnly = Math.max(own - n._Rpipe, 1e-9);
+      n._R = n._Rpipe + parallelR([coilOnly, n._eomR]);
+    } else {
+      n._R = own;
+    }
+    return n._R;
+  }
 
   const downstream = n.children.map(k => reduceNode(k, picvR));
   if (n._eomR) downstream.push(n._eomR);
@@ -849,6 +861,20 @@ function distribute(n, Q, picvR) {
   n.flow = Q;
   if (Q <= 0 || !isFinite(Q)) { n.flow = 0; n.children.forEach(k => distribute(k, 0, picvR)); return; }
   const paths = [];
+  if (n.children.length === 0) {
+    // terminal: coil in parallel with its own bypass, if fitted
+    if (n._eomR && isFinite(n._eomR)) {
+      const own = (picvR[n.id] !== undefined) ? picvR[n.id] : branchResistance(n);
+      const coilOnly = Math.max(own - n._Rpipe, 1e-9);
+      const sc = 1 / Math.sqrt(coilOnly), sb = 1 / Math.sqrt(n._eomR);
+      n.eomActual = Q * sb / (sc + sb);
+      n.coilFlow = Q - n.eomActual;
+    } else {
+      n.eomActual = 0;
+      n.coilFlow = Q;
+    }
+    return;
+  }
   n.children.forEach(k => paths.push({ node: k, R: k._R }));
   if (n._eomR) paths.push({ node: null, eom: true, R: n._eomR });
   if (n.isConsumer && n.ownKw > 0 && n.children.length > 0) {
@@ -1030,7 +1056,7 @@ function solve() {
   // Seed each end-of-main bypass at its design duty; the loop below trims it
   // to whatever differential that main actually sees.
   NODES.forEach(n => {
-    if (n.eomBypass && !n.isConsumer) {
+    if (n.eomBypass) {
       const qb = eomFlow(n);
       n._eomR = qb > 0 ? Math.max(n._eomR || 0, 1e-6) || (pump0Head() / (qb * qb)) : null;
       if (!isFinite(n._eomR) || n._eomR <= 0) n._eomR = pump0Head() / Math.max(qb * qb, 1e-9);
@@ -1074,12 +1100,28 @@ function solve() {
     // Regulating set on each end-of-main bypass: throttled to pass its set
     // flow at the differential available where it sits.
     NODES.forEach(n => {
-      if (!n.eomBypass || n.isConsumer) return;
-      const qb = eomFlow(n);
-      if (qb <= 0) { n._eomR = null; return; }
+      if (!n.eomBypass) return;
+      const setQ = eomFlow(n);
+      if (setQ <= 0) { n._eomR = null; return; }
+
+      // How much is already going through the consumers on this line
+      let served = n.children.length
+        ? n.children.reduce((s, k) => s + (k.flow || 0), 0) + (n.terminalFlow || 0)
+        : (n.open ? Math.max(0, (n.coilFlow !== undefined ? n.coilFlow : (n.flow || 0))) : 0);
+
+      // An on-demand bypass (differential-pressure or minimum-flow valve) only
+      // passes what is missing. Once the consumers are taking their share it
+      // closes; as they shut it opens to hold the set flow.
+      const qb = (n.eomMode === 'always') ? setQ : Math.max(0, setQ - served);
+      n.eomTarget = qb;
+
+      if (qb <= 1e-4) {
+        if (n._eomR !== Infinity) { n._eomR = Infinity; changedEom = true; }   // shut
+        return;
+      }
       const avail = availableDpAt(n, pump, Q);
       const want = Math.max(avail, 0.5) / (qb * qb);
-      if (Math.abs((n._eomR || 0) - want) / Math.max(want, 1e-9) > 1e-4) {
+      if (!isFinite(n._eomR) || Math.abs((n._eomR || 0) - want) / Math.max(want, 1e-9) > 1e-4) {
         n._eomR = want; changedEom = true;
       }
     });
@@ -1313,14 +1355,14 @@ function renderDiagram() {
     // end-of-main bypass drawn across the closed end
     if (n.eomBypass) {
       const bx = xEnd - 12;
-      const on = (n.eomActual || 0) > 0.0005;
+      const on = (n.eomActual || 0) > 0.001;
       rails += svgEl('path', { d: `M${bx} ${n._y} V${n._y + GEO.rail}`,
         stroke: on ? '#6ee7b7' : '#4a5b68', 'stroke-width': Math.max(2, w * 0.6), fill: 'none' });
       rails += svgEl('circle', { cx: bx, cy: n._y + GEO.rail / 2, r: 5,
         fill: '#16212b', stroke: on ? '#6ee7b7' : '#4a5b68', 'stroke-width': 1.6 });
       rails += svgEl('text', { x: bx + 10, y: n._y + GEO.rail / 2 + 3.5, 'font-size': 8.5,
         'font-family': 'IBM Plex Mono, monospace', fill: on ? '#6ee7b7' : '#5d6d7a' },
-        'BP ' + fmt(n.eomActual || 0, 2));
+        on ? 'BP ' + fmt(n.eomActual || 0, 2) : 'BP shut');
     }
 
     // spine label
@@ -1826,23 +1868,38 @@ function runSweep() {
 }
 
 function renderMains() {
-  const mains = NODES.filter(n => !n.isConsumer);
   const box = el('mainsList');
   if (!box) return;
-  if (mains.length === 0) { box.innerHTML = '<div style="font-size:12px;color:var(--muted)">No distribution mains in this network.</div>'; return; }
-  box.innerHTML = mains.map(n =>
-    '<div class="crow' + (n.eomBypass ? '' : ' off') + '">'
+  const list = NODES.slice().sort((a, b) => (a.isConsumer ? 1 : 0) - (b.isConsumer ? 1 : 0));
+  if (list.length === 0) { box.innerHTML = '<div style="font-size:12px;color:var(--muted)">Nothing to bypass yet.</div>'; return; }
+  box.innerHTML = list.map(n => {
+    const passing = n.eomActual || 0;
+    const shut = n.eomBypass && passing <= 1e-3;
+    return '<div class="crow' + (n.eomBypass ? '' : ' off') + '">'
     + '<button class="sw" aria-pressed="' + (n.eomBypass ? 'true' : 'false') + '" data-eom="' + n.id
     + '" aria-label="' + esc(n.ref) + ' bypass"></button>'
-    + '<div><div class="cname" style="text-decoration:none;color:var(--ink)">' + esc(n.ref) + '</div>'
+    + '<div><div class="cname" style="text-decoration:none;color:var(--ink)">' + esc(n.ref)
+    + ' <span class="tag">' + (n.isConsumer ? 'consumer' : 'main') + '</span></div>'
     + '<div class="cmeta">' + n.pipe.nom + ' &middot; ' + fmt(n.designLps, 2) + ' l/s design'
-    + (n.eomBypass ? ' &middot; bypass passing ' + fmt(n.eomActual || 0, 2) + ' l/s' : '') + '</div></div>'
     + (n.eomBypass
-        ? '<div class="ctrls"><label class="fld" style="margin:0"><span>Bypass flow <span class="u">l/s</span></span>'
+        ? ' &middot; ' + (shut
+            ? '<span style="color:var(--shut);font-weight:600">bypass shut</span>'
+            : '<span style="color:var(--live);font-weight:600">passing ' + fmt(passing, 2) + ' l/s</span>')
+        : '') + '</div></div>'
+    + (n.eomBypass
+        ? '<div class="ctrls">'
+          + '<label class="fld" style="margin:0"><span>Set flow <span class="u">l/s</span></span>'
           + '<input type="number" step="0.1" min="0" value="' + (n.eomLps === '' ? '' : n.eomLps)
-          + '" placeholder="' + fmt(n.designLps * 0.1, 2) + '" data-eomq="' + n.id + '"></label><span></span></div>'
+          + '" placeholder="' + fmt(n.designLps * 0.1, 2) + '" data-eomq="' + n.id + '"></label>'
+          + '<label class="fld" style="margin:0"><span>Opens</span>'
+          + '<select data-eommode="' + n.id + '">'
+          + '<option value="onDemand"' + (n.eomMode !== 'always' ? ' selected' : '') + '>Only as consumers shut</option>'
+          + '<option value="always"' + (n.eomMode === 'always' ? ' selected' : '') + '>Always (fixed DRV)</option>'
+          + '</select></label>'
+          + '</div>'
         : '')
-    + '</div>').join('');
+    + '</div>';
+  }).join('');
 }
 
 function renderConsumers() {
@@ -1993,9 +2050,14 @@ el('mainsList').addEventListener('click', e => {
   if (n) { n.eomBypass = !n.eomBypass; refresh(); }
 });
 el('mainsList').addEventListener('change', e => {
-  if (e.target.dataset.eomq === undefined) return;
-  const n = NODES.find(x => x.id == e.target.dataset.eomq);
-  if (n) { n.eomLps = e.target.value; refresh(); }
+  const t = e.target;
+  if (t.dataset.eomq !== undefined) {
+    const n = NODES.find(x => x.id == t.dataset.eomq);
+    if (n) { n.eomLps = t.value; refresh(); }
+  } else if (t.dataset.eommode !== undefined) {
+    const n = NODES.find(x => x.id == t.dataset.eommode);
+    if (n) { n.eomMode = t.value; refresh(); }
+  }
 });
 
 el('consumerList').addEventListener('click', e => {
