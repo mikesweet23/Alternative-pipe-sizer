@@ -287,6 +287,49 @@
     .cell .v { font-size: 18px; }
   }
 
+
+  /* ---------- phone layout ----------
+     The desktop two-column split stacks badly: you scroll past the diagram,
+     results, sweep and diagnostics before reaching the controls you came to
+     touch. Dissolving the split lets each panel be ordered on its own. */
+  @media (max-width: 1100px) {
+    .split { display: contents; }
+    .split > div { display: contents; }
+    #main { display: flex; flex-direction: column; }
+    .readout { order: 0; }
+    .p-diagram { order: 1; }
+    .p-cons    { order: 2; }
+    .p-pump    { order: 3; }
+    .p-branch  { order: 4; }
+    .p-sweep   { order: 5; }
+    .p-diag    { order: 6; }
+    .p-mains   { order: 7; }
+    .p-assum   { order: 8; }
+    #emptyState { order: 0; }
+  }
+
+  @media (max-width: 640px) {
+    /* two readouts per line rather than seven stacked */
+    .readout { grid-template-columns: 1fr 1fr; }
+    .cell { padding: 7px 9px; }
+    .cell .v { font-size: 16px; margin: 1px 0 0; }
+    .cell .k { font-size: 8.5px; letter-spacing: 0.08em; }
+    .cell .u { font-size: 9.5px; line-height: 1.3; }
+
+    .panel-bd { padding: 12px; }
+    .panel-hd { padding: 9px 12px; }
+    .panel-hd .note { display: block; width: 100%; margin-top: 2px; }
+
+    /* consumer rows: switch, name and controls on tighter lines */
+    .crow { padding: 9px 10px; gap: 8px 10px; }
+    .crow .ctrls { grid-template-columns: 1fr auto; gap: 8px; }
+    .cname { font-size: 13px; }
+    .cmeta { font-size: 10.5px; line-height: 1.4; }
+
+    .grid.g2, .grid.g3 { grid-template-columns: 1fr 1fr; gap: 10px; }
+    label.fld > span { font-size: 9.5px; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; animation: none !important; }
   }
@@ -332,7 +375,7 @@
 
     <div class="split">
       <div>
-        <div class="panel">
+        <div class="panel p-diagram">
           <div class="panel-hd">
             <h2>System diagram</h2>
             <span class="note">flow and return, not to scale &middot; line weight tracks actual flow</span>
@@ -342,7 +385,7 @@
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel p-branch">
           <div class="panel-hd">
             <h2>Branch results</h2>
             <span class="note">solved at the current valve positions</span>
@@ -352,14 +395,36 @@
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel p-sweep">
+          <div class="panel-hd">
+            <h2>Part-load sweep</h2>
+            <span class="note">what happens as consumers shut, one at a time</span>
+          </div>
+          <div class="panel-bd">
+            <div style="display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:end;margin-bottom:12px">
+              <label class="fld" style="margin:0"><span>Closing order</span>
+                <select id="sweepOrder">
+                  <option value="largest" selected>Largest consumer first</option>
+                  <option value="list">In list order</option>
+                  <option value="smallest">Smallest first</option>
+                  <option value="index">Index branch last</option>
+                </select></label>
+              <label class="fld" style="margin:0"><span>Pump min <span class="u">l/s</span></span>
+                <input type="number" id="sweepMin" step="0.5" min="0" placeholder="—" style="width:90px"></label>
+              <button class="primary" id="btnSweep" style="min-height:38px">Run sweep</button>
+            </div>
+            <div id="sweepOut"></div>
+          </div>
+        </div>
+
+        <div class="panel p-diag">
           <div class="panel-hd"><h2>Diagnostics</h2></div>
           <div class="panel-bd" id="diagnostics"></div>
         </div>
       </div>
 
       <div>
-        <div class="panel">
+        <div class="panel p-pump">
           <div class="panel-hd">
             <h2>Pump</h2>
             <span class="note">generic curve</span>
@@ -373,12 +438,16 @@
                 <input type="number" id="pH" step="1" min="1"></label>
               <label class="fld"><span>Shut-off head <span class="u">% of design</span></span>
                 <input type="number" id="pShut" step="5" min="105" max="200" value="125"></label>
-              <label class="fld"><span>Running pumps</span>
-                <select id="pCount">
-                  <option value="1" selected>1 duty</option>
-                  <option value="2">2 parallel</option>
-                  <option value="3">3 parallel</option>
+              <label class="fld"><span>Configuration</span>
+                <select id="pConfig">
+                  <option value="duty" selected>Duty (1 installed)</option>
+                  <option value="dutyStandby">Duty / standby (2 installed, 1 runs)</option>
+                  <option value="dutyAssistStandby">Duty / assist / standby (3, up to 2 run)</option>
                 </select></label>
+              <label class="fld"><span>Assist cut-in <span class="u">% of design flow</span></span>
+                <input type="number" id="pCutIn" step="5" min="10" max="200" value="75"></label>
+              <label class="fld"><span>Assist cut-out <span class="u">% of design flow</span></span>
+                <input type="number" id="pCutOut" step="5" min="5" max="195" value="60"></label>
               <label class="fld"><span>Control</span>
                 <select id="pMode">
                   <option value="fixed" selected>Fixed speed</option>
@@ -391,7 +460,7 @@
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel p-cons">
           <div class="panel-hd">
             <h2>Consumers</h2>
             <span class="note" id="consumerCount"></span>
@@ -407,7 +476,7 @@
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel p-mains">
           <div class="panel-hd">
             <h2>Mains</h2>
             <span class="note">end-of-main bypass</span>
@@ -421,7 +490,7 @@
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel p-assum">
           <div class="panel-hd"><h2>Assumptions</h2></div>
           <div class="panel-bd">
             <div class="grid g2">
@@ -789,18 +858,33 @@ function distribute(n, Q, picvR) {
                     the pressure would rise, so the drive slows to hold it
      proportional — variable speed on a rising setpoint, the usual VSD setting
                     where the held pressure falls off with flow                  */
-function pumpCurve() {
+/* Installed is not the same as running. A duty/standby set has two pumps in
+   the plantroom but only ever one turning, so it is hydraulically a single
+   pump. Only an assist arrangement genuinely runs two at once. */
+const PUMP_CONFIGS = {
+  duty:              { label: 'Duty',                    installed: 1, maxRun: 1 },
+  dutyStandby:       { label: 'Duty / standby',          installed: 2, maxRun: 1 },
+  dutyAssistStandby: { label: 'Duty / assist / standby', installed: 3, maxRun: 2 },
+};
+function pumpConfig() {
+  return PUMP_CONFIGS[(el('pConfig') || {}).value] || PUMP_CONFIGS.duty;
+}
+
+function pumpCurve(runOverride) {
   const Qd = Math.max(0.01, parseFloat(el('pQ').value) || 1);
   const Hd = Math.max(1, parseFloat(el('pH').value) || 100);
   const shutPct = clamp(parseFloat(el('pShut').value) || 125, 105, 200) / 100;
-  const nPumps = parseInt(el('pCount').value) || 1;
+  const cfg = pumpConfig();
+  const nPumps = runOverride || 1;
   const mode = (el('pMode') || {}).value || 'fixed';
   const setPct = clamp(parseFloat((el('pSet') || {}).value) || 100, 20, 150) / 100;
   const H0 = Hd * shutPct;
-  const qEach = Qd / nPumps;
-  const k = (H0 - Hd) / (qEach * qEach);
+  // One pump on its own is sized to carry the full design duty; running a
+  // second in parallel then adds far less than another 100% of flow, which is
+  // the point worth showing.
+  const k = (H0 - Hd) / (Qd * Qd);
   const Hset = Hd * setPct;
-  return { H0, k, nPumps, Qd, Hd, mode, Hset,
+  return { H0, k, nPumps, Qd, Hd, mode, Hset, cfg,
     // full-speed curve
     head: Q => H0 - k * Math.pow(Q / nPumps, 2),
     // what the control is asking for at a given flow
@@ -878,10 +962,46 @@ let balanced = false;
 let requiredHead = 0;
 
 /* ---------- solve ---------- */
+/* Stage the assist pump in and out with hysteresis so it cannot hunt.
+   Cut-in is checked on what a single pump would deliver; cut-out on what the
+   pair actually delivers. */
+function decideRunning() {
+  const cfg = pumpConfig();
+  if (cfg.maxRun < 2) return { running: 1, staged: false, hunt: false };
+  const Qd = Math.max(0.01, parseFloat(el('pQ').value) || 1);
+  const cutIn  = Qd * clamp(parseFloat(el('pCutIn').value)  || 75, 10, 200) / 100;
+  const cutOut = Qd * clamp(parseFloat(el('pCutOut').value) || 60, 5, 195) / 100;
+  const q1 = trialFlow(1);
+  if (q1 < cutIn) return { running: 1, staged: false, hunt: false, q1, cutIn, cutOut };
+  const q2 = trialFlow(cfg.maxRun);
+  // if two pumps land below the cut-out the control would immediately drop one
+  const hunt = q2 < cutOut;
+  return { running: cfg.maxRun, staged: true, hunt, q1, q2, cutIn, cutOut };
+}
+
+// Flow the system would settle at with n pumps running, ignoring PICV trimming
+function trialFlow(n) {
+  const pump = pumpCurve(n);
+  const roots = NODES.filter(x => !x.parent);
+  const Rs = roots.map(r => reduceNode(r, {}));
+  const sysR = parallelR(Rs);
+  if (!isFinite(sysR) || sysR <= 0) return 0;
+  const kEff = pump.k / (n * n);
+  const Qfull = Math.sqrt(Math.max(0, pump.H0 / (kEff + sysR)));
+  if (pump.mode === 'constant') return Math.min(Math.sqrt(Math.max(0, pump.Hset / sysR)), Qfull);
+  if (pump.mode === 'proportional') {
+    const A = sysR, B = -(pump.Hset * 0.5 / pump.Qd), C = -(pump.Hset * 0.5);
+    const d = B * B - 4 * A * C;
+    return (A > 0 && d >= 0) ? Math.min((-B + Math.sqrt(d)) / (2 * A), Qfull) : Qfull;
+  }
+  return Qfull;
+}
+
 function solve() {
   if (NODES.length === 0) return null;
   sizeControlValves();
-  const pump = pumpCurve();
+  const staging = decideRunning();
+  const pump = pumpCurve(staging.running);
   const picvMin = parseFloat(el('picvMin').value) || 0;
   const picvMax = parseFloat(el('picvMax').value) || 400;
 
@@ -986,7 +1106,7 @@ function solve() {
     n.kwActual = n.flow / 1000 * FLUID.rho * FLUID.cp * n.dT;
   });
 
-  SOLUTION = { Q, sysR, pump, pumpHead, iterations, speed, flatOut, atFullSpeed,
+  SOLUTION = { Q, sysR, pump, pumpHead, iterations, speed, flatOut, atFullSpeed, staging,
     designQ: pump.Qd, designH: pump.Hd,
     picvMin, picvMax };
   return SOLUTION;
@@ -1326,6 +1446,8 @@ function renderReadout() {
   el('readout').innerHTML =
       cell('System flow', fmt(SOLUTION.Q, 2), 'l/s &middot; ' + (dQ >= 0 ? '+' : '') + fmt(dQ, 0) + '% of design', true)
     + cell('Pump head', fmt(SOLUTION.pumpHead, 0), 'kPa &middot; ' + fmt(SOLUTION.pumpHead / 9.81, 1) + ' m')
+    + cell('Pumps running', SOLUTION.staging.running + ' of ' + SOLUTION.pump.cfg.installed,
+        SOLUTION.pump.cfg.label)
     + cell('Pump speed', fmt(SOLUTION.speed * 100, 0) + '%',
         SOLUTION.pump.mode === 'fixed' ? 'fixed speed'
         : (SOLUTION.flatOut ? 'at full speed' : 'holding setpoint'))
@@ -1417,6 +1539,29 @@ function renderDiagnostics() {
     h: 'Pump is running out along its curve',
     b: 'System flow is ' + fmt(SOLUTION.Q / SOLUTION.designQ * 100, 0) + '% of design. Check the motor is not overloading and that NPSH available still suits.' });
 
+  const st = SOLUTION.staging;
+  if (SOLUTION.pump.cfg.maxRun >= 2) {
+    if (st.hunt) {
+      msgs.push({ t: 'bad', h: 'Assist pump would hunt',
+        b: 'One pump alone reaches ' + fmt(st.q1, 2) + ' l/s, which is above the '
+          + fmt(st.cutIn, 2) + ' l/s cut-in, so the assist stages in — but with both running the flow settles at '
+          + fmt(st.q2, 2) + ' l/s, below the ' + fmt(st.cutOut, 2)
+          + ' l/s cut-out. The control would immediately drop it again. Widen the gap between cut-in and cut-out.' });
+    } else if (st.staged) {
+      const gain = st.q1 > 0 ? (st.q2 / st.q1 - 1) * 100 : 0;
+      msgs.push({ t: 'info', h: 'Assist pump running — second pump adds ' + fmt(gain, 0) + '%, not 100%',
+        b: 'One pump gives ' + fmt(st.q1, 2) + ' l/s; two in parallel give ' + fmt(st.q2, 2)
+          + ' l/s. On a quadratic system curve the second pump always buys far less than its own rating, '
+          + 'because the extra flow raises system resistance against both of them.' });
+    }
+  }
+  if (SOLUTION.pump.cfg.installed > SOLUTION.staging.running) {
+    const spare = SOLUTION.pump.cfg.installed - SOLUTION.staging.running;
+    msgs.push({ t: 'info', h: spare + ' pump' + (spare === 1 ? '' : 's') + ' idle (standby)',
+      b: 'Standby duty is not circulating, so it adds nothing hydraulically — it is there for availability only. '
+        + 'Sizing must work on the ' + SOLUTION.staging.running + ' running.' });
+  }
+
   if (SOLUTION.pump.mode !== 'fixed') {
     if (SOLUTION.flatOut) {
       msgs.push({ t: 'warn', h: 'Drive is at full speed and cannot hold its setpoint',
@@ -1453,6 +1598,80 @@ function renderDiagnostics() {
 
   el('diagnostics').innerHTML = msgs.map(m =>
     '<div class="msg ' + m.t + '"><strong>' + m.h + '</strong><br>' + m.b + '</div>').join('');
+}
+
+/* ---------- part-load sweep ----------
+   Steps the system from all-open to all-shut, one consumer at a time, and
+   reports the first row where something actually goes wrong. Restores the
+   original valve positions afterwards. */
+function runSweep() {
+  const cons = NODES.filter(n => n.isConsumer);
+  if (cons.length === 0) { el('sweepOut').innerHTML = '<div class="msg warn">No consumers to sweep.</div>'; return; }
+
+  const order = (el('sweepOrder') || {}).value || 'largest';
+  const minFlow = parseFloat(el('sweepMin').value);
+  const saved = cons.map(n => n.open);
+
+  let seq = cons.slice();
+  if (order === 'largest')  seq.sort((a, b) => b.designLps - a.designLps);
+  else if (order === 'smallest') seq.sort((a, b) => a.designLps - b.designLps);
+  else if (order === 'index') seq.sort((a, b) => (a.isIndexish ? 1 : 0) - (b.isIndexish ? 1 : 0));
+
+  const rows = [];
+  for (let shut = 0; shut <= cons.length; shut++) {
+    cons.forEach(n => { n.open = true; });
+    for (let i = 0; i < shut; i++) seq[i].open = false;
+    solve();
+    const openN = cons.filter(n => n.open);
+    const pcts = openN.map(n => n.pctDesign);
+    const worst = pcts.length ? Math.max(...pcts) : 0;
+    const least = pcts.length ? Math.min(...pcts) : 0;
+
+    const flags = [];
+    if (!isNaN(minFlow) && minFlow > 0 && SOLUTION.Q < minFlow) flags.push('below pump minimum');
+    if (SOLUTION.Q < 0.001) flags.push('dead-headed');
+    if (worst > 130) flags.push('severe over-flow');
+    else if (worst > 118) flags.push('over-flowing');
+    if (openN.length && least < 85) flags.push('starved branch');
+    if (SOLUTION.flatOut && SOLUTION.pump.mode !== 'fixed') flags.push('drive flat out');
+    const fast = NODES.filter(n => n.flow > 0 && n.velocity > PROJECT.vMax);
+    if (fast.length) flags.push('velocity limit');
+
+    rows.push({ shut, open: openN.length, name: shut > 0 ? seq[shut - 1].ref : '\u2014',
+      Q: SOLUTION.Q, H: SOLUTION.pumpHead, speed: SOLUTION.speed,
+      running: SOLUTION.staging.running, worst, least, flags });
+  }
+
+  cons.forEach((n, i) => { n.open = saved[i]; });
+  solve();
+
+  const firstBad = rows.find(r => r.flags.length > 0);
+  const cell = 'padding:6px 9px;border-bottom:1px solid var(--line)';
+  el('sweepOut').innerHTML =
+      (firstBad
+        ? '<div class="msg ' + (firstBad.flags.some(f => /dead|minimum|severe|starved/.test(f)) ? 'bad' : 'warn') + '">'
+          + '<strong>First problem at ' + firstBad.open + ' of ' + cons.length + ' consumers open</strong><br>'
+          + 'Flow ' + fmt(firstBad.Q, 2) + ' l/s, head ' + fmt(firstBad.H, 0) + ' kPa \u2014 '
+          + firstBad.flags.join(', ') + '.</div>'
+        : '<div class="msg info"><strong>No problems found across the whole range</strong><br>'
+          + 'The system stays inside limits from all-open right down to all-shut.</div>')
+    + '<div style="overflow-x:auto"><table class="data" style="min-width:620px">'
+    + '<thead><tr><th>Shut</th><th>Last closed</th><th class="n">Open</th><th class="n">Flow l/s</th>'
+    + '<th class="n">Head kPa</th><th class="n">Speed</th><th class="n">Pumps</th>'
+    + '<th class="n">Worst %</th><th>Issues</th></tr></thead><tbody>'
+    + rows.map(r => '<tr' + (r.flags.length ? ' style="background:#fff8ec"' : '') + '>'
+        + '<td class="n">' + r.shut + '</td>'
+        + '<td>' + esc(r.name) + '</td>'
+        + '<td class="n">' + r.open + '</td>'
+        + '<td class="n"><strong>' + fmt(r.Q, 2) + '</strong></td>'
+        + '<td class="n">' + fmt(r.H, 0) + '</td>'
+        + '<td class="n">' + fmt(r.speed * 100, 0) + '%</td>'
+        + '<td class="n">' + r.running + '</td>'
+        + '<td class="n">' + (r.open ? fmt(r.worst, 0) + '%' : '\u2014') + '</td>'
+        + '<td>' + (r.flags.length
+            ? r.flags.map(f => '<span class="tag ' + (/dead|minimum|severe|starved/.test(f) ? 'bad' : 'warn') + '">' + f + '</span>').join(' ')
+            : '<span class="tag ok">ok</span>') + '</td></tr>').join('')
+    + '</tbody></table></div>';
 }
 
 function renderMains() {
@@ -1529,6 +1748,7 @@ function loadProject(data) {
     : 100;
 
   el('pQ').value = designQ.toFixed(2);
+  if (el('sweepMin') && !el('sweepMin').value) el('sweepMin').value = (designQ * 0.25).toFixed(1);
   el('pH').value = designH.toFixed(0);
 
   const hasTopology = (data.circuits || []).some(c =>
@@ -1602,6 +1822,7 @@ el('btnDemo').addEventListener('click', () => loadProject(demoProject()));
 el('btnDemo2').addEventListener('click', () => loadProject(demoProject()));
 el('btnPrint').addEventListener('click', () => window.print());
 el('btnBalance').addEventListener('click', calculateBalance);
+el('btnSweep').addEventListener('click', runSweep);
 el('btnClearBal').addEventListener('click', clearBalance);
 
 el('btnAllOn').addEventListener('click', () => {
@@ -1645,7 +1866,7 @@ el('consumerList').addEventListener('change', e => {
   }
 });
 
-['pQ', 'pH', 'pShut', 'pCount', 'pMode', 'pSet', 'aTarget', 'picvMin', 'picvMax', 'bypassPct'].forEach(id => {
+['pQ', 'pH', 'pShut', 'pConfig', 'pCutIn', 'pCutOut', 'pMode', 'pSet', 'aTarget', 'picvMin', 'picvMax', 'bypassPct'].forEach(id => {
   const e = el(id);
   if (e) e.addEventListener('input', () => { if (NODES.length) refresh(); });
 });
