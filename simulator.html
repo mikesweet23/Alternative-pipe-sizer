@@ -300,11 +300,12 @@
     .p-diagram { order: 1; }
     .p-cons    { order: 2; }
     .p-pump    { order: 3; }
-    .p-branch  { order: 4; }
-    .p-sweep   { order: 5; }
-    .p-diag    { order: 6; }
-    .p-mains   { order: 7; }
-    .p-assum   { order: 8; }
+    .p-select  { order: 4; }
+    .p-branch  { order: 5; }
+    .p-sweep  { order: 6; }
+    .p-diag  { order: 7; }
+    .p-mains  { order: 8; }
+    .p-assum  { order: 9; }
     #emptyState { order: 0; }
   }
 
@@ -457,6 +458,20 @@
               <label class="fld"><span>Setpoint <span class="u">% of design head</span></span>
                 <input type="number" id="pSet" step="5" min="20" max="150" value="100"></label>
             </div>
+          </div>
+        </div>
+
+        <div class="panel p-select">
+          <div class="panel-hd">
+            <h2>Pump selection</h2>
+            <span class="note">sized from the balanced system</span>
+          </div>
+          <div class="panel-bd">
+            <button class="primary" id="btnRecommend" style="width:100%;margin-bottom:12px">Recommend a pump</button>
+            <div id="pumpRec"><div style="font-size:12px;color:var(--muted)">
+              Set the consumers you want running and the arrangement above, then size the pump against it.
+              The Design flow and head fields stay editable, so you can enter what you can actually source
+              and see how the system behaves on it.</div></div>
           </div>
         </div>
 
@@ -974,6 +989,11 @@ function decideRunning() {
   const q1 = trialFlow(1);
   if (q1 < cutIn) return { running: 1, staged: false, hunt: false, q1, cutIn, cutOut };
   const q2 = trialFlow(cfg.maxRun);
+  // Under pressure control a single pump may already hold the setpoint, in
+  // which case a second one adds nothing but absorbed power. Only stage it if
+  // it actually buys flow.
+  const gain = q1 > 0 ? (q2 - q1) / q1 : 0;
+  if (gain < 0.01) return { running: 1, staged: false, hunt: false, noBenefit: true, q1, q2, cutIn, cutOut };
   // if two pumps land below the cut-out the control would immediately drop one
   const hunt = q2 < cutOut;
   return { running: cfg.maxRun, staged: true, hunt, q1, q2, cutIn, cutOut };
@@ -1547,6 +1567,11 @@ function renderDiagnostics() {
           + fmt(st.cutIn, 2) + ' l/s cut-in, so the assist stages in — but with both running the flow settles at '
           + fmt(st.q2, 2) + ' l/s, below the ' + fmt(st.cutOut, 2)
           + ' l/s cut-out. The control would immediately drop it again. Widen the gap between cut-in and cut-out.' });
+    } else if (st.noBenefit) {
+      msgs.push({ t: 'info', h: 'Assist pump held off — it would add nothing here',
+        b: 'One pump already delivers ' + fmt(st.q1, 2) + ' l/s; running a second in parallel gives '
+          + fmt(st.q2, 2) + ' l/s. Under pressure control the duty pump is meeting the setpoint on its own, '
+          + 'so the assist would only absorb power. It stages in when a single pump can no longer hold the setpoint.' });
     } else if (st.staged) {
       const gain = st.q1 > 0 ? (st.q2 / st.q1 - 1) * 100 : 0;
       msgs.push({ t: 'info', h: 'Assist pump running — second pump adds ' + fmt(gain, 0) + '%, not 100%',
@@ -1604,6 +1629,131 @@ function renderDiagnostics() {
    Steps the system from all-open to all-shut, one consumer at a time, and
    reports the first row where something actually goes wrong. Restores the
    original valve positions afterwards. */
+/* ==========================================================================
+   PUMP SELECTION
+   Works out the duty the system actually needs, splits it across the chosen
+   arrangement, checks the failure and minimum-flow cases, and shows where
+   the head is being spent so it can be argued down.
+   ========================================================================== */
+function recommendPump() {
+  const cons = NODES.filter(n => n.isConsumer);
+  if (cons.length === 0) { el('pumpRec').innerHTML = '<div class="msg warn">No consumers to size against.</div>'; return; }
+
+  const savedOpen = cons.map(n => n.open);
+  const savedCfg = el('pConfig').value, savedMode = el('pMode').value;
+
+  // Full-load duty: everything open, every branch regulated to design flow
+  cons.forEach(n => { n.open = true; });
+  el('pConfig').value = 'duty';
+  el('pMode').value = 'fixed';
+  calculateBalance();
+  const Qreq = SOLUTION.Q, Hreq = SOLUTION.pumpHead;
+
+  // The least-throttled branch is the index and sets the head
+  const idx = cons.reduce((a, b) => ((b.balanceKpa || 0) < (a.balanceKpa || 0) ? b : a), cons[0]);
+  const path = [];
+  let p = idx; const seen = new Set();
+  while (p && !seen.has(p.id)) { seen.add(p.id); path.push(p); p = p.parent; }
+  const spend = path.map(s => ({ ref: s.ref, nom: s.pipe.nom, dp: s._Rpipe * s.flow * s.flow,
+      len: s.lengthTotal, v: s.velocity })).sort((a, b) => b.dp - a.dp);
+  const coilDp = idx.coilKpa, valveDp = idx.cvDp || 0;
+  const pipeDpTotal = spend.reduce((s, x) => s + x.dp, 0);
+
+  const minFlow = Qreq * 0.10;
+  // What keeps circulating once the two-port valves shut: three-port and
+  // bypassed consumers, plus any end-of-main bypass.
+  const bypFrac = clamp((parseFloat(el('bypassPct').value) || 100) / 100, 0.05, 1);
+  const bypassCap =
+      cons.filter(n => (ARRANGEMENTS[n.arrangement] || {}).bypass)
+          .reduce((s, n) => s + n.designLps * bypFrac, 0)
+    + NODES.filter(n => n.eomBypass && !n.isConsumer).reduce((s, n) => s + eomFlow(n), 0);
+
+  el('pConfig').value = savedCfg;
+  const cfg = pumpConfig();
+  const nRun = cfg.maxRun;
+  const perPumpQ = Qreq / nRun;
+
+  let failText;
+  if (cfg.installed > cfg.maxRun) {
+    failText = 'Losing one pump still leaves ' + cfg.maxRun + ' running, so full duty is maintained \u2014 that is what the standby buys.';
+  } else if (cfg.maxRun > 1) {
+    failText = 'No spare: losing one of the ' + cfg.maxRun + ' running pumps drops the system to roughly 71% of design flow, '
+      + 'because the survivor works against the same resistance.';
+  } else {
+    failText = 'Single pump with no standby \u2014 a failure stops the system.';
+  }
+
+  el('pMode').value = savedMode;
+  cons.forEach((n, i) => { n.open = savedOpen[i]; });
+  solve();
+
+  const row = (k, v) => '<tr><td>' + k + '</td><td class="n"><strong>' + v + '</strong></td></tr>';
+  el('pumpRec').innerHTML =
+      '<table class="data" style="margin-bottom:12px"><tbody>'
+    + row('System duty required', fmt(Qreq, 2) + ' l/s at ' + fmt(Hreq, 0) + ' kPa')
+    + row('Equivalent head', fmt(Hreq / 9.81, 1) + ' m')
+    + row('Arrangement', cfg.installed + ' installed, ' + nRun + ' running')
+    + row('Duty per pump', fmt(perPumpQ, 2) + ' l/s at ' + fmt(Hreq, 0) + ' kPa')
+    + row('Minimum continuous flow', fmt(minFlow, 2) + ' l/s')
+    + '</tbody></table>'
+    + '<div class="msg info"><strong>Specify ' + cfg.installed + ' pump' + (cfg.installed === 1 ? '' : 's')
+      + ', each ' + fmt(perPumpQ, 2) + ' l/s at ' + fmt(Hreq, 0) + ' kPa</strong><br>' + failText + '</div>'
+    + (bypassCap < minFlow
+        ? '<div class="msg bad"><strong>Minimum flow is not covered</strong><br>About ' + fmt(minFlow, 2)
+          + ' l/s must keep circulating, but bypass provision totals ' + fmt(bypassCap, 2)
+          + ' l/s. Add an end-of-main bypass or put three-port valves on enough branches.</div>'
+        : '<div class="msg info"><strong>Minimum flow is covered</strong><br>Bypass provision of '
+          + fmt(bypassCap, 2) + ' l/s meets the ' + fmt(minFlow, 2) + ' l/s required.</div>')
+    + '<div style="font-weight:600;font-size:12px;margin:14px 0 6px">Where the head goes \u2014 index branch ('
+      + esc(idx.ref) + ')</div>'
+    + '<table class="data"><thead><tr><th>Section</th><th class="n">Size</th><th class="n">m</th>'
+      + '<th class="n">m/s</th><th class="n">kPa</th><th class="n">%</th></tr></thead><tbody>'
+    + spend.slice(0, 6).map(s => '<tr><td>' + esc(s.ref) + '</td><td class="n">' + s.nom + '</td>'
+        + '<td class="n">' + fmt(s.len, 0) + '</td><td class="n">' + fmt(s.v, 2) + '</td>'
+        + '<td class="n">' + fmt(s.dp, 1) + '</td><td class="n">' + fmt(s.dp / Hreq * 100, 0) + '%</td></tr>').join('')
+    + '<tr><td>Terminal coil</td><td class="n">\u2014</td><td class="n">\u2014</td><td class="n">\u2014</td><td class="n">'
+      + fmt(coilDp, 1) + '</td><td class="n">' + fmt(coilDp / Hreq * 100, 0) + '%</td></tr>'
+    + '<tr><td>Control valve</td><td class="n">\u2014</td><td class="n">\u2014</td><td class="n">\u2014</td><td class="n">'
+      + fmt(valveDp, 1) + '</td><td class="n">' + fmt(valveDp / Hreq * 100, 0) + '%</td></tr>'
+    + '</tbody></table>'
+    + optimisationNotes(Qreq, Hreq, spend, pipeDpTotal, coilDp, valveDp);
+}
+
+function optimisationNotes(Qreq, Hreq, spend, pipeDp, coilDp, valveDp) {
+  const out = [];
+  const worst = spend[0];
+  if (worst && worst.dp / Hreq > 0.2) {
+    out.push('<strong>' + esc(worst.ref) + ' alone is ' + fmt(worst.dp / Hreq * 100, 0) + '% of the head</strong> ('
+      + fmt(worst.dp, 0) + ' kPa over ' + fmt(worst.len, 0) + ' m at ' + fmt(worst.v, 2) + ' m/s). '
+      + 'One size up here cuts that section by roughly 55\u201365%, and takes a similar bite out of pump duty and running cost.');
+  }
+  const fast = spend.filter(s => s.v > PROJECT.vMax);
+  if (fast.length) {
+    out.push('<strong>' + fast.length + ' section' + (fast.length === 1 ? '' : 's') + ' above ' + PROJECT.vMax
+      + ' m/s</strong> \u2014 ' + fast.map(s => esc(s.ref) + ' at ' + fmt(s.v, 2)).join(', ')
+      + '. Noise and erosion risk, and costing head disproportionately.');
+  }
+  if (pipeDp / Hreq > 0.55) {
+    out.push('<strong>Distribution takes ' + fmt(pipeDp / Hreq * 100, 0) + '% of the head</strong>, against '
+      + fmt((coilDp + valveDp) / Hreq * 100, 0) + '% doing useful work at the terminal. Normal on a long run, '
+      + 'but the first place to look if the duty is uncomfortable.');
+  }
+  if (Hreq > 400) {
+    out.push('<strong>' + fmt(Hreq, 0) + ' kPa is a high duty</strong> for a building services circuit. Consider whether '
+      + 'the index branch would be better served by its own secondary pump set rather than pushing the whole system to suit it.');
+  }
+  const picvMax = parseFloat(el('picvMax').value) || 450;
+  const over = NODES.filter(n => n.isConsumer && n.arrangement === 'picv' && (n.picvAvail || 0) > picvMax);
+  if (over.length) {
+    out.push('<strong>' + over.length + ' PICV' + (over.length === 1 ? '' : 's') + ' would see more than the '
+      + picvMax + ' kPa assumed maximum</strong>. Specify a higher-rated valve, or fit differential pressure control '
+      + 'valves on those branches to cap what they see.');
+  }
+  if (!out.length) return '';
+  return '<div style="font-weight:600;font-size:12px;margin:16px 0 6px">Worth looking at</div>'
+    + out.map(t => '<div class="msg warn">' + t + '</div>').join('');
+}
+
 function runSweep() {
   const cons = NODES.filter(n => n.isConsumer);
   if (cons.length === 0) { el('sweepOut').innerHTML = '<div class="msg warn">No consumers to sweep.</div>'; return; }
@@ -1650,7 +1800,8 @@ function runSweep() {
   el('sweepOut').innerHTML =
       (firstBad
         ? '<div class="msg ' + (firstBad.flags.some(f => /dead|minimum|severe|starved/.test(f)) ? 'bad' : 'warn') + '">'
-          + '<strong>First problem at ' + firstBad.open + ' of ' + cons.length + ' consumers open</strong><br>'
+          + '<strong>First problem once ' + firstBad.shut + ' of ' + cons.length + ' consumers have shut'
+          + ' (' + firstBad.open + ' still open)</strong><br>'
           + 'Flow ' + fmt(firstBad.Q, 2) + ' l/s, head ' + fmt(firstBad.H, 0) + ' kPa \u2014 '
           + firstBad.flags.join(', ') + '.</div>'
         : '<div class="msg info"><strong>No problems found across the whole range</strong><br>'
@@ -1823,6 +1974,7 @@ el('btnDemo2').addEventListener('click', () => loadProject(demoProject()));
 el('btnPrint').addEventListener('click', () => window.print());
 el('btnBalance').addEventListener('click', calculateBalance);
 el('btnSweep').addEventListener('click', runSweep);
+el('btnRecommend').addEventListener('click', recommendPump);
 el('btnClearBal').addEventListener('click', clearBalance);
 
 el('btnAllOn').addEventListener('click', () => {
