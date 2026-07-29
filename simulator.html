@@ -266,6 +266,12 @@
   table.data td { padding: 7px 10px; border-bottom: 1px solid var(--line); }
   table.data td.n { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
   table.data tr.dim td { color: var(--shut); background: #f7f9fa; }
+  table.data tr.r-cons td { background: #f2fbf7; }
+  table.data tr.r-cons.dim td { background: #f5f7f8; }
+  table.data tr.r-main td { background: var(--white); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 7px; vertical-align: middle; }
+  .d-cons { background: var(--live); }
+  .d-main { background: var(--return); }
 
   .msg { padding: 11px 14px; border-radius: 5px; font-size: 13px; line-height: 1.55; margin-bottom: 10px; border-left: 3px solid; }
   .msg.info { background: #f0fdfa; border-color: var(--accent); }
@@ -288,6 +294,19 @@
   }
 
 
+
+  .steps .panel-hd { align-items: center; }
+  .steps-list { margin: 0; padding-left: 22px; font-size: 13px; line-height: 1.65; }
+  .steps-list li { margin-bottom: 9px; }
+  .steps-list li::marker { font-weight: 700; color: var(--accent); }
+  .steps-check {
+    margin-top: 14px; padding: 12px 15px; background: var(--paper);
+    border-left: 3px solid var(--accent); border-radius: 4px; font-size: 12.5px; line-height: 1.6;
+  }
+  .steps-check ul { margin: 6px 0 0; padding-left: 20px; }
+  .steps-check li { margin-bottom: 3px; }
+  body.steps-hidden #stepsBody { display: none; }
+
   /* ---------- phone layout ----------
      The desktop two-column split stacks badly: you scroll past the diagram,
      results, sweep and diagnostics before reaching the controls you came to
@@ -296,6 +315,7 @@
     .split { display: contents; }
     .split > div { display: contents; }
     #main { display: flex; flex-direction: column; }
+    .steps { order: -1; }
     .readout { order: 0; }
     .p-diagram { order: 1; }
     .p-cons    { order: 2; }
@@ -372,6 +392,42 @@
 
   <div id="main" style="display:none">
 
+    <div class="panel steps" id="stepsPanel">
+      <div class="panel-hd">
+        <h2>How to use this</h2>
+        <span class="note">five steps</span>
+        <button id="btnSteps" style="margin-left:auto;min-height:32px;padding:5px 11px;font-size:12px">Hide</button>
+      </div>
+      <div class="panel-bd" id="stepsBody">
+        <ol class="steps-list">
+          <li><strong>Set the pump arrangement.</strong> Duty, duty/standby or duty/assist/standby, and the
+            control mode. Then press <em>Recommend a pump</em> &mdash; it sizes against the balanced system
+            and tells you the duty per pump. Type your actual pump into Design flow and head to test what you
+            can really source.</li>
+          <li><strong>Choose the valve on each consumer.</strong> Two-port, two-port with a bypass, three-port
+            or PICV. This is what decides where the flow goes when a load switches off.</li>
+          <li><strong>Balance it.</strong> <em>Calculate balancing</em> works out the regulating drop and Kv
+            each branch needs to hold design flow. That column is your commissioning schedule, and the branch
+            showing <em>open</em> is the index.</li>
+          <li><strong>Switch consumers off and watch.</strong> Flow, head, pump speed and the diagram all
+            re-solve live. Add bypasses where flow needs to keep moving.</li>
+          <li><strong>Run the part-load sweep.</strong> It steps the whole turndown range and names the first
+            point something breaks &mdash; below pump minimum, starved branches, over-flow.</li>
+        </ol>
+        <div class="steps-check">
+          <strong>Sense checks worth making</strong>
+          <ul>
+            <li>Every open branch between <strong>85% and 118%</strong> of design once balanced.</li>
+            <li>Velocities inside your limits &mdash; red is too fast, amber too slow for a main that has lost load.</li>
+            <li>Control valve authority <strong>above 0.3</strong>, or a PICV holding.</li>
+            <li>Flow never below the pump minimum, whatever shuts down.</li>
+            <li>Pump duty sensible for the job &mdash; if the head looks high, read the
+              <em>where the head goes</em> table and see which section is eating it.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
     <div class="readout" id="readout"></div>
 
     <div class="split">
@@ -388,8 +444,9 @@
 
         <div class="panel p-branch">
           <div class="panel-hd">
-            <h2>Branch results</h2>
-            <span class="note">solved at the current valve positions</span>
+            <h2>Circuit results</h2>
+            <span class="note">whole network &middot; <span class="dot d-main"></span>mains and
+              <span class="dot d-cons"></span>consumers &middot; solved at the current valve positions</span>
           </div>
           <div class="panel-bd" style="padding:0;overflow-x:auto">
             <table class="data" id="branchTable"></table>
@@ -446,9 +503,11 @@
                   <option value="dutyAssistStandby">Duty / assist / standby (3, up to 2 run)</option>
                 </select></label>
               <label class="fld"><span>Assist cut-in <span class="u">% of design flow</span></span>
-                <input type="number" id="pCutIn" step="5" min="10" max="200" value="75"></label>
+                <input type="number" id="pCutIn" step="5" min="10" max="200" value="50"
+                       title="Stage the assist in when demand passes what one pump covers comfortably — about half of design flow for an equally split pair."></label>
               <label class="fld"><span>Assist cut-out <span class="u">% of design flow</span></span>
-                <input type="number" id="pCutOut" step="5" min="5" max="195" value="60"></label>
+                <input type="number" id="pCutOut" step="5" min="5" max="195" value="35"
+                       title="Drop back to one pump before either falls near its minimum. Keep a 15–20 point gap below cut-in so it cannot hunt."></label>
               <label class="fld"><span>Control</span>
                 <select id="pMode">
                   <option value="fixed" selected>Fixed speed</option>
@@ -458,6 +517,12 @@
               <label class="fld"><span>Setpoint <span class="u">% of design head</span></span>
                 <input type="number" id="pSet" step="5" min="20" max="150" value="100"></label>
             </div>
+            <p style="font-size:11px;color:var(--muted);line-height:1.55;margin:10px 0 0">
+              Centrifugal pumps run best around <strong>80% of rated flow</strong> and should not sit below
+              roughly <strong>25%</strong>. For an equally split pair, stage the assist in near
+              <strong>50%</strong> of design flow and out near <strong>35%</strong> &mdash; a 15-point gap is
+              enough to stop it hunting.
+            </p>
           </div>
         </div>
 
@@ -920,12 +985,14 @@ function pumpCurve(runOverride) {
   const mode = (el('pMode') || {}).value || 'fixed';
   const setPct = clamp(parseFloat((el('pSet') || {}).value) || 100, 20, 150) / 100;
   const H0 = Hd * shutPct;
-  // One pump on its own is sized to carry the full design duty; running a
-  // second in parallel then adds far less than another 100% of flow, which is
-  // the point worth showing.
-  const k = (H0 - Hd) / (Qd * Qd);
+  // Each pump is rated for its share of the duty: a duty/standby pair are both
+  // full-duty machines, whereas a duty/assist pair are each about half. That
+  // rating sets the curve steepness, so two assist pumps together land on the
+  // design point and one alone falls well short.
+  const qRated = Qd / cfg.maxRun;
+  const k = (H0 - Hd) / (qRated * qRated);
   const Hset = Hd * setPct;
-  return { H0, k, nPumps, Qd, Hd, mode, Hset, cfg,
+  return { H0, k, nPumps, Qd, Hd, mode, Hset, cfg, qRated,
     // full-speed curve
     head: Q => H0 - k * Math.pow(Q / nPumps, 2),
     // what the control is asking for at a given flow
@@ -1518,43 +1585,87 @@ function renderReadout() {
     + cell('System resistance', isFinite(SOLUTION.sysR) ? fmt(SOLUTION.sysR, 2) : '&infin;', 'kPa per (l/s)&sup2;');
 }
 
+// Depth in the tree, for indenting the results table
+function nodeDepth(n) {
+  let d = 0, p = n.parent;
+  const seen = new Set([n.id]);
+  while (p && !seen.has(p.id)) { seen.add(p.id); d++; p = p.parent; }
+  return d;
+}
+
 function renderBranchTable() {
   if (!SOLUTION) return;
-  const rows = NODES.filter(n => n.isConsumer).map(n => {
+  const vMin = PROJECT.vMin, vMax = PROJECT.vMax;
+
+  // Whole network in tree order, so a main and the consumers it feeds read together
+  const ordered = [];
+  const walk = n => { ordered.push(n); n.children.forEach(walk); };
+  NODES.filter(n => !n.parent).forEach(walk);
+  NODES.forEach(n => { if (!ordered.includes(n)) ordered.push(n); });
+
+  const rows = ordered.map(n => {
+    const cons = n.isConsumer;
     const pct = n.pctDesign;
-    let tag = '<span class="tag">shut</span>';
-    if (n.open) {
-      if (pct < 85) tag = '<span class="tag bad">starved</span>';
-      else if (pct > 118) tag = '<span class="tag warn">over-flowing</span>';
-      else tag = '<span class="tag ok">on design</span>';
-    }
+    const flowing = n.flow > 0.0005;
+
+    let status;
+    if (cons && !n.open) status = '<span class="tag">shut</span>';
+    else if (!flowing) status = '<span class="tag">no flow</span>';
+    else if (cons && pct < 85) status = '<span class="tag bad">starved</span>';
+    else if (cons && pct > 118) status = '<span class="tag warn">over-flowing</span>';
+    else status = '<span class="tag ok">on design</span>';
+
+    // Velocity matters both ways: too fast is noise, too slow lets air and
+    // dirt settle and shows a main that has lost its load.
+    let vTag = fmt(n.velocity, 2);
+    if (flowing && n.velocity > vMax) vTag = '<span style="color:var(--alarm);font-weight:600">' + vTag + '</span>';
+    else if (flowing && n.velocity < vMin) vTag = '<span style="color:var(--warn);font-weight:600">' + vTag + '</span>';
+
     const auth = n.authority || 0;
-    const authTag = n.arrangement === 'picv'
-      ? (n.picvHolding ? '<span class="tag ok">holding</span>' : '<span class="tag warn">out of range</span>')
-      : (auth < 0.25 ? '<span class="tag bad">' + fmt(auth, 2) + '</span>'
-        : auth < 0.4 ? '<span class="tag warn">' + fmt(auth, 2) + '</span>'
-        : '<span class="tag ok">' + fmt(auth, 2) + '</span>');
-    return '<tr' + (n.open ? '' : ' class="dim"') + '>'
-      + '<td>' + esc(n.ref) + '</td>'
+    let authCell = '<span style="color:var(--muted)">&mdash;</span>';
+    if (cons) {
+      authCell = n.arrangement === 'picv'
+        ? (n.picvHolding ? '<span class="tag ok">holding</span>' : '<span class="tag warn">out of range</span>')
+        : (auth < 0.25 ? '<span class="tag bad">' + fmt(auth, 2) + '</span>'
+          : auth < 0.4 ? '<span class="tag warn">' + fmt(auth, 2) + '</span>'
+          : '<span class="tag ok">' + fmt(auth, 2) + '</span>');
+    }
+
+    const reg = cons
+      ? (n.balanceKpa > 0.05
+          ? fmt(n.balanceKpa, 1) + ' <span style="color:var(--muted)">Kv ' + fmt(n.balanceKv, 1) + '</span>'
+          : (balanced ? '<span class="tag ok">open</span>' : '<span style="color:var(--muted)">&mdash;</span>'))
+      : '<span style="color:var(--muted)">&mdash;</span>';
+
+    const indent = 12 * nodeDepth(n);
+    return '<tr class="' + (cons ? 'r-cons' : 'r-main') + (cons && !n.open ? ' dim' : '') + '">'
+      + '<td style="padding-left:' + (10 + indent) + 'px">'
+        + '<span class="dot ' + (cons ? 'd-cons' : 'd-main') + '"></span>' + esc(n.ref) + '</td>'
       + '<td class="n">' + n.pipe.nom + '</td>'
       + '<td class="n">' + fmt(n.designLps, 2) + '</td>'
       + '<td class="n"><strong>' + fmt(n.flow, 2) + '</strong></td>'
-      + '<td class="n">' + (n.open ? fmt(pct, 0) + '%' : '&mdash;') + '</td>'
-      + '<td class="n">' + fmt(n.velocity, 2) + '</td>'
-      + '<td class="n">' + fmt(n.dpTotal, 1) + '</td>'
-      + '<td class="n">' + (n.arrangement === 'picv' ? fmt(n.picvAvail || 0, 0) : fmt(n.dpValve, 1)) + '</td>'
-      + '<td class="n">' + (n.balanceKpa > 0.05
-          ? fmt(n.balanceKpa, 1) + ' <span style="color:var(--muted)">Kv ' + fmt(n.balanceKv, 1) + '</span>'
-          : (balanced ? '<span class="tag ok">open</span>' : '&mdash;')) + '</td>'
-      + '<td class="n">' + authTag + '</td>'
-      + '<td>' + tag + '</td></tr>';
+      + '<td class="n">' + (cons && !n.open ? '&mdash;' : fmt(pct, 0) + '%') + '</td>'
+      + '<td class="n">' + vTag + '</td>'
+      + '<td class="n">' + fmt(n.dpPipe, 1) + '</td>'
+      + '<td class="n">' + (cons ? fmt(n.dpCoil || 0, 1) : '<span style="color:var(--muted)">&mdash;</span>') + '</td>'
+      + '<td class="n">' + (cons ? fmt(n.dpValve || 0, 1) : '<span style="color:var(--muted)">&mdash;</span>') + '</td>'
+      + '<td class="n"><strong>' + fmt(n.dpTotal, 1) + '</strong></td>'
+      + '<td class="n">' + reg + '</td>'
+      + '<td class="n">' + authCell + '</td>'
+      + '<td>' + status + '</td></tr>';
   }).join('');
 
   el('branchTable').innerHTML =
-      '<thead><tr><th>Consumer</th><th class="n">Size</th><th class="n">Design l/s</th>'
-    + '<th class="n">Actual l/s</th><th class="n">%</th><th class="n">m/s</th>'
-    + '<th class="n">Branch kPa</th><th class="n">Valve kPa</th><th class="n">Regulating</th><th class="n">Authority</th><th>Status</th></tr></thead>'
-    + '<tbody>' + (rows || '<tr><td colspan="11">No consumers in this network.</td></tr>') + '</tbody>';
+      '<thead><tr>'
+    + '<th>Circuit</th><th class="n">Size</th><th class="n" title="Design flow for this section">Design l/s</th>'
+    + '<th class="n">Actual l/s</th><th class="n">%</th>'
+    + '<th class="n" title="Red above the velocity limit, amber below the minimum">m/s</th>'
+    + '<th class="n" title="Friction in this section\u2019s own pipework and fittings">Pipe kPa</th>'
+    + '<th class="n" title="Terminal coil pressure drop, as entered in the sizer">Coil kPa</th>'
+    + '<th class="n" title="Control valve drop \u2014 sized to the authority target, or the differential a PICV sees">Valve kPa</th>'
+    + '<th class="n" title="Pipe + coil + valve for this section">Total kPa</th>'
+    + '<th class="n">Regulating</th><th class="n">Authority</th><th>Status</th>'
+    + '</tr></thead><tbody>' + (rows || '<tr><td colspan="13">Nothing to show.</td></tr>') + '</tbody>';
 }
 
 function renderDiagnostics() {
@@ -1701,7 +1812,6 @@ function recommendPump() {
   const coilDp = idx.coilKpa, valveDp = idx.cvDp || 0;
   const pipeDpTotal = spend.reduce((s, x) => s + x.dp, 0);
 
-  const minFlow = Qreq * 0.10;
   // What keeps circulating once the two-port valves shut: three-port and
   // bypassed consumers, plus any end-of-main bypass.
   const bypFrac = clamp((parseFloat(el('bypassPct').value) || 100) / 100, 0.05, 1);
@@ -1715,6 +1825,11 @@ function recommendPump() {
   const nRun = cfg.maxRun;
   const perPumpQ = Qreq / nRun;
 
+  // A centrifugal pump should not sit below roughly a quarter of its rated
+  // flow. The rating is per pump, so an assist pair have a lower absolute
+  // floor than a single full-duty machine.
+  const minFlow = perPumpQ * 0.25;
+
   let failText;
   if (cfg.installed > cfg.maxRun) {
     failText = 'Losing one pump still leaves ' + cfg.maxRun + ' running, so full duty is maintained \u2014 that is what the standby buys.';
@@ -1727,7 +1842,7 @@ function recommendPump() {
 
   el('pMode').value = savedMode;
   cons.forEach((n, i) => { n.open = savedOpen[i]; });
-  solve();
+  refresh();          // re-render, or the readout strip keeps the sizing run's state
 
   const row = (k, v) => '<tr><td>' + k + '</td><td class="n"><strong>' + v + '</strong></td></tr>';
   el('pumpRec').innerHTML =
@@ -1736,7 +1851,7 @@ function recommendPump() {
     + row('Equivalent head', fmt(Hreq / 9.81, 1) + ' m')
     + row('Arrangement', cfg.installed + ' installed, ' + nRun + ' running')
     + row('Duty per pump', fmt(perPumpQ, 2) + ' l/s at ' + fmt(Hreq, 0) + ' kPa')
-    + row('Minimum continuous flow', fmt(minFlow, 2) + ' l/s')
+    + row('Minimum continuous flow', fmt(minFlow, 2) + ' l/s (25% of one pump)')
     + '</tbody></table>'
     + '<div class="msg info"><strong>Specify ' + cfg.installed + ' pump' + (cfg.installed === 1 ? '' : 's')
       + ', each ' + fmt(perPumpQ, 2) + ' l/s at ' + fmt(Hreq, 0) + ' kPa</strong><br>' + failText + '</div>'
@@ -2029,6 +2144,17 @@ el('fileIn').addEventListener('change', handleFile);
 el('btnDemo').addEventListener('click', () => loadProject(demoProject()));
 el('btnDemo2').addEventListener('click', () => loadProject(demoProject()));
 el('btnPrint').addEventListener('click', () => window.print());
+el('btnSteps').addEventListener('click', () => {
+  const hidden = document.body.classList.toggle('steps-hidden');
+  el('btnSteps').textContent = hidden ? 'Show' : 'Hide';
+  try { localStorage.setItem('adi_sim_steps', hidden ? '1' : '0'); } catch (e) {}
+});
+try {
+  if (localStorage.getItem('adi_sim_steps') === '1') {
+    document.body.classList.add('steps-hidden');
+    el('btnSteps').textContent = 'Show';
+  }
+} catch (e) {}
 el('btnBalance').addEventListener('click', calculateBalance);
 el('btnSweep').addEventListener('click', runSweep);
 el('btnRecommend').addEventListener('click', recommendPump);
