@@ -1,0 +1,2207 @@
+
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pipe Trace &mdash; adi Climate Systems</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Azeret+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --graphite:  #1c1f26;
+    --rail:      #262b33;
+    --rail-2:    #333944;
+    --paper:     #fbfaf7;
+    --paper-2:   #f1efe9;
+    --rule:      #d9d5cc;
+    --rule-2:    #bfb9ac;
+    --ink:       #23262c;
+    --ink-soft:  #5c6069;
+    --muted:     #8a8e97;
+    --flow:      #d2453a;
+    --return:    #2f6fb0;
+    --measure:   #e0a422;
+    --live:      #2f8f5b;
+    --alarm:     #bb3b2e;
+    --white:     #ffffff;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Archivo, system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+    overflow: hidden;
+    -webkit-text-size-adjust: 100%;
+  }
+  .mono { font-family: 'Azeret Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+
+  button, input, select { font-family: inherit; font-size: 13px; }
+  button { cursor: pointer; }
+  button:focus-visible, input:focus-visible, select:focus-visible,
+  [tabindex]:focus-visible { outline: 2px solid var(--measure); outline-offset: 2px; }
+
+  input[type=number] { -moz-appearance: textfield; }
+  input[type=number]::-webkit-outer-spin-button,
+  input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+  /* ================= shell ================= */
+  .shell { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+
+  .topbar {
+    background: var(--graphite); color: var(--paper);
+    display: flex; align-items: center; gap: 14px;
+    padding: 9px 14px; border-bottom: 1px solid #000;
+  }
+  .brand { display: flex; align-items: baseline; gap: 9px; }
+  .brand b {
+    font-size: 15px; font-weight: 700; letter-spacing: -0.015em;
+  }
+  .brand span {
+    font-family: 'Azeret Mono', monospace; font-size: 9.5px;
+    letter-spacing: 0.16em; text-transform: uppercase; color: #8f96a3;
+  }
+  .topbar .sp { flex: 1; }
+
+  .tb {
+    background: transparent; color: #cdd3dc; border: 1px solid #3b424e;
+    border-radius: 3px; padding: 7px 11px; font-weight: 500; font-size: 12.5px;
+    min-height: 34px; white-space: nowrap;
+  }
+  .tb:hover { background: var(--rail-2); color: #fff; }
+  .tb.go { background: var(--measure); border-color: var(--measure); color: #241a00; font-weight: 600; }
+  .tb.go:hover { background: #eeb43a; }
+  .tb:disabled { opacity: .38; cursor: default; }
+  .tb:disabled:hover { background: transparent; color: #cdd3dc; }
+
+  /* ================= body ================= */
+  .body { display: grid; grid-template-columns: 62px 1fr 0; min-height: 0; }
+  .body.insp { grid-template-columns: 62px 1fr 316px; }
+  @media (max-width: 820px) { .body.insp { grid-template-columns: 54px 1fr 0; } }
+
+  /* ---- tool rail ---- */
+  .rail {
+    background: var(--rail); display: flex; flex-direction: column;
+    align-items: center; padding: 8px 0; gap: 3px; overflow-y: auto;
+  }
+  .tool {
+    width: 48px; padding: 7px 2px 6px; border: none; background: transparent;
+    color: #98a0ad; border-radius: 4px; display: flex; flex-direction: column;
+    align-items: center; gap: 3px; line-height: 1;
+  }
+  .tool svg { width: 19px; height: 19px; }
+  .tool i {
+    font-style: normal; font-family: 'Azeret Mono', monospace;
+    font-size: 8px; letter-spacing: 0.05em; text-transform: uppercase;
+  }
+  .tool:hover { background: var(--rail-2); color: #e4e8ee; }
+  .tool.on { background: var(--measure); color: #241a00; }
+  .tool:disabled { opacity: .3; }
+  .tool:disabled:hover { background: transparent; color: #98a0ad; }
+  .rail hr { width: 34px; border: none; border-top: 1px solid #3b424e; margin: 5px 0; }
+  @media (max-width: 820px) { .tool { width: 44px; } .tool i { font-size: 7px; } }
+
+  /* ---- drawing stage ---- */
+  .stage { position: relative; overflow: hidden; background: var(--paper-2); min-width: 0; }
+  #scroller { position: absolute; inset: 0; overflow: auto; cursor: crosshair; }
+  #scroller.pan { cursor: grab; }
+  #scroller.pan.down { cursor: grabbing; }
+  #sheet { position: relative; transform-origin: 0 0; }
+  #sheet img { display: block; user-select: none; -webkit-user-drag: none; }
+  #ov { position: absolute; inset: 0; overflow: visible; }
+
+  /* the drawing board when nothing is loaded */
+  .board {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+    background-image:
+      linear-gradient(var(--rule) 1px, transparent 1px),
+      linear-gradient(90deg, var(--rule) 1px, transparent 1px);
+    background-size: 26px 26px;
+    background-color: var(--paper);
+  }
+  .board-in { max-width: 500px; text-align: center; }
+  .board h1 {
+    font-size: 25px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 6px;
+  }
+  .board p { color: var(--ink-soft); font-size: 14px; line-height: 1.6; margin: 0 0 20px; }
+  .board .drop {
+    border: 2px dashed var(--rule-2); border-radius: 6px; padding: 30px 22px;
+    background: rgba(255,255,255,.72);
+  }
+  .board .drop.hot { border-color: var(--measure); background: rgba(224,164,34,.10); }
+
+  .btn {
+    background: var(--graphite); color: var(--paper); border: 1px solid var(--graphite);
+    border-radius: 4px; padding: 10px 17px; font-weight: 600; font-size: 13px; min-height: 40px;
+  }
+  .btn:hover { background: #000; }
+  .btn.ghost { background: var(--white); color: var(--ink); border-color: var(--rule-2); }
+  .btn.ghost:hover { background: var(--paper-2); }
+  .btn.go { background: var(--measure); border-color: var(--measure); color: #241a00; }
+  .btn.go:hover { background: #eeb43a; }
+  .btn.sm { padding: 7px 11px; min-height: 34px; font-size: 12px; }
+
+  /* ---- floating status strip ---- */
+  .status {
+    position: absolute; left: 12px; bottom: 12px; z-index: 6;
+    display: flex; gap: 1px; background: var(--rule-2);
+    border: 1px solid var(--rule-2); border-radius: 4px; overflow: hidden;
+    box-shadow: 0 3px 14px rgba(0,0,0,.13);
+  }
+  .status .st { background: var(--white); padding: 6px 11px; }
+  .status .st b {
+    display: block; font-family: 'Azeret Mono', monospace; font-size: 8.5px;
+    letter-spacing: .13em; text-transform: uppercase; color: var(--muted); font-weight: 500;
+  }
+  .status .st span {
+    font-family: 'Azeret Mono', monospace; font-size: 13px; font-weight: 600;
+  }
+  .status .st.warn { background: #fff6e4; }
+  .status .st.warn span { color: #8a5d00; }
+
+  .zoomer {
+    position: absolute; right: 12px; bottom: 12px; z-index: 6;
+    display: flex; gap: 1px; background: var(--rule-2);
+    border: 1px solid var(--rule-2); border-radius: 4px; overflow: hidden;
+    box-shadow: 0 3px 14px rgba(0,0,0,.13);
+  }
+  .zoomer button {
+    background: var(--white); border: none; padding: 0 11px; height: 32px;
+    font-weight: 600; font-size: 13px; color: var(--ink); min-width: 34px;
+  }
+  .zoomer button:hover { background: var(--paper-2); }
+  .zoomer .lvl {
+    background: var(--white); padding: 0 9px; height: 32px; display: flex; align-items: center;
+    font-family: 'Azeret Mono', monospace; font-size: 11.5px; color: var(--muted);
+  }
+
+  /* the running instruction while a tool is armed */
+  .hint {
+    position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 7;
+    background: var(--graphite); color: var(--paper); padding: 8px 15px;
+    border-radius: 4px; font-size: 12.5px; box-shadow: 0 4px 18px rgba(0,0,0,.25);
+    display: none; align-items: center; gap: 12px; max-width: calc(100% - 24px);
+  }
+  .hint.on { display: flex; }
+  .hint kbd {
+    font-family: 'Azeret Mono', monospace; font-size: 10.5px; background: #3b424e;
+    padding: 2px 6px; border-radius: 3px; color: #dfe4ea;
+  }
+  .hint .x { background: none; border: none; color: #98a0ad; font-size: 15px; padding: 0 2px; }
+  .hint .x:hover { color: #fff; }
+
+  /* ---- inspector ---- */
+  .inspector {
+    background: var(--white); border-left: 1px solid var(--rule);
+    overflow-y: auto; min-width: 0;
+  }
+  .body:not(.insp) .inspector { display: none; }
+  .ins-hd {
+    padding: 12px 15px; border-bottom: 1px solid var(--rule);
+    position: sticky; top: 0; background: var(--white); z-index: 2;
+    display: flex; align-items: flex-start; gap: 10px;
+  }
+  .ins-hd .k {
+    font-family: 'Azeret Mono', monospace; font-size: 9px; letter-spacing: .15em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .ins-hd h3 { margin: 2px 0 0; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+  .ins-bd { padding: 15px; }
+
+  .fld { display: block; margin-bottom: 11px; }
+  .fld > span {
+    display: block; font-family: 'Azeret Mono', monospace; font-size: 9px;
+    letter-spacing: .13em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px;
+  }
+  .fld > span em { font-style: normal; text-transform: none; letter-spacing: 0; }
+  .fld input, .fld select {
+    width: 100%; padding: 8px 9px; border: 1px solid var(--rule-2);
+    border-radius: 3px; background: var(--white); color: var(--ink); min-height: 38px;
+  }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .derived {
+    background: var(--paper-2); border: 1px solid var(--rule);
+    border-radius: 4px; padding: 11px 13px; margin: 12px 0;
+  }
+  .derived dl { margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; font-size: 12.5px; }
+  .derived dt { color: var(--ink-soft); }
+  .derived dd { margin: 0; font-family: 'Azeret Mono', monospace; font-weight: 600; text-align: right; }
+
+  .note {
+    font-size: 11.5px; line-height: 1.55; color: var(--ink-soft);
+    border-left: 2px solid var(--measure); padding-left: 10px; margin: 12px 0;
+  }
+  .note.bad { border-color: var(--alarm); color: #8c2f24; }
+
+  .chip {
+    display: inline-block; font-family: 'Azeret Mono', monospace; font-size: 9px;
+    letter-spacing: .08em; padding: 2px 6px; border-radius: 3px;
+    background: var(--paper-2); color: var(--ink-soft); border: 1px solid var(--rule);
+  }
+  .chip.ok { background: #e9f6ee; color: #1d6b41; border-color: #b9e0c9; }
+  .chip.warn { background: #fff4e0; color: #8a5d00; border-color: #f0d69b; }
+  .chip.bad { background: #fdecea; color: #96271b; border-color: #f2c2bb; }
+
+  /* ---- schedule drawer ---- */
+  .drawer {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 8;
+    background: var(--white); border-top: 1px solid var(--rule-2);
+    box-shadow: 0 -6px 22px rgba(0,0,0,.10);
+    max-height: 62%; display: none; flex-direction: column;
+  }
+  .drawer.on { display: flex; }
+  .drawer-hd {
+    padding: 9px 14px; border-bottom: 1px solid var(--rule);
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .drawer-hd h3 {
+    margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  }
+  .drawer-bd { overflow: auto; padding: 0 0 8px; }
+
+  table.sched { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.sched th {
+    position: sticky; top: 0; background: var(--graphite); color: var(--paper);
+    text-align: left; padding: 7px 9px; font-family: 'Azeret Mono', monospace;
+    font-size: 9px; letter-spacing: .1em; text-transform: uppercase; font-weight: 500; white-space: nowrap;
+  }
+  table.sched td { padding: 6px 9px; border-bottom: 1px solid var(--rule); }
+  table.sched td.n { text-align: right; font-family: 'Azeret Mono', monospace; }
+  table.sched tr.pick td { background: #fff6e4; }
+  table.sched tr.cons td:first-child { box-shadow: inset 3px 0 0 var(--live); }
+  table.sched tr.main td:first-child { box-shadow: inset 3px 0 0 var(--return); }
+  table.sched tr:hover td { background: var(--paper-2); }
+
+  .modal {
+    position: fixed; inset: 0; background: rgba(28,31,38,.55); z-index: 100;
+    display: none; align-items: center; justify-content: center; padding: 18px;
+  }
+  .modal.on { display: flex; }
+  .modal-in {
+    background: var(--white); border-radius: 6px; max-width: 460px; width: 100%;
+    max-height: 86vh; overflow: auto; box-shadow: 0 16px 50px rgba(0,0,0,.3);
+  }
+  .modal-hd { padding: 16px 18px 0; }
+  .modal-hd h3 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.015em; }
+  .modal-bd { padding: 14px 18px 18px; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(8px);
+    background: var(--graphite); color: var(--paper); padding: 10px 17px; border-radius: 4px;
+    font-size: 13px; font-weight: 500; z-index: 200; opacity: 0; pointer-events: none;
+    transition: opacity .16s, transform .16s;
+  }
+  .toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <div class="topbar">
+    <div class="brand"><b>Pipe Trace</b><span>adi climate systems</span></div>
+    <button class="tb" id="bOpenDwg">Drawing</button>
+    <button class="tb" id="bProj">Pipe &amp; basis</button>
+    <button class="tb" id="bSteps">How to use</button>
+    <div class="sp"></div>
+    <a class="tb" href="./index.html" style="text-decoration:none;display:inline-flex;align-items:center"
+       title="Step 2 &mdash; losses, heat loss and reheat">Sizer &rarr;</a>
+    <button class="tb" id="bName" disabled>Rename runs</button>
+    <button class="tb" id="bSched" disabled>Schedule</button>
+    <button class="tb" id="bSave" disabled>Save</button>
+    <button class="tb" id="bLoad">Open</button>
+    <button class="tb go" id="bExport" disabled>Send to Sizer</button>
+    <input type="file" id="fDwg" accept="application/pdf,image/*" style="display:none">
+    <input type="file" id="fProj" accept=".json,application/json" style="display:none">
+  </div>
+
+  <div class="body" id="body">
+    <div class="rail" id="rail"></div>
+
+    <div class="stage" id="stage">
+      <div id="scroller">
+        <div id="sheet">
+          <img id="dwg" alt="" style="display:none">
+          <svg id="ov" xmlns="http://www.w3.org/2000/svg"></svg>
+        </div>
+      </div>
+
+      <div class="board" id="board">
+        <div class="board-in">
+          <div class="drop" id="drop">
+            <h1>Trace the pipework off the drawing</h1>
+            <p>Load a PDF or image of the layout, set the scale from a known dimension,
+               then place the plant and consumers and trace the runs between them.
+               Lengths come off the drawing, so the sizing is real.</p>
+            <button class="btn go" id="bPick">Choose a drawing</button>
+            <div style="margin-top:12px;font-size:12px;color:var(--muted)">or drop a file here</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hint" id="hint">
+        <span id="hintTxt"></span>
+        <button class="x" id="hintX" title="Cancel">&times;</button>
+      </div>
+
+      <div class="status" id="status" style="display:none"></div>
+
+      <div class="zoomer" id="zoomer" style="display:none">
+        <button id="zOut" title="Zoom out">&minus;</button>
+        <div class="lvl" id="zLvl">100%</div>
+        <button id="zIn" title="Zoom in">+</button>
+        <button id="zFit" title="Fit the drawing">Fit</button>
+      </div>
+
+      <div class="drawer" id="drawer">
+        <div class="drawer-hd">
+          <h3>Pipework schedule</h3>
+          <span id="schedNote" style="font-size:12px;color:var(--muted)"></span>
+          <div style="flex:1"></div>
+          <button class="btn ghost sm" id="bSchedClose">Close</button>
+        </div>
+        <div class="drawer-bd"><table class="sched" id="schedTable"></table></div>
+      </div>
+    </div>
+
+    <div class="inspector" id="inspector">
+      <div class="ins-hd">
+        <div style="flex:1">
+          <div class="k" id="insKind">&nbsp;</div>
+          <h3 id="insName">&nbsp;</h3>
+        </div>
+        <button class="btn ghost sm" id="insClose">Done</button>
+      </div>
+      <div class="ins-bd" id="insBody"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="modal">
+  <div class="modal-in">
+    <div class="modal-hd"><h3 id="modTitle"></h3></div>
+    <div class="modal-bd" id="modBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+/* ==========================================================================
+   PIPE TRACE
+   Take-off tool: put a drawing behind the canvas, calibrate it against a
+   known dimension, place the plant and the consumers where they really are,
+   and trace the runs. Lengths come off the drawing rather than being typed,
+   so the sizing is grounded in the actual layout.
+
+   Output is a Pipework Sizer project file, which is where losses, heat loss
+   and reheat get worked out, and which in turn feeds the simulator.
+   ========================================================================== */
+
+/* ---------- pipe dimension tables (nominal, OD mm, wall mm) ---------- */
+const TABLES = {
+  truboreMetric: [['DN15',18,1.5],['DN20',23,1.5],['DN25',28,1.5],['DN32',35,1.5],['DN40',43,1.5],
+    ['DN50',53,1.5],['DN65',69,2],['DN80',84,2],['DN100',104,2],['DN125',129,2],['DN150',154,2],
+    ['DN200',204,2],['DN250',254,2],['DN300',304,2],['DN350',355,2.5],['DN400',406,3],['DN450',456,3],
+    ['DN500',506,3],['DN600',606,3],['DN700',708,4],['DN800',808,4],['DN900',908,4],['DN1000',1008,4]],
+  trubore: [['DN15',21.3,2],['DN20',26.9,2],['DN25',33.7,2],['DN32',42.4,2],['DN40',48.3,2],
+    ['DN50',60.3,2],['DN65',76.1,2],['DN80',88.9,2],['DN100',114.3,2],['DN125',139.7,2],['DN150',168.3,2],
+    ['DN200',219.1,3],['DN250',273,3],['DN300',323.9,4],['DN350',355.6,4],['DN400',406.4,4],
+    ['DN450',457,3],['DN500',508,4],['DN600',609.6,4],['DN700',711,4],['DN800',813,4]],
+  carbon: [['DN8',13.5,2.30],['DN10',17.2,2.30],['DN15',21.3,2.65],['DN20',26.9,2.65],
+    ['DN25',33.7,3.25],['DN32',42.4,3.25],['DN40',48.3,3.25],['DN50',60.3,3.65],
+    ['DN65',76.1,3.65],['DN80',88.9,4.05],['DN100',114.3,4.50],['DN125',139.7,4.85],
+    ['DN150',165.1,4.85],['DN200',219.1,6.30],['DN250',273.0,6.30],['DN300',323.9,7.10],
+    ['DN350',355.6,8.00],['DN400',406.4,8.80],['DN450',457.0,10.0],['DN500',508.0,11.0]],
+  copper: [['15mm',15,0.7],['22mm',22,0.9],['28mm',28,0.9],['35mm',35,1.2],['42mm',42,1.2],
+    ['54mm',54,1.2],['67mm',66.7,1.2],['76mm',76.1,1.5],['108mm',108,1.5],['133mm',133,1.5],['159mm',159,2.0]],
+};
+TABLES.truboreMetric316 = TABLES.truboreMetric;
+TABLES.trubore316       = TABLES.trubore;
+TABLES.stainless304     = TABLES.trubore;
+TABLES.stainless        = TABLES.trubore;
+
+const MAT_LABEL = {
+  truboreMetric:    'Tru-Bore Metric 304L',
+  truboreMetric316: 'Tru-Bore Metric 316L',
+  trubore:          'Tru-Bore ISO 304L',
+  trubore316:       'Tru-Bore ISO 316L',
+  stainless304:     'Stainless 304 sch 10S',
+  stainless:        'Stainless 316 sch 10S',
+  carbon:           'Carbon steel BS EN 10255',
+  copper:           'Copper EN 1057',
+};
+/* Roughness presets, copied verbatim from the Pipework Sizer so a run sized
+   here keeps its size when the project is opened there. Any change to one
+   table has to be made in the other. */
+const ROUGHNESS_PRESETS = {
+  new:      { copper: 0.0000015, carbon: 0.000046, stainless: 0.000015, stainless304: 0.000015,
+              trubore: 0.000015, trubore316: 0.000015, truboreMetric: 0.000015, truboreMetric316: 0.000015 },
+  used:     { copper: 0.000003,  carbon: 0.00012,  stainless: 0.00003,  stainless304: 0.00003,
+              trubore: 0.00003,  trubore316: 0.00003,  truboreMetric: 0.00003,  truboreMetric316: 0.00003 },
+  corroded: { copper: 0.000005,  carbon: 0.0005,   stainless: 0.00006,  stainless304: 0.00006,
+              trubore: 0.00006,  trubore316: 0.00006, truboreMetric: 0.00006, truboreMetric316: 0.00006 },
+};
+const CONDITION_LABEL = {
+  new:      'New / clean (design)',
+  used:     'In service \u2014 light scaling',
+  corroded: 'Older / corroded',
+  custom:   'Custom roughness',
+};
+function roughnessFor(material) {
+  const cond = S.settings.condition || 'new';
+  if (cond === 'custom') {
+    const v = parseFloat(S.settings.customRough);
+    return (v > 0 ? v : 0.000046);
+  }
+  return (ROUGHNESS_PRESETS[cond] && ROUGHNESS_PRESETS[cond][material]) || 0.000046;
+}
+
+/* ---------- fitting K factors ----------
+   Same tables as the sizer's fittings schedule: K at DN15 / DN50 / DN150 /
+   DN300, interpolated on bore, with a small credit for smoother materials.
+   Loss per fitting is K x rho v^2 / 2. */
+const FITTING_TYPES = {
+  elbow90:   { label: '90\u00b0 elbow',            k: [1.00, 0.75, 0.60, 0.52] },
+  elbow90LR: { label: '90\u00b0 elbow long radius', k: [0.55, 0.42, 0.34, 0.30] },
+  bend90:    { label: '90\u00b0 pulled bend',       k: [0.35, 0.28, 0.22, 0.19] },
+  elbow45:   { label: '45\u00b0 elbow',             k: [0.45, 0.36, 0.30, 0.26] },
+  teeLine:   { label: 'Tee through run',           k: [0.45, 0.35, 0.28, 0.24] },
+  teeBranch: { label: 'Tee through branch',        k: [1.60, 1.30, 1.05, 0.92] },
+  gate:      { label: 'Gate valve',                k: [0.30, 0.18, 0.12, 0.10] },
+  butterfly: { label: 'Butterfly valve',           k: [0.95, 0.60, 0.40, 0.32] },
+  check:     { label: 'Check valve',               k: [2.50, 2.10, 1.80, 1.60] },
+  strainer:  { label: 'Strainer',                  k: [2.80, 2.50, 2.20, 2.00] },
+  dblRegVal: { label: 'Double regulating valve',   k: [3.50, 3.00, 2.60, 2.40] },
+  commSet:   { label: 'Commissioning set',         k: [4.00, 3.40, 3.00, 2.70] },
+  flange:    { label: 'Flanged joint',             k: [0.06, 0.05, 0.04, 0.04] },
+};
+const K_DN = [15, 50, 150, 300];
+const K_MAT = { carbon: 1.00, copper: 0.92,
+  trubore: 0.95, trubore316: 0.95, stainless: 0.95, stainless304: 0.95,
+  truboreMetric: 0.95, truboreMetric316: 0.95 };
+
+const STD_DN = [15,20,25,32,40,50,65,80,100,125,150,200,250,300,350,400,450,500,600,700,800,900,1000];
+function nominalDN(nom, id_mm) {
+  if (nom && /^DN/i.test(nom)) {
+    const n = parseInt(String(nom).replace(/[^0-9]/g, ''), 10);
+    if (!isNaN(n)) return n;
+  }
+  let best = STD_DN[0], bd = Infinity;
+  STD_DN.forEach(d => { const x = Math.abs((id_mm || 0) - d); if (x < bd) { bd = x; best = d; } });
+  return best;
+}
+function fittingK(type, dn, material) {
+  const f = FITTING_TYPES[type];
+  if (!f) return 0;
+  const ks = f.k;
+  let k;
+  if (dn <= K_DN[0]) k = ks[0];
+  else if (dn >= K_DN[K_DN.length - 1]) k = ks[ks.length - 1];
+  else {
+    for (let i = 0; i < K_DN.length - 1; i++) {
+      if (dn >= K_DN[i] && dn <= K_DN[i + 1]) {
+        const t = (dn - K_DN[i]) / (K_DN[i + 1] - K_DN[i]);
+        k = ks[i] + t * (ks[i + 1] - ks[i]);
+        break;
+      }
+    }
+  }
+  return k * (K_MAT[material] || 1);
+}
+function fittingPa(type, dn, material, v, rho) {
+  return fittingK(type, dn, material) * rho * v * v / 2;
+}
+
+/* ---------- fluid ---------- */
+function waterRho(T){ return ((1.051865e-05*T - 5.171329e-03)*T - 6.179237e-03)*T + 1000.068; }
+function waterCp(T){ return (((1.606849e-09*T - 4.736562e-07)*T + 5.721385e-05)*T - 2.586464e-03)*T + 4.215269; }
+/* Viscosity is deliberately taken at the Pipework Sizer's basis (0.00131 Pa.s,
+   water with no glycol) rather than corrected to the mean operating
+   temperature. It is the more conservative figure, and matching it means a
+   run sized here keeps the same size when the project is opened in the sizer.
+   Correcting one tool without the other would silently re-size every run. */
+const SIZER_MU = 0.00131;
+function waterMu(){ return SIZER_MU; }
+
+/* ---------- plant types ---------- */
+const SOURCE_TYPES = {
+  boiler:  'Boiler',
+  chp:     'CHP',
+  chiller: 'Chiller',
+  ashp:    'Air source heat pump',
+  wshp:    'Water source heat pump',
+  plate:   'Plate heat exchanger',
+  steam:   'Steam calorifier',
+  other:   'Other plant',
+};
+
+/* ---------- terminal valve arrangements (carried through to the simulator) ---------- */
+const VALVE_TYPES = {
+  twoPort:   '2-port only',
+  twoPortBp: '2-port + bypass (DRV)',
+  twoPortCS: '2-port + bypass (commissioning set)',
+  threePort: '3-port diverting',
+  picv:      'PICV',
+};
+
+/* ---------- project state ---------- */
+const S = {
+  ref: '', engineer: '', date: new Date().toISOString().slice(0, 10),
+  img: null,                 // { src, w, h, label }
+  pxPerM: 0,                 // set by calibration
+  calib: null,               // { a:{x,y}, b:{x,y}, metres }
+  nodes: [], segs: [],
+  nextId: 1,
+  settings: {
+    material: 'truboreMetric',
+    condition: 'new',            // matches the sizer's pipe condition
+    customRough: 0.000046,
+    jointing: 'welded',          // 'welded' or 'flanged'
+    flangeSpacing: 4,            // metres between flanged joints
+    bendType: 'elbow90',         // what a change of direction is made from
+    autoName: true,
+    termValves: true,            // isolation + strainer + regulating at each load
+    limitPd: 300, vMin: 0.3, vMax: 3.0,
+    supply: 80, ret: 60, ambient: 20,
+    dT: 20,
+    plantHeight: 1.0,            // default heights above finished floor
+    mainHeight: 3.5,
+    loadHeight: 2.5,
+  },
+  setupDone: false,
+};
+const nid = () => S.nextId++;
+
+/* ---------- geometry ---------- */
+/* Height above finished floor. The drawing is a plan, so risers and drops
+   are invisible on it — taking a height at each component is what recovers
+   the vertical pipe and the elbows that go with it. */
+function heightOf(n) {
+  if (!n) return 0;
+  const v = parseFloat(n.height);
+  if (!isNaN(v)) return v;
+  return n.type === 'source' ? S.settings.plantHeight
+       : n.type === 'consumer' ? S.settings.loadHeight
+       : S.settings.mainHeight;
+}
+
+function dist(a, b) { return Math.hypot(b.x - a.x, b.y - a.y); }
+function polyLenPx(pts) {
+  let L = 0;
+  for (let i = 1; i < pts.length; i++) L += dist(pts[i - 1], pts[i]);
+  return L;
+}
+/* ---------- naming ----------
+   Runs on the spine are M1, M2, M3; runs that terminate at a load are
+   B1, B2, B3. A run that leaves the spine but still carries onward flow is a
+   sub-main, numbered from the main it left \u2014 M2.1, M2.2 \u2014 so the schedule
+   reads the way the system is actually described on site. */
+function autoNameRuns(quiet) {
+  buildTree();
+  let m = 0, b = 0;
+  const subCount = {};
+  const walk = (nodeId, spineName) => {
+    const outs = S.segs.filter(s => s.up === nodeId);
+    // the heaviest leg continues the run it is on; the rest are branches off it
+    outs.sort((x, y) => (y.kw || 0) - (x.kw || 0));
+    outs.forEach((sg, i) => {
+      const down = nodeById(sg.down);
+      const isLeaf = down && down.type === 'consumer';
+      if (isLeaf) {
+        sg.ref = 'B' + (++b);
+      } else if (i === 0) {
+        sg.ref = spineName ? spineName : 'M' + (++m);
+        if (!spineName) sg.spine = sg.ref;
+      } else {
+        const parent = spineName || ('M' + m);
+        subCount[parent] = (subCount[parent] || 0) + 1;
+        sg.ref = parent + '.' + subCount[parent];
+      }
+      if (down) walk(down.id, isLeaf ? null : sg.ref);
+    });
+  };
+  S.nodes.filter(n => n.type === 'source').forEach(r => walk(r.id, null));
+  // anything not reached keeps a plain name so it is obvious
+  let o = 0;
+  S.segs.filter(s => s.orphan).forEach(s => { s.ref = 'X' + (++o); });
+  solve();
+  if (!quiet) { render(); toast('Runs renamed M / B'); }
+}
+
+function segLengthM(sg) { return S.pxPerM > 0 ? polyLenPx(sg.pts) / S.pxPerM : 0; }
+function nodeById(id) { return S.nodes.find(n => n.id === id) || null; }
+function segById(id)  { return S.segs.find(s => s.id === id) || null; }
+
+// Closest point on a polyline, for dropping a tee onto an existing run
+function nearestOnPoly(pts, p) {
+  let best = null;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const l2 = dx * dx + dy * dy;
+    let t = l2 > 0 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const q = { x: a.x + t * dx, y: a.y + t * dy };
+    const d = dist(q, p);
+    if (!best || d < best.d) best = { d, q, i, t };
+  }
+  return best;
+}
+
+/* ---------- hydraulics ---------- */
+function fluid() {
+  const Tm = (S.settings.supply + S.settings.ret) / 2;
+  return { rho: waterRho(Tm), cp: waterCp(Tm), mu: waterMu(), Tm };
+}
+function frictionFactor(Re, rel) {
+  if (Re < 2300) return 64 / Math.max(Re, 1);
+  return 0.25 / Math.pow(Math.log10(rel / 3.7 + 5.74 / Math.pow(Re, 0.9)), 2);
+}
+function hyd(lps, id_mm, rough, f) {
+  const d = id_mm / 1000;
+  if (d <= 0 || lps <= 0) return { v: 0, paPerM: 0 };
+  const A = Math.PI * d * d / 4;
+  const v = (lps / 1000) / A;
+  const Re = f.rho * v * d / f.mu;
+  return { v, paPerM: frictionFactor(Re, rough / d) * (f.rho * v * v) / (2 * d) };
+}
+
+/* Smallest pipe that stays inside the Pa/m limit and the velocity ceiling. */
+function sizeFor(lps, material, step) {
+  const tbl = TABLES[material] || TABLES.truboreMetric;
+  const rough = roughnessFor(material);
+  const f = fluid();
+  const lim = S.settings.limitPd, vMax = S.settings.vMax;
+  let idx = -1;
+  for (let i = 0; i < tbl.length; i++) {
+    const id = tbl[i][1] - 2 * tbl[i][2];
+    const h = hyd(lps, id, rough, f);
+    if (h.paPerM <= lim && h.v <= vMax) { idx = i; break; }
+  }
+  let over = false;
+  if (idx < 0) { idx = tbl.length - 1; over = true; }
+  const auto = tbl[idx][0];
+  idx = Math.max(0, Math.min(tbl.length - 1, idx + (parseInt(step) || 0)));
+  const [nom, od, wall] = tbl[idx];
+  const id = od - 2 * wall;
+  const h = hyd(lps, id, rough, f);
+  return { nom, od, wall, id, v: h.v, paPerM: h.paPerM, auto,
+           over, slow: h.v > 0 && h.v < S.settings.vMin };
+}
+
+function flowFromKw(kw, dT) {
+  const f = fluid();
+  if (kw <= 0 || dT <= 0) return 0;
+  return (kw / (f.cp * dT)) / f.rho * 1000;
+}
+function kwFromFlow(lps, dT) {
+  const f = fluid();
+  return (lps / 1000) * f.rho * f.cp * dT;
+}
+
+/* ==========================================================================
+   TOPOLOGY
+   Segments connect nodes. The source is the root; everything hangs off it.
+   Each segment's duty is whatever consumers sit downstream of it, which is
+   what decides its size.
+   ========================================================================== */
+function neighbours(nodeId) {
+  return S.segs.filter(s => s.a === nodeId || s.b === nodeId)
+               .map(s => ({ seg: s, other: s.a === nodeId ? s.b : s.a }));
+}
+
+/* Walk out from the source, giving every segment a direction and a parent. */
+function buildTree() {
+  const roots = S.nodes.filter(n => n.type === 'source');
+  S.segs.forEach(s => { s.up = null; s.down = null; s.parentSeg = null; s.depth = 0; s.orphan = true; });
+  S.nodes.forEach(n => { n.feedSeg = null; n.reached = false; });
+  if (roots.length === 0) return { roots: [], orphans: S.segs.slice() };
+
+  const seen = new Set();
+  const q = [];
+  roots.forEach(r => { seen.add(r.id); r.reached = true; q.push({ id: r.id, seg: null, depth: 0 }); });
+
+  while (q.length) {
+    const cur = q.shift();
+    neighbours(cur.id).forEach(({ seg, other }) => {
+      if (seg.up !== null && seg.up !== undefined) return;   // already directed
+      if (seen.has(other)) return;                            // would close a loop
+      seg.up = cur.id; seg.down = other; seg.orphan = false;
+      seg.parentSeg = cur.seg; seg.depth = cur.depth;
+      const n = nodeById(other);
+      if (n) { n.feedSeg = seg.id; n.reached = true; }
+      seen.add(other);
+      q.push({ id: other, seg: seg.id, depth: cur.depth + 1 });
+    });
+  }
+  return { roots, orphans: S.segs.filter(s => s.orphan) };
+}
+
+/* Consumers downstream of a node, following the directed tree. */
+function subtreeConsumers(nodeId, seen) {
+  seen = seen || new Set();
+  if (seen.has(nodeId)) return [];
+  seen.add(nodeId);
+  const n = nodeById(nodeId);
+  let list = (n && n.type === 'consumer') ? [n] : [];
+  S.segs.forEach(s => {
+    if (s.up === nodeId && s.down !== null) list = list.concat(subtreeConsumers(s.down, seen));
+  });
+  return list;
+}
+
+function consumerFlow(n) {
+  if (!n || n.type !== 'consumer') return 0;
+  if (n.basis === 'lps') return parseFloat(n.lps) || 0;
+  return flowFromKw(parseFloat(n.kw) || 0, parseFloat(n.dT) || S.settings.dT);
+}
+function consumerKw(n) {
+  if (!n || n.type !== 'consumer') return 0;
+  if (n.basis === 'lps') return kwFromFlow(parseFloat(n.lps) || 0, parseFloat(n.dT) || S.settings.dT);
+  return parseFloat(n.kw) || 0;
+}
+
+/* Everything a segment has to carry. */
+function segDuty(sg) {
+  if (sg.down === null || sg.down === undefined) return { kw: 0, lps: 0, n: 0 };
+  const cs = subtreeConsumers(sg.down);
+  return {
+    kw: cs.reduce((s, c) => s + consumerKw(c), 0),
+    lps: cs.reduce((s, c) => s + consumerFlow(c), 0),
+    n: cs.length,
+  };
+}
+
+/* ---------- fittings take-off ----------
+   The plan gives the bends: every corner traced is a change of direction.
+   The heights give the risers: a difference between the two ends means a
+   vertical leg and an elbow at each end of it. Jointing adds flanges at the
+   chosen spacing. Nothing here is assumed \u2014 it all comes off the geometry. */
+function segFittings(sg) {
+  const up = nodeById(sg.up), down = nodeById(sg.down);
+  const rise = (up && down) ? Math.abs(heightOf(down) - heightOf(up)) : 0;
+  const extra = Math.abs(parseFloat(sg.extraRise) || 0);
+  const corners = Math.max(0, (sg.pts ? sg.pts.length : 2) - 2);
+
+  const f = {};
+  const add = (k, n) => { if (n > 0) f[k] = (f[k] || 0) + n; };
+  const bend = S.settings.bendType || 'elbow90';
+
+  add(bend, corners);                       // corners on the plan
+  if (rise > 0.01)  add(bend, 2);           // up and back to horizontal
+  if (extra > 0.01) add(bend, 4);           // over an obstruction and back down
+
+  // tee where this run leaves its parent
+  if (up && up.type === 'junction') add('teeBranch', 1);
+
+  // terminal set at a load
+  if (down && down.type === 'consumer' && S.settings.termValves) {
+    add('butterfly', 2);
+    add('strainer', 1);
+    const v = down.valve;
+    if (v === 'twoPortBp') add('dblRegVal', 1);
+    else if (v === 'twoPortCS') add('commSet', 1);
+    else if (v === 'threePort') add('dblRegVal', 1);
+  }
+
+  // flanged joints along the run
+  if (S.settings.jointing === 'flanged') {
+    const sp = Math.max(0.5, parseFloat(S.settings.flangeSpacing) || 4);
+    add('flange', Math.ceil(((sg.runM || 0) + rise + extra) / sp));
+  }
+
+  // each fitting occurs on both legs of a paired run
+  if (sg.mode !== 'single') Object.keys(f).forEach(k => { f[k] *= 2; });
+  return { list: f, rise, extra, corners };
+}
+
+function fittingsPa(sg) {
+  if (!sg.pipe) return 0;
+  const dn = nominalDN(sg.pipe.nom, sg.pipe.id);
+  const rho = fluid().rho;
+  const mat = sg.material || S.settings.material;
+  let pa = 0;
+  Object.keys(sg.fit.list).forEach(k => {
+    pa += sg.fit.list[k] * fittingPa(k, dn, mat, sg.pipe.v, rho);
+  });
+  return pa;
+}
+function fittingCount(sg) {
+  return Object.keys(sg.fit.list).reduce((n, k) => n + sg.fit.list[k], 0);
+}
+
+/* Full solve: direct every segment, roll the duty up, size the pipe. */
+function solve() {
+  const tree = buildTree();
+  S.segs.forEach(sg => {
+    const d = segDuty(sg);
+    sg.kw = d.kw; sg.lps = d.lps; sg.nCons = d.n;
+    sg.runM = segLengthM(sg);                    // the route as traced, in plan
+    sg.pipe = (sg.lps > 0 && S.pxPerM > 0)
+      ? sizeFor(sg.lps, sg.material || S.settings.material, sg.step)
+      : null;
+    sg.fit = segFittings(sg);
+    // vertical adds to the pipe you actually install
+    sg.lenM = sg.runM + sg.fit.rise + sg.fit.extra;
+    sg.hydM = sg.lenM * (sg.mode === 'single' ? 1 : 2);
+    sg.fitPa = fittingsPa(sg);
+    sg.nFit = fittingCount(sg);
+    sg.straightKpa = sg.pipe ? sg.pipe.paPerM * sg.hydM / 1000 : 0;
+    sg.fitKpa = sg.fitPa / 1000;
+    sg.dropKpa = sg.straightKpa + sg.fitKpa;
+    sg.equivPct = sg.straightKpa > 0 ? sg.fitKpa / sg.straightKpa * 100 : 0;
+  });
+  S.nodes.forEach(n => {
+    if (n.type === 'consumer') { n.lps = n.lps; n.flowLps = consumerFlow(n); n.dutyKw = consumerKw(n); }
+  });
+  return tree;
+}
+
+/* The most onerous path, for a sanity read on the drawing. */
+function worstPath() {
+  const cons = S.nodes.filter(n => n.type === 'consumer' && n.feedSeg);
+  let best = null;
+  cons.forEach(c => {
+    let drop = 0, hops = 0, sg = segById(c.feedSeg), guard = 0;
+    const chain = [];
+    while (sg && guard++ < 500) {
+      drop += sg.dropKpa || 0; hops++;
+      chain.push(sg.ref || 'run');
+      sg = sg.parentSeg ? segById(sg.parentSeg) : null;
+    }
+    drop += parseFloat(c.coilKpa) || 0;
+    if (!best || drop > best.drop) best = { node: c, drop, hops, chain: chain.reverse() };
+  });
+  return best;
+}
+
+/* ---------- totals ---------- */
+function totals() {
+  const cons = S.nodes.filter(n => n.type === 'consumer');
+  const srcs = S.nodes.filter(n => n.type === 'source');
+  return {
+    consumers: cons.length,
+    sources: srcs.length,
+    kw: cons.reduce((s, c) => s + consumerKw(c), 0),
+    lps: cons.reduce((s, c) => s + consumerFlow(c), 0),
+    plantKw: srcs.reduce((s, x) => s + (parseFloat(x.kw) || 0), 0),
+    runM: S.segs.reduce((s, x) => s + (x.lenM || 0), 0),
+    pipeM: S.segs.reduce((s, x) => s + (x.hydM || 0), 0),
+  };
+}
+
+/* ---------- small helpers ---------- */
+function el(id) { return document.getElementById(id); }
+function esc(s) { return String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmt(v, d) { return (isFinite(v) ? v : 0).toFixed(d === undefined ? 1 : d); }
+function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+let toastTimer = null;
+function toast(msg) {
+  const t = el('toast');
+  t.textContent = msg; t.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('on'), 2300);
+}
+/* ==========================================================================
+   CANVAS
+   The drawing sits in a scroller; everything drawn on top lives in one SVG
+   in drawing coordinates, so zooming and panning can never shift a traced
+   length. Scale is metres per pixel of the source image.
+   ========================================================================== */
+let zoom = 1;
+let tool = 'select';          // select | pan | calib | source | consumer | trace
+let sel = null;               // { kind:'node'|'seg', id }
+let draft = null;             // in-progress trace or calibration
+let hoverPt = null;
+let clipboard = null;         // duplicated component settings
+
+const SVGNS = 'http://www.w3.org/2000/svg';
+function mk(tag, attrs, txt) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (txt !== undefined) e.textContent = txt;
+  return e;
+}
+
+function applyZoom() {
+  el('sheet').style.transform = 'scale(' + zoom + ')';
+  el('zLvl').textContent = Math.round(zoom * 100) + '%';
+}
+function setZoom(z, anchor) {
+  const sc = el('scroller');
+  const old = zoom;
+  zoom = clamp(z, 0.08, 8);
+  const cx = anchor ? anchor.x : (sc.scrollLeft + sc.clientWidth / 2) / old;
+  const cy = anchor ? anchor.y : (sc.scrollTop + sc.clientHeight / 2) / old;
+  applyZoom();
+  sc.scrollLeft = cx * zoom - (anchor ? anchor.sx : sc.clientWidth / 2);
+  sc.scrollTop  = cy * zoom - (anchor ? anchor.sy : sc.clientHeight / 2);
+}
+function zoomFit() {
+  if (!S.img) return;
+  const sc = el('scroller');
+  setZoom(Math.min((sc.clientWidth - 20) / S.img.w, (sc.clientHeight - 20) / S.img.h));
+  sc.scrollLeft = 0; sc.scrollTop = 0;
+}
+
+// screen event -> drawing coordinates
+function toDwg(ev) {
+  const r = el('sheet').getBoundingClientRect();
+  return { x: (ev.clientX - r.left) / zoom, y: (ev.clientY - r.top) / zoom };
+}
+
+/* ---------- what's under the cursor ---------- */
+function hitNode(p, tolPx) {
+  const tol = (tolPx || 15) / zoom;
+  let best = null;
+  S.nodes.forEach(n => {
+    const d = dist(n, p);
+    if (d < tol && (!best || d < best.d)) best = { d, node: n };
+  });
+  return best ? best.node : null;
+}
+function hitSeg(p, tolPx) {
+  const tol = (tolPx || 9) / zoom;
+  let best = null;
+  S.segs.forEach(s => {
+    const r = nearestOnPoly(s.pts, p);
+    if (r && r.d < tol && (!best || r.d < best.r.d)) best = { seg: s, r };
+  });
+  return best;
+}
+
+/* ==========================================================================
+   DRAW
+   ========================================================================== */
+function render() {
+  const ov = el('ov');
+  if (!S.img) { ov.innerHTML = ''; return; }
+  ov.setAttribute('width', S.img.w);
+  ov.setAttribute('height', S.img.h);
+  ov.setAttribute('viewBox', '0 0 ' + S.img.w + ' ' + S.img.h);
+  ov.style.width = S.img.w + 'px';
+  ov.style.height = S.img.h + 'px';
+
+  solve();
+  const k = 1 / zoom;                       // keep strokes and text constant on screen
+  const g = document.createDocumentFragment();
+
+  // ---- calibration line ----
+  if (S.calib) {
+    const { a, b } = S.calib;
+    g.appendChild(mk('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+      stroke: 'var(--measure)', 'stroke-width': 2 * k, 'stroke-dasharray': (7 * k) + ' ' + (4 * k) }));
+    [a, b].forEach(p => {
+      g.appendChild(mk('line', { x1: p.x, y1: p.y - 8 * k, x2: p.x, y2: p.y + 8 * k,
+        stroke: 'var(--measure)', 'stroke-width': 2 * k }));
+    });
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const lbl = fmt(S.calib.metres, 2) + ' m';
+    g.appendChild(mk('rect', { x: mx - 26 * k, y: my - 20 * k, width: 52 * k, height: 15 * k,
+      rx: 2 * k, fill: 'var(--measure)' }));
+    g.appendChild(mk('text', { x: mx, y: my - 9 * k, 'text-anchor': 'middle',
+      'font-size': 10 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+      fill: '#241a00' }, lbl));
+  }
+
+  // ---- segments ----
+  S.segs.forEach(sg => {
+    const picked = sel && sel.kind === 'seg' && sel.id === sg.id;
+    const d = sg.pts.map((p, i) => (i ? 'L' : 'M') + p.x + ' ' + p.y).join(' ');
+    const single = sg.mode === 'single';
+    const w = sg.pipe ? clamp(1.6 + sg.pipe.od / 90, 1.8, 7) : 2.2;
+
+    if (picked) {
+      g.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--measure)',
+        'stroke-width': (w + 7) * k, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: .5 }));
+    }
+    if (single) {
+      // one pipe: drawn in the colour of the leg it is
+      g.appendChild(mk('path', { d, fill: 'none',
+        stroke: sg.leg === 'return' ? 'var(--return)' : 'var(--flow)',
+        'stroke-width': w * k, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
+    } else {
+      // paired: flow and return drawn as an offset couple
+      const off = (w * 0.85 + 1.1) * k;
+      g.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--flow)',
+        'stroke-width': w * k, 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+        transform: 'translate(' + (-off) + ',' + (-off) + ')' }));
+      g.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--return)',
+        'stroke-width': w * k, 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+        transform: 'translate(' + off + ',' + off + ')' }));
+    }
+
+    if (sg.orphan) {
+      g.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--alarm)',
+        'stroke-width': 1.4 * k, 'stroke-dasharray': (4 * k) + ' ' + (4 * k) }));
+    }
+
+    // label at the midpoint of the longest leg
+    if (S.pxPerM > 0 && sg.pts.length > 1) {
+      let bi = 1, bl = -1;
+      for (let i = 1; i < sg.pts.length; i++) {
+        const L = dist(sg.pts[i - 1], sg.pts[i]);
+        if (L > bl) { bl = L; bi = i; }
+      }
+      const a = sg.pts[bi - 1], b = sg.pts[bi];
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const txt = (sg.pipe ? sg.pipe.nom + '  ' : '') + fmt(sg.lenM, 1) + ' m'
+        + (single ? '  1-pipe' : '');
+      const wPx = txt.length * 6.0 + 12;
+      g.appendChild(mk('rect', { x: mx - wPx / 2 * k, y: my - 9 * k, width: wPx * k, height: 16 * k,
+        rx: 2 * k, fill: 'rgba(255,255,255,.93)', stroke: 'var(--rule-2)', 'stroke-width': .8 * k }));
+      g.appendChild(mk('text', { x: mx, y: my + 2.6 * k, 'text-anchor': 'middle',
+        'font-size': 10 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 500,
+        fill: sg.pipe && (sg.pipe.over || sg.pipe.slow) ? 'var(--alarm)' : 'var(--ink)' }, txt));
+    }
+  });
+
+  // ---- live trace ----
+  if (draft && draft.kind === 'trace' && draft.pts.length) {
+    const pts = hoverPt ? draft.pts.concat([hoverPt]) : draft.pts;
+    const d = pts.map((p, i) => (i ? 'L' : 'M') + p.x + ' ' + p.y).join(' ');
+    g.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--measure)', 'stroke-width': 2.4 * k,
+      'stroke-dasharray': (8 * k) + ' ' + (5 * k), 'stroke-linecap': 'round' }));
+    pts.forEach((p, i) => g.appendChild(mk('circle', { cx: p.x, cy: p.y, r: 3.2 * k,
+      fill: i === pts.length - 1 ? 'var(--measure)' : 'var(--white)',
+      stroke: 'var(--measure)', 'stroke-width': 1.6 * k })));
+    if (S.pxPerM > 0 && hoverPt) {
+      const run = polyLenPx(pts) / S.pxPerM;
+      const lbl = fmt(run, 2) + ' m';
+      g.appendChild(mk('rect', { x: hoverPt.x + 12 * k, y: hoverPt.y - 22 * k,
+        width: (lbl.length * 7.2 + 14) * k, height: 18 * k, rx: 2 * k, fill: 'var(--measure)' }));
+      g.appendChild(mk('text', { x: hoverPt.x + 19 * k, y: hoverPt.y - 9 * k,
+        'font-size': 11.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+        fill: '#241a00' }, lbl));
+    }
+  }
+  if (draft && draft.kind === 'calib' && draft.pts.length === 1 && hoverPt) {
+    const a = draft.pts[0];
+    g.appendChild(mk('line', { x1: a.x, y1: a.y, x2: hoverPt.x, y2: hoverPt.y,
+      stroke: 'var(--measure)', 'stroke-width': 2 * k, 'stroke-dasharray': (7 * k) + ' ' + (4 * k) }));
+  }
+
+  // ---- nodes ----
+  S.nodes.forEach(n => {
+    const picked = sel && sel.kind === 'node' && sel.id === n.id;
+    if (n.type === 'junction') {
+      g.appendChild(mk('circle', { cx: n.x, cy: n.y, r: 4.6 * k, fill: 'var(--white)',
+        stroke: picked ? 'var(--measure)' : 'var(--graphite)', 'stroke-width': (picked ? 3 : 2) * k }));
+      return;
+    }
+    const src = n.type === 'source';
+    const w = src ? 74 : 62, h = src ? 34 : 30;
+    const x = n.x - w / 2 * k, y = n.y - h / 2 * k;
+    if (picked) {
+      g.appendChild(mk('rect', { x: x - 4 * k, y: y - 4 * k, width: (w + 8) * k, height: (h + 8) * k,
+        rx: 5 * k, fill: 'none', stroke: 'var(--measure)', 'stroke-width': 2.5 * k }));
+    }
+    g.appendChild(mk('rect', { x, y, width: w * k, height: h * k, rx: 3 * k,
+      fill: src ? 'var(--graphite)' : 'var(--white)',
+      stroke: src ? 'var(--graphite)' : (n.reached ? 'var(--live)' : 'var(--alarm)'),
+      'stroke-width': 1.8 * k }));
+    g.appendChild(mk('text', { x: n.x, y: n.y - 2 * k, 'text-anchor': 'middle',
+      'font-size': 10 * k, 'font-weight': 600, 'font-family': 'Archivo, sans-serif',
+      fill: src ? 'var(--paper)' : 'var(--ink)' }, String(n.name || '').slice(0, 13)));
+    const sub = src
+      ? (fmt(n.kw, 0) + ' kW')
+      : (fmt(consumerKw(n), 0) + ' kW  ' + fmt(consumerFlow(n), 2) + ' l/s');
+    g.appendChild(mk('text', { x: n.x, y: n.y + 9 * k, 'text-anchor': 'middle',
+      'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace',
+      fill: src ? '#9aa3b1' : 'var(--ink-soft)' }, sub));
+    if (!src && !n.reached) {
+      g.appendChild(mk('text', { x: n.x, y: y - 5 * k, 'text-anchor': 'middle',
+        'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+        fill: 'var(--alarm)' }, 'NOT CONNECTED'));
+    }
+  });
+
+  ov.innerHTML = '';
+  ov.appendChild(g);
+  renderStatus();
+}
+
+function renderStatus() {
+  const t = totals();
+  const st = el('status');
+  st.style.display = S.img ? 'flex' : 'none';
+  const cell = (k, v, warn) =>
+    '<div class="st' + (warn ? ' warn' : '') + '"><b>' + k + '</b><span>' + v + '</span></div>';
+  const worst = worstPath();
+  st.innerHTML =
+      cell('Scale', S.pxPerM > 0 ? fmt(S.pxPerM, 1) + ' px/m' : 'not set', S.pxPerM <= 0)
+    + cell('Consumers', String(t.consumers))
+    + cell('Load', fmt(t.kw, 0) + ' kW')
+    + cell('Flow', fmt(t.lps, 2) + ' l/s')
+    + cell('Traced', fmt(t.runM, 0) + ' m route')
+    + (worst ? cell('Index drop', fmt(worst.drop, 0) + ' kPa') : '');
+}
+
+/* ==========================================================================
+   TOOLS
+   ========================================================================== */
+const TOOLS = [
+  { id: 'select',   label: 'Select', key: 'V', icon: 'M4 2l14 8-6 1.6L9.4 18z' },
+  { id: 'pan',      label: 'Pan',    key: 'H', icon: 'M10 2v8M6 5v6M14 5v6M3 9c0 5 3 9 7 9s7-4 7-9' },
+  { id: 'calib',    label: 'Scale',  key: 'S', icon: 'M2 7h16v6H2zM6 7v4M10 7v6M14 7v4' },
+  { id: 'source',   label: 'Plant',  key: 'P', icon: 'M3 4h14v12H3zM7 8h6v4H7z' },
+  { id: 'consumer', label: 'Load',   key: 'C', icon: 'M3 6h14v8H3zM6 6v8M10 6v8M14 6v8' },
+  { id: 'trace',    label: 'Trace',  key: 'T', icon: 'M2 15l5-9 5 5 6-8' },
+];
+
+function buildRail() {
+  const rail = el('rail');
+  rail.innerHTML = '';
+  TOOLS.forEach((t, i) => {
+    if (i === 2 || i === 3 || i === 5) rail.appendChild(document.createElement('hr'));
+    const b = document.createElement('button');
+    b.className = 'tool' + (tool === t.id ? ' on' : '');
+    b.id = 'tool-' + t.id;
+    b.title = t.label + '  (' + t.key + ')';
+    b.innerHTML = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" '
+      + 'stroke-linecap="round" stroke-linejoin="round"><path d="' + t.icon + '"/></svg><i>' + t.label + '</i>';
+    b.disabled = !S.img && t.id !== 'select';
+    b.addEventListener('click', () => setTool(t.id));
+    rail.appendChild(b);
+  });
+}
+
+const HINTS = {
+  calib: 'Click two points a known distance apart on the drawing, then type the real dimension.',
+  source: 'Click where the plant sits.',
+  consumer: 'Click where the load sits. Double-click any component to edit it.',
+  trace: 'Click a component or an existing run to start. Click to add corners. '
+       + 'Finish on another component, or press <kbd>Enter</kbd> to stop and leave a tee.',
+  pan: 'Drag to move around the drawing.',
+};
+
+function setTool(t) {
+  if (!S.img && t !== 'select') { toast('Load a drawing first'); return; }
+  if (t === 'calib' && S.pxPerM > 0 && tool !== 'calib') {
+    // re-calibrating replaces the old scale, which moves every traced length
+  }
+  tool = t;
+  draft = null; hoverPt = null;
+  buildRail();
+  el('scroller').className = (t === 'pan' ? 'pan' : '');
+  const h = el('hint');
+  if (HINTS[t]) { el('hintTxt').innerHTML = HINTS[t]; h.classList.add('on'); }
+  else h.classList.remove('on');
+  render();
+}
+
+/* ---------- creating things ---------- */
+function addSource(p) {
+  const n = { id: nid(), type: 'source', x: p.x, y: p.y,
+    name: 'Plant ' + (S.nodes.filter(x => x.type === 'source').length + 1),
+    plant: 'boiler', kw: 0, dT: S.settings.dT,
+    height: S.settings.plantHeight };
+  S.nodes.push(n);
+  select('node', n.id);
+  render();
+}
+function addConsumer(p, from) {
+  const base = from || clipboard;
+  const n = Object.assign({
+    id: 0, type: 'consumer', x: 0, y: 0,
+    name: '', basis: 'kw', kw: 0, lps: 0, dT: S.settings.dT,
+    coilKpa: 0, valve: 'twoPort', height: S.settings.loadHeight,
+  }, base ? {
+    basis: base.basis, kw: base.kw, lps: base.lps, dT: base.dT,
+    coilKpa: base.coilKpa, valve: base.valve, height: base.height,
+  } : {});
+  n.id = nid(); n.x = p.x; n.y = p.y;
+  const nth = S.nodes.filter(x => x.type === 'consumer').length + 1;
+  n.name = base && base.name ? base.name.replace(/\s\d+$/, '') + ' ' + nth : 'Load ' + nth;
+  S.nodes.push(n);
+  select('node', n.id);
+  render();
+  return n;
+}
+function addJunction(p) {
+  const n = { id: nid(), type: 'junction', x: p.x, y: p.y, name: 'Tee',
+    height: S.settings.mainHeight };
+  S.nodes.push(n);
+  return n;
+}
+
+/* Split an existing run at a point so a branch can tee off it. */
+function splitSegment(sg, hit) {
+  const j = addJunction(hit.q);
+  const before = sg.pts.slice(0, hit.i).concat([{ x: hit.q.x, y: hit.q.y }]);
+  const after = [{ x: hit.q.x, y: hit.q.y }].concat(sg.pts.slice(hit.i));
+  const tail = { id: nid(), a: j.id, b: sg.b, pts: after,
+    mode: sg.mode, leg: sg.leg, material: sg.material, step: sg.step,
+    ref: (sg.ref || 'Run') + 'b' };
+  sg.pts = before; sg.b = j.id;
+  S.segs.push(tail);
+  return j;
+}
+
+/* Resolve where a trace click lands: an existing node, a tee on a run, or open air. */
+function resolvePoint(p, endOfTrace) {
+  const n = hitNode(p);
+  if (n) return { node: n, at: { x: n.x, y: n.y } };
+  const h = hitSeg(p);
+  if (h) { const j = splitSegment(h.seg, h.r); return { node: j, at: { x: j.x, y: j.y } }; }
+  if (endOfTrace) { const j = addJunction(p); return { node: j, at: p }; }
+  return null;
+}
+
+function finishTrace(endNode) {
+  if (!draft || draft.pts.length < 2) { draft = null; render(); return; }
+  const sg = {
+    id: nid(), a: draft.startNode, b: endNode,
+    pts: draft.pts.slice(),
+    mode: draft.mode || 'pair', leg: draft.leg || 'flow',
+    material: S.settings.material, step: 0,
+    ref: 'Run ' + (S.segs.length + 1),
+  };
+  S.segs.push(sg);
+  draft = null;
+  if (S.settings.autoName !== false) autoNameRuns(true);
+  select('seg', sg.id);
+  render();
+}
+
+function deleteSelected() {
+  if (!sel) return;
+  if (sel.kind === 'seg') {
+    S.segs = S.segs.filter(s => s.id !== sel.id);
+  } else {
+    S.nodes = S.nodes.filter(n => n.id !== sel.id);
+    S.segs = S.segs.filter(s => s.a !== sel.id && s.b !== sel.id);
+  }
+  // tidy any tee left with nothing to join
+  S.nodes = S.nodes.filter(n => n.type !== 'junction' || neighbours(n.id).length > 0);
+  sel = null;
+  closeInspector();
+  render();
+}
+/* ==========================================================================
+   INSPECTOR
+   ========================================================================== */
+function select(kind, id) { sel = { kind, id }; openInspector(); render(); }
+function closeInspector() { el('body').classList.remove('insp'); sel = null; render(); }
+
+function openInspector() {
+  if (!sel) { closeInspector(); return; }
+  el('body').classList.add('insp');
+  const b = el('insBody');
+  if (sel.kind === 'node') {
+    const n = nodeById(sel.id);
+    if (!n) { closeInspector(); return; }
+    el('insKind').textContent = n.type === 'source' ? 'Plant' : n.type === 'consumer' ? 'Load' : 'Tee';
+    el('insName').textContent = n.name || '\u2014';
+    b.innerHTML = n.type === 'source' ? sourceForm(n)
+                : n.type === 'consumer' ? consumerForm(n) : junctionForm(n);
+  } else {
+    const sg = segById(sel.id);
+    if (!sg) { closeInspector(); return; }
+    el('insKind').textContent = 'Pipe run';
+    el('insName').textContent = sg.ref || 'Run';
+    b.innerHTML = segForm(sg);
+  }
+  wireInspector();
+}
+
+const opts = (obj, cur) => Object.keys(obj)
+  .map(k => '<option value="' + k + '"' + (cur === k ? ' selected' : '') + '>' + obj[k] + '</option>').join('');
+
+function sourceForm(n) {
+  return ''
+    + '<label class="fld"><span>Name</span><input data-f="name" value="' + esc(n.name) + '"></label>'
+    + '<label class="fld"><span>Plant type</span><select data-f="plant">' + opts(SOURCE_TYPES, n.plant) + '</select></label>'
+    + '<div class="row2">'
+    +   '<label class="fld"><span>Output <em>kW</em></span><input type="number" data-f="kw" step="1" min="0" value="' + (n.kw || '') + '"></label>'
+    +   '<label class="fld"><span>&Delta;T <em>K</em></span><input type="number" data-f="dT" step="1" min="1" value="' + (n.dT || S.settings.dT) + '"></label>'
+    + '</div>'
+    + '<label class="fld"><span>Height above finished floor <em>m</em></span>'
+    +   '<input type="number" data-f="height" step="0.1" value="' + heightOf(n) + '"></label>'
+    + derivedBox([['Connected load', fmt(totals().kw, 0) + ' kW'],
+                  ['Installed plant', fmt(totals().plantKw, 0) + ' kW'],
+                  ['Flow at &Delta;T ' + (n.dT || S.settings.dT), fmt(flowFromKw(n.kw || 0, n.dT || S.settings.dT), 2) + ' l/s']])
+    + '<div class="note">Plant is the root of the network. Everything you trace from here hangs off it.</div>'
+    + rowBtns();
+}
+
+function consumerForm(n) {
+  const byKw = n.basis !== 'lps';
+  const feed = n.feedSeg ? segById(n.feedSeg) : null;
+  return ''
+    + '<label class="fld"><span>Name</span><input data-f="name" value="' + esc(n.name) + '"></label>'
+    + '<label class="fld"><span>Rated by</span><select data-f="basis">'
+    +   '<option value="kw"' + (byKw ? ' selected' : '') + '>Duty in kW</option>'
+    +   '<option value="lps"' + (byKw ? '' : ' selected') + '>Flow in l/s</option></select></label>'
+    + '<div class="row2">'
+    +   '<label class="fld"><span>' + (byKw ? 'Duty <em>kW</em>' : 'Flow <em>l/s</em>') + '</span>'
+    +     '<input type="number" data-f="' + (byKw ? 'kw' : 'lps') + '" step="' + (byKw ? '1' : '0.1') + '" min="0" value="'
+    +     ((byKw ? n.kw : n.lps) || '') + '"></label>'
+    +   '<label class="fld"><span>&Delta;T <em>K</em></span><input type="number" data-f="dT" step="1" min="1" value="' + (n.dT || S.settings.dT) + '"></label>'
+    + '</div>'
+    + '<label class="fld"><span>Coil pressure drop <em>kPa</em></span>'
+    +   '<input type="number" data-f="coilKpa" step="1" min="0" value="' + (n.coilKpa || '') + '"></label>'
+    + '<label class="fld"><span>Control valve</span><select data-f="valve">' + opts(VALVE_TYPES, n.valve) + '</select></label>'
+    + '<label class="fld"><span>Height above finished floor <em>m</em></span>'
+    +   '<input type="number" data-f="height" step="0.1" value="' + heightOf(n) + '"></label>'
+    + derivedBox([
+        ['Duty', fmt(consumerKw(n), 1) + ' kW'],
+        ['Flow', fmt(consumerFlow(n), 2) + ' l/s'],
+        ['Fed by', feed ? esc(feed.ref) + ' (' + (feed.pipe ? feed.pipe.nom : 'unsized') + ')'
+                        : '<span style="color:var(--alarm)">nothing yet</span>'],
+      ])
+    + (n.reached ? '' : '<div class="note bad">Not connected to plant. Trace a run to it, '
+        + 'or it will be left out of the export.</div>')
+    + rowBtns(true);
+}
+
+function junctionForm(n) {
+  const legs = neighbours(n.id).length;
+  return '<div class="note">A tee where ' + legs + ' run' + (legs === 1 ? '' : 's') + ' meet. '
+    + 'Drag it to tidy the layout, or delete it to remove the branch.</div>'
+    + '<label class="fld"><span>Label</span><input data-f="name" value="' + esc(n.name || '') + '"></label>'
+    + '<label class="fld"><span>Height above finished floor <em>m</em></span>'
+    +   '<input type="number" data-f="height" step="0.1" value="' + heightOf(n) + '"></label>'
+    + rowBtns();
+}
+
+function segForm(sg) {
+  const single = sg.mode === 'single';
+  const p = sg.pipe;
+  return ''
+    + '<label class="fld"><span>Reference</span><input data-f="ref" value="' + esc(sg.ref) + '"></label>'
+    + '<label class="fld"><span>Pipes in this run</span><select data-f="mode">'
+    +   '<option value="pair"' + (single ? '' : ' selected') + '>Flow and return together</option>'
+    +   '<option value="single"' + (single ? ' selected' : '') + '>Single pipe only</option></select></label>'
+    + (single
+        ? '<label class="fld"><span>Which leg</span><select data-f="leg">'
+          + '<option value="flow"' + (sg.leg !== 'return' ? ' selected' : '') + '>Flow</option>'
+          + '<option value="return"' + (sg.leg === 'return' ? ' selected' : '') + '>Return</option></select></label>'
+        : '')
+    + '<label class="fld"><span>Material</span><select data-f="material">' + opts(MAT_LABEL, sg.material || S.settings.material) + '</select></label>'
+    + '<label class="fld"><span>Size <em>step from the automatic pick</em></span>'
+    +   '<select data-f="step">'
+    +   [-2,-1,0,1,2].map(v => '<option value="' + v + '"' + ((sg.step || 0) === v ? ' selected' : '') + '>'
+        + (v === 0 ? 'Automatic' : (v > 0 ? '+' + v + ' size' : v + ' size') + (Math.abs(v) > 1 ? 's' : '')) + '</option>').join('')
+    +   '</select></label>'
+    + '<label class="fld"><span>Extra rise and drop within the run <em>m</em>'
+    +   ' <em style="color:var(--muted)">over an obstruction</em></span>'
+    +   '<input type="number" data-f="extraRise" step="0.1" min="0" value="' + (sg.extraRise || '') + '"></label>'
+    + derivedBox([
+        ['Route on the plan', fmt(sg.runM, 2) + ' m'],
+        ['Riser between ends', fmt(sg.fit.rise, 2) + ' m'],
+        ['Pipe needed', fmt(sg.hydM, 2) + ' m' + (single ? '' : ' (flow + return)')],
+        ['Carries', fmt(sg.kw, 1) + ' kW to ' + sg.nCons + ' load' + (sg.nCons === 1 ? '' : 's')],
+        ['Design flow', fmt(sg.lps, 2) + ' l/s'],
+        ['Size', p ? p.nom + (p.auto !== p.nom ? ' <span class="chip warn">stepped</span>' : '') : '\u2014'],
+        ['Velocity', p ? fmt(p.v, 2) + ' m/s ' + velChip(p) : '\u2014'],
+        ['Gradient', p ? fmt(p.paPerM, 0) + ' Pa/m' : '\u2014'],
+        ['Straight pipe', fmt(sg.straightKpa, 2) + ' kPa'],
+        ['Fittings', fmt(sg.fitKpa, 2) + ' kPa <span class="chip">' + fmt(sg.equivPct, 0) + '% equiv</span>'],
+        ['Run loss', '<strong>' + fmt(sg.dropKpa, 2) + ' kPa</strong>'],
+      ])
+    + fittingsBox(sg)
+    + (sg.orphan ? '<div class="note bad">This run does not reach the plant. '
+        + 'Trace it back to a component or an existing run.</div>' : '')
+    + (p && p.over ? '<div class="note bad">Above the largest pipe in this table at the '
+        + S.settings.limitPd + ' Pa/m limit. Split the load or raise the limit.</div>' : '')
+    + (p && p.slow ? '<div class="note">Below the ' + S.settings.vMin + ' m/s minimum &mdash; '
+        + 'slow enough that air and dirt can settle. One size down would lift it.</div>' : '')
+    + rowBtns();
+}
+
+function fittingsBox(sg) {
+  const keys = Object.keys(sg.fit.list);
+  if (!keys.length) return '';
+  const dn = sg.pipe ? nominalDN(sg.pipe.nom, sg.pipe.id) : 0;
+  const rho = fluid().rho;
+  const mat = sg.material || S.settings.material;
+  const rows = keys.map(k => {
+    const n = sg.fit.list[k];
+    const each = sg.pipe ? fittingPa(k, dn, mat, sg.pipe.v, rho) / 1000 : 0;
+    return '<tr><td style="padding:3px 0">' + n + ' \u00d7 ' + FITTING_TYPES[k].label + '</td>'
+      + '<td style="padding:3px 0;text-align:right;font-family:Azeret Mono,monospace">'
+      + fmt(n * each, 2) + '</td></tr>';
+  }).join('');
+  return '<div style="font-family:Azeret Mono,monospace;font-size:9px;letter-spacing:.13em;'
+    + 'text-transform:uppercase;color:var(--muted);margin:14px 0 5px">Fittings counted off the trace</div>'
+    + '<table style="width:100%;font-size:12px;border-collapse:collapse">' + rows + '</table>'
+    + '<div class="note">' + sg.fit.corners + ' corner' + (sg.fit.corners === 1 ? '' : 's') + ' on the plan'
+    + (sg.fit.rise > 0.01 ? ', a ' + fmt(sg.fit.rise, 2) + ' m riser' : '')
+    + (sg.mode !== 'single' ? ', doubled for flow and return' : '') + '.</div>';
+}
+
+function velChip(p) {
+  if (p.v > S.settings.vMax) return '<span class="chip bad">fast</span>';
+  if (p.slow) return '<span class="chip warn">slow</span>';
+  return '<span class="chip ok">ok</span>';
+}
+function derivedBox(rows) {
+  return '<div class="derived"><dl>'
+    + rows.map(r => '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>').join('')
+    + '</dl></div>';
+}
+function rowBtns(dup) {
+  return '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
+    + (dup ? '<button class="btn ghost sm" id="insDup">Duplicate</button>' : '')
+    + '<button class="btn ghost sm" id="insDel" style="color:var(--alarm)">Delete</button></div>';
+}
+
+function wireInspector() {
+  el('insBody').querySelectorAll('[data-f]').forEach(inp => {
+    inp.addEventListener('change', () => {
+      const obj = sel.kind === 'node' ? nodeById(sel.id) : segById(sel.id);
+      if (!obj) return;
+      const f = inp.dataset.f;
+      obj[f] = (inp.type === 'number') ? (inp.value === '' ? 0 : parseFloat(inp.value)) : inp.value;
+      if (f === 'basis' || f === 'mode') openInspector();
+      el('insName').textContent = obj.name || obj.ref || '\u2014';
+      render(); openInspector();
+    });
+  });
+  const dup = el('insDup');
+  if (dup) dup.addEventListener('click', () => {
+    const n = nodeById(sel.id);
+    if (!n) return;
+    clipboard = Object.assign({}, n);
+    const copy = addConsumer({ x: n.x + 90, y: n.y + 50 }, n);
+    toast('Copied ' + (n.name || 'load') + ' \u2014 drag it into place');
+    select('node', copy.id);
+  });
+  const del = el('insDel');
+  if (del) del.addEventListener('click', deleteSelected);
+}
+
+/* ==========================================================================
+   SCHEDULE
+   ========================================================================== */
+function renderSchedule() {
+  solve();
+  const rows = [];
+  const walk = (nodeId, depth) => {
+    S.segs.filter(s => s.up === nodeId).forEach(sg => {
+      const down = nodeById(sg.down);
+      const isCons = down && down.type === 'consumer';
+      rows.push({ sg, down, depth, isCons });
+      if (down) walk(down.id, depth + 1);
+    });
+  };
+  S.nodes.filter(n => n.type === 'source').forEach(r => walk(r.id, 0));
+  S.segs.filter(s => s.orphan).forEach(sg => rows.push({ sg, down: null, depth: 0, isCons: false, orphan: true }));
+
+  const body = rows.map(r => {
+    const p = r.sg.pipe;
+    return '<tr class="' + (r.isCons ? 'cons' : 'main') + (r.orphan ? ' pick' : '') + '"'
+      + ' data-seg="' + r.sg.id + '">'
+      + '<td style="padding-left:' + (9 + r.depth * 14) + 'px">' + esc(r.sg.ref)
+      +   (r.isCons ? ' <span class="chip ok">' + esc(r.down.name) + '</span>' : '')
+      +   (r.orphan ? ' <span class="chip bad">not connected</span>' : '') + '</td>'
+      + '<td class="n">' + (p ? p.nom : '\u2014') + '</td>'
+      + '<td class="n">' + fmt(r.sg.runM, 1) + '</td>'
+      + '<td class="n">' + (r.sg.fit.rise > 0.01 ? fmt(r.sg.fit.rise, 1) : '\u2014') + '</td>'
+      + '<td class="n">' + (r.sg.mode === 'single' ? '1' : '2') + '</td>'
+      + '<td class="n">' + fmt(r.sg.hydM, 1) + '</td>'
+      + '<td class="n">' + fmt(r.sg.kw, 1) + '</td>'
+      + '<td class="n">' + fmt(r.sg.lps, 2) + '</td>'
+      + '<td class="n">' + (p ? fmt(p.v, 2) : '\u2014') + '</td>'
+      + '<td class="n">' + (p ? fmt(p.paPerM, 0) : '\u2014') + '</td>'
+      + '<td class="n">' + r.sg.nFit + '</td>'
+      + '<td class="n">' + fmt(r.sg.fitKpa, 2) + '</td>'
+      + '<td class="n"><strong>' + fmt(r.sg.dropKpa, 2) + '</strong></td>'
+      + '<td>' + (p ? velChip(p) : '<span class="chip">unsized</span>') + '</td></tr>';
+  }).join('');
+
+  el('schedTable').innerHTML =
+      '<thead><tr><th>Run</th><th>Size</th><th>Route m</th><th>Riser m</th><th>Pipes</th><th>Pipe m</th>'
+    + '<th>kW</th><th>l/s</th><th>m/s</th><th>Pa/m</th><th>Fittings</th><th>Fitting kPa</th>'
+    + '<th>Total kPa</th><th>Status</th></tr></thead>'
+    + '<tbody>' + (body || '<tr><td colspan="14">Nothing traced yet.</td></tr>') + '</tbody>';
+
+  const t = totals();
+  const w = worstPath();
+  const nf = S.segs.reduce((n, s) => n + (s.nFit || 0), 0);
+  el('schedNote').innerHTML = MAT_LABEL[S.settings.material] + ' &middot; '
+    + CONDITION_LABEL[S.settings.condition].toLowerCase().replace(/ \(design\)/, '') + ' &middot; '
+    + S.settings.jointing + ' &middot; ' + S.settings.limitPd + ' Pa/m limit<br>'
+    + t.consumers + ' load' + (t.consumers === 1 ? '' : 's') + ' &middot; ' + fmt(t.kw, 0) + ' kW &middot; '
+    + fmt(t.pipeM, 0) + ' m of pipe &middot; ' + nf + ' fittings'
+    + (w ? ' &middot; index ' + esc(w.node.name) + ' at ' + fmt(w.drop, 0) + ' kPa' : '');
+
+  el('schedTable').querySelectorAll('tr[data-seg]').forEach(tr => {
+    tr.addEventListener('click', () => {
+      select('seg', parseInt(tr.dataset.seg));
+      el('drawer').classList.remove('on');
+    });
+  });
+}
+
+/* ==========================================================================
+   EXPORT TO THE SIZER
+   Each traced run becomes a circuit. A run that ends at a load becomes a
+   consumer circuit carrying that load's duty and coil drop; everything else
+   is a distribution main. Parents follow the traced tree, so the sizer opens
+   with the topology already built.
+   ========================================================================== */
+/* The sizer applies a circuit's fitting schedule once over the whole circuit,
+   so it wants the total count across both legs — which is what has already
+   been counted here. */
+function singleLegSchedule(sg) {
+  return Object.assign({}, sg.fit.list);
+}
+
+function buildSizerProject() {
+  solve();
+  const circuits = [];
+  const idOf = {};
+  let next = 1;
+
+  const walk = (nodeId, parentCircuit) => {
+    S.segs.filter(s => s.up === nodeId).forEach(sg => {
+      const down = nodeById(sg.down);
+      const isCons = down && down.type === 'consumer';
+      const cid = next++;
+      idOf[sg.id] = cid;
+      const single = sg.mode === 'single';
+      const c = {
+        id: cid,
+        ref: isCons ? (down.name || sg.ref) : sg.ref,
+        circuitType: isCons ? 'consumer' : 'main',
+        parentId: parentCircuit,
+        material: sg.material || S.settings.material,
+        // the installed length: route on the plan plus any riser
+        length: +sg.lenM.toFixed(2),
+        lengthsPaired: !single,
+        lengthReturn: single ? 0 : '',
+        // hand over the fittings counted off the geometry rather than a
+        // percentage guess — the sizer works them at its own velocity
+        fittingsMode: 'counted',
+        fittingSchedule: singleLegSchedule(sg),
+        fittings: Math.round(sg.equivPct) || 20,
+        dT: isCons ? (parseFloat(down.dT) || S.settings.dT) : S.settings.dT,
+        consumerLoad: isCons ? (parseFloat(down.coilKpa) || 0) : 0,
+        sizeOverride: sg.step || 0,
+        isIndex: false, isLLH: false,
+      };
+      if (isCons) {
+        if (down.basis === 'lps') { c.mode = 'fromFlow'; c.lps = +consumerFlow(down).toFixed(3); c.kw = 0; }
+        else { c.mode = 'fromKw'; c.kw = +consumerKw(down).toFixed(2); c.lps = 0; }
+        // carry the valve arrangement through for the simulator
+        c.isBypass = (down.valve === 'threePort' || down.valve === 'twoPortBp' || down.valve === 'twoPortCS');
+        c.traceValve = down.valve;
+      } else {
+        c.mode = 'fromChildren'; c.kw = 0; c.lps = 0;
+      }
+      circuits.push(c);
+      if (down) walk(down.id, cid);
+    });
+  };
+  S.nodes.filter(n => n.type === 'source').forEach(r => walk(r.id, null));
+
+  const t = totals();
+  const src = S.nodes.find(n => n.type === 'source');
+  return {
+    app: 'adi-pipework-sizer', schema: 1,
+    settings: {
+      projectRef: S.ref || 'Traced from drawing',
+      engineer: S.engineer || '',
+      calcDate: S.date,
+      fluidTemp: String(S.settings.supply),
+      returnTemp: String(S.settings.ret),
+      ambientTemp: String(S.settings.ambient),
+      limitPd: String(S.settings.limitPd),
+      vMin: String(S.settings.vMin),
+      vMax: String(S.settings.vMax),
+      defaultMaterial: S.settings.material,
+      pipeCondition: S.settings.condition,
+      customRoughCarbon: String(S.settings.customRough),
+      customRoughStainless: String(S.settings.customRough),
+      plantOutput: src && src.kw ? String(src.kw) : '',
+    },
+    circuits,
+    nextId: next,
+    plantItems: [],
+    nextPlantId: 1,
+    traceMeta: {
+      from: 'pipe-trace', pxPerM: S.pxPerM,
+      jointing: S.settings.jointing,
+      flangeSpacing: S.settings.flangeSpacing,
+      fittingsCounted: S.segs.reduce((n, s) => n + (s.nFit || 0), 0),
+      riserM: +S.segs.reduce((n, s) => n + (s.fit ? s.fit.rise + s.fit.extra : 0), 0).toFixed(1),
+      routeM: +t.runM.toFixed(1), pipeM: +t.pipeM.toFixed(1),
+      drawing: S.img ? S.img.label : '', at: new Date().toISOString(),
+    },
+  };
+}
+
+function exportToSizer() {
+  const t = solve();
+  const unreached = S.nodes.filter(n => n.type === 'consumer' && !n.reached);
+  const orphans = S.segs.filter(s => s.orphan);
+  if (S.nodes.filter(n => n.type === 'source').length === 0) {
+    modal('Nothing to export', '<p>Place the plant first &mdash; it is the root everything hangs off.</p>'
+      + '<button class="btn" onclick="closeModal()">Close</button>');
+    return;
+  }
+  if (S.pxPerM <= 0) {
+    modal('Set the scale first', '<p>Without a scale the traced lengths mean nothing. '
+      + 'Use the Scale tool to pick two points a known distance apart.</p>'
+      + '<button class="btn" onclick="closeModal()">Close</button>');
+    return;
+  }
+  const proj = buildSizerProject();
+  if (proj.circuits.length === 0) {
+    modal('Nothing traced', '<p>Trace at least one run from the plant to a load.</p>'
+      + '<button class="btn" onclick="closeModal()">Close</button>');
+    return;
+  }
+  const warn = (unreached.length || orphans.length)
+    ? '<div class="note bad">' + unreached.length + ' load' + (unreached.length === 1 ? '' : 's')
+      + ' and ' + orphans.length + ' run' + (orphans.length === 1 ? '' : 's')
+      + ' are not connected to plant. They will be left out.</div>'
+    : '';
+  modal('Send to the Pipework Sizer',
+      '<p style="margin-top:0">' + proj.circuits.length + ' circuits, '
+    + fmt(totals().kw, 0) + ' kW, ' + fmt(totals().pipeM, 0) + ' m of pipe. '
+    + 'The sizer picks this up with the topology already built.</p>'
+    + warn
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">'
+    + '<button class="btn go" id="mDl">Download project file</button>'
+    + '<button class="btn ghost" id="mOpen">Download and open the sizer</button>'
+    + '<button class="btn ghost" onclick="closeModal()">Cancel</button></div>');
+
+  const dl = () => {
+    const name = (S.ref || 'Traced').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_');
+    download(name + '_from_trace.json', JSON.stringify(proj, null, 1));
+  };
+  el('mDl').addEventListener('click', () => { dl(); closeModal();
+    toast('Saved \u2014 open it in the sizer with Open Project'); });
+  el('mOpen').addEventListener('click', () => { dl(); closeModal();
+    setTimeout(() => window.open('./index.html', '_blank'), 400); });
+}
+
+/* ==========================================================================
+   FILES
+   ========================================================================== */
+function download(name, text) {
+  const b = new Blob([text], { type: 'application/json' });
+  const u = URL.createObjectURL(b);
+  const a = document.createElement('a');
+  a.href = u; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(u), 1500);
+}
+
+function saveProject() {
+  const out = JSON.parse(JSON.stringify({
+    app: 'adi-pipe-trace', schema: 1,
+    ref: S.ref, engineer: S.engineer, date: S.date,
+    img: S.img, pxPerM: S.pxPerM, calib: S.calib,
+    nodes: S.nodes, segs: S.segs, nextId: S.nextId, settings: S.settings,
+  }));
+  // strip the solved values; they rebuild on load
+  out.nodes.forEach(n => { delete n.feedSeg; delete n.reached; delete n.flowLps; delete n.dutyKw; });
+  out.segs.forEach(s => { ['up','down','parentSeg','depth','orphan','kw','lps','nCons','lenM','pipe','hydM','dropKpa']
+    .forEach(k => delete s[k]); });
+  const name = (S.ref || 'Trace').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_');
+  download('Trace_' + name + '_' + S.date + '.json', JSON.stringify(out));
+  toast('Project saved');
+}
+
+function loadProject(data) {
+  if (!data || data.app !== 'adi-pipe-trace') { toast('That is not a Pipe Trace file'); return; }
+  S.ref = data.ref || ''; S.engineer = data.engineer || ''; S.date = data.date || S.date;
+  S.pxPerM = data.pxPerM || 0; S.calib = data.calib || null;
+  S.nodes = data.nodes || []; S.segs = data.segs || [];
+  S.nextId = data.nextId || (S.nodes.length + S.segs.length + 1);
+  Object.assign(S.settings, data.settings || {});
+  if (data.img) { S.img = data.img; showDrawing(); }
+  sel = null; closeInspector();
+  buildRail(); render();
+  toast('Opened ' + (S.ref || 'project'));
+}
+
+function showDrawing() {
+  const img = el('dwg');
+  img.src = S.img.src;
+  img.style.display = 'block';
+  img.width = S.img.w; img.height = S.img.h;
+  el('sheet').style.width = S.img.w + 'px';
+  el('sheet').style.height = S.img.h + 'px';
+  el('board').style.display = 'none';
+  el('zoomer').style.display = 'flex';
+  ['bSched','bSave','bExport','bName'].forEach(id => el(id).disabled = false);
+  buildRail();
+  setTimeout(() => { zoomFit(); render(); }, 40);
+}
+
+async function loadDrawingFile(file) {
+  if (!file) return;
+  const isPdf = /pdf$/i.test(file.type) || /\.pdf$/i.test(file.name);
+  if (isPdf) {
+    if (typeof pdfjsLib === 'undefined') {
+      modal('PDF support did not load',
+        '<p>The PDF reader could not be fetched, which usually means no internet connection. '
+        + 'Export the drawing as a PNG or JPEG and load that instead &mdash; everything else works the same.</p>'
+        + '<button class="btn" onclick="closeModal()">Close</button>');
+      return;
+    }
+    try {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      const buf = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      const page = await pdf.getPage(1);
+      // render at a generous scale so tracing stays accurate when zoomed in
+      const base = page.getViewport({ scale: 1 });
+      const scale = clamp(2400 / base.width, 1, 4);
+      const vp = page.getViewport({ scale });
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
+      await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+      S.img = { src: cv.toDataURL('image/png'), w: cv.width, h: cv.height,
+                label: file.name + (pdf.numPages > 1 ? ' (page 1 of ' + pdf.numPages + ')' : '') };
+      showDrawing();
+      if (pdf.numPages > 1) toast('Loaded page 1 of ' + pdf.numPages);
+    } catch (e) {
+      modal('That PDF could not be opened',
+        '<p>' + esc(e && e.message ? e.message : 'Unknown error') + '</p>'
+        + '<p>Exporting it as a PNG or JPEG usually works.</p>'
+        + '<button class="btn" onclick="closeModal()">Close</button>');
+    }
+    return;
+  }
+  const rd = new FileReader();
+  rd.onload = () => {
+    const im = new Image();
+    im.onload = () => {
+      S.img = { src: rd.result, w: im.naturalWidth, h: im.naturalHeight, label: file.name };
+      showDrawing();
+    };
+    im.onerror = () => toast('That image could not be read');
+    im.src = rd.result;
+  };
+  rd.readAsDataURL(file);
+}
+
+/* ==========================================================================
+   MODALS
+   ========================================================================== */
+function modal(title, html) {
+  el('modTitle').textContent = title;
+  el('modBody').innerHTML = html;
+  el('modal').classList.add('on');
+}
+function closeModal() { el('modal').classList.remove('on'); }
+
+function askScale(a, b) {
+  const px = dist(a, b);
+  modal('Set the scale',
+      '<p style="margin-top:0">You picked two points <strong class="mono">' + fmt(px, 0)
+    + ' px</strong> apart. What is that on the building?</p>'
+    + '<label class="fld"><span>Real distance <em>metres</em></span>'
+    + '<input type="number" id="calM" step="0.1" min="0.01" value="10" autofocus></label>'
+    + '<div style="display:flex;gap:8px;margin-top:12px">'
+    + '<button class="btn go" id="calOk">Set scale</button>'
+    + '<button class="btn ghost" id="calNo">Cancel</button></div>');
+  const done = () => {
+    const m = parseFloat(el('calM').value);
+    if (!(m > 0)) { toast('Enter a distance greater than zero'); return; }
+    S.pxPerM = px / m;
+    S.calib = { a, b, metres: m };
+    closeModal(); setTool('select');
+    toast('Scale set \u2014 ' + fmt(S.pxPerM, 1) + ' px per metre');
+  };
+  el('calOk').addEventListener('click', done);
+  el('calNo').addEventListener('click', () => { closeModal(); draft = null; setTool('select'); });
+  el('calM').addEventListener('keydown', e => { if (e.key === 'Enter') done(); });
+  setTimeout(() => el('calM').select(), 40);
+}
+
+function stepsDialog() {
+  const s = S.settings;
+  const done = {
+    pipe: S.setupDone,
+    dwg: !!S.img,
+    scale: S.pxPerM > 0,
+    plant: S.nodes.some(n => n.type === 'source'),
+    loads: S.nodes.some(n => n.type === 'consumer'),
+    traced: S.segs.length > 0,
+  };
+  const tick = ok => ok
+    ? '<span class="chip ok">done</span>'
+    : '<span class="chip">to do</span>';
+  const steps = [
+    ['Set the pipe and design basis', tick(done.pipe),
+     'Material, condition and jointing come first, because they set the roughness every size is worked out from. '
+     + 'The same tables as the Pipework Sizer, so nothing changes when the project moves across.'],
+    ['Load the drawing', tick(done.dwg),
+     'A PDF or an image of the layout. Only the first page of a PDF is used.'],
+    ['Set the scale', tick(done.scale),
+     'Pick two points a known distance apart \u2014 a grid line, a bay, a dimension already on the drawing \u2014 '
+     + 'and type the real figure. Every length after that comes off the drawing.'],
+    ['Place the plant, and give it a height', tick(done.plant),
+     'The boiler, CHP, chiller or heat pump. Its height above finished floor is the datum the risers are measured from.'],
+    ['Place the loads', tick(done.loads),
+     'Duty in kW or flow in l/s, \u0394T, coil pressure drop, control valve and height. '
+     + 'Duplicate one and drag the copy for repeated units.'],
+    ['Trace the runs', tick(done.traced),
+     'Click a component or an existing run to start, click each corner, finish on another component. '
+     + 'Every corner becomes an elbow and every height difference becomes a riser with an elbow at each end.'],
+    ['Check the schedule, then send it on', tick(false),
+     'The schedule shows size, velocity, gradient and the fittings counted off the geometry. '
+     + 'Send to Sizer hands over the topology, the lengths and the fittings schedule.'],
+  ];
+  modal('How Pipe Trace works',
+    '<ol style="margin:0;padding-left:20px;font-size:13px;line-height:1.6">'
+    + steps.map(st => '<li style="margin-bottom:10px"><strong>' + st[0] + '</strong> ' + st[1]
+        + '<div style="color:var(--ink-soft);font-size:12.5px;margin-top:2px">' + st[2] + '</div></li>').join('')
+    + '</ol>'
+    + '<div class="note">Worth knowing: the drawing is a plan, so nothing vertical shows on it. '
+    + 'Heights are how the risers and their elbows get counted \u2014 set one on the plant and on anything '
+    + 'at a different level, and the rest follows.</div>'
+    + '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'
+    + '<button class="btn go" id="stGo">' + (S.setupDone ? 'Close' : 'Set the pipe basis') + '</button>'
+    + (S.setupDone ? '' : '<button class="btn ghost" onclick="closeModal()">Later</button>') + '</div>');
+  el('stGo').addEventListener('click', () => {
+    closeModal();
+    if (!S.setupDone) setTimeout(projectDialog, 120);
+  });
+}
+
+function projectDialog() {
+  const s = S.settings;
+  modal('Pipe and design basis',
+      '<p style="margin:0 0 12px;font-size:12.5px;color:var(--ink-soft)">'
+    + 'Material and condition set the roughness every size is worked out from, so these come first. '
+    + 'They use the same tables as the Pipework Sizer.</p>'
+    + '<label class="fld"><span>Pipe material</span><select id="pMat">' + opts(MAT_LABEL, s.material) + '</select></label>'
+    + '<div class="row2">'
+    + '<label class="fld"><span>Pipe condition</span><select id="pCond">' + opts(CONDITION_LABEL, s.condition) + '</select></label>'
+    + '<label class="fld"><span>Roughness <em>m</em></span><input type="number" id="pRough" step="0.000001" value="'
+    +   (s.condition === 'custom' ? s.customRough : roughnessFor(s.material)) + '"'
+    +   (s.condition === 'custom' ? '' : ' readonly style="background:var(--paper-2);color:var(--muted)"') + '></label>'
+    + '</div>'
+    + '<div class="row2">'
+    + '<label class="fld"><span>Jointing</span><select id="pJoint">'
+    +   '<option value="welded"' + (s.jointing === 'welded' ? ' selected' : '') + '>Welded</option>'
+    +   '<option value="flanged"' + (s.jointing === 'flanged' ? ' selected' : '') + '>Flanged</option></select></label>'
+    + '<label class="fld"><span>Flange spacing <em>m</em></span>'
+    +   '<input type="number" id="pFlSp" step="0.5" min="0.5" value="' + s.flangeSpacing + '"></label>'
+    + '</div>'
+    + '<label class="fld"><span>Changes of direction made with</span><select id="pBend">'
+    +   '<option value="elbow90"' + (s.bendType === 'elbow90' ? ' selected' : '') + '>90&deg; elbows (short radius)</option>'
+    +   '<option value="elbow90LR"' + (s.bendType === 'elbow90LR' ? ' selected' : '') + '>90&deg; elbows (long radius)</option>'
+    +   '<option value="bend90"' + (s.bendType === 'bend90' ? ' selected' : '') + '>Pulled bends</option></select></label>'
+    + '<label class="fld" style="display:flex;align-items:center;gap:9px">'
+    +   '<input type="checkbox" id="pTerm" ' + (s.termValves ? 'checked' : '')
+    +   ' style="width:17px;height:17px;min-height:0"><span style="margin:0;text-transform:none;letter-spacing:0;font-size:12.5px;color:var(--ink)">'
+    +   'Count isolation, strainer and regulating valves at each load</span></label>'
+    + '<hr style="border:none;border-top:1px solid var(--rule);margin:14px 0">'
+    + '<label class="fld"><span>Project reference</span><input id="pRef" value="' + esc(S.ref) + '"></label>'
+    + '<label class="fld"><span>Engineer</span><input id="pEng" value="' + esc(S.engineer) + '"></label>'
+    + '<div class="row2">'
+    + '<label class="fld"><span>Flow <em>&deg;C</em></span><input type="number" id="pSup" value="' + s.supply + '"></label>'
+    + '<label class="fld"><span>Return <em>&deg;C</em></span><input type="number" id="pRet" value="' + s.ret + '"></label>'
+    + '</div>'
+    + '<div class="row2">'
+    + '<label class="fld"><span>Limit <em>Pa/m</em></span><input type="number" id="pLim" value="' + s.limitPd + '"></label>'
+    + '<label class="fld"><span>Max velocity <em>m/s</em></span><input type="number" id="pVx" step="0.1" value="' + s.vMax + '"></label>'
+    + '</div>'
+    + '<div style="font-family:Azeret Mono,monospace;font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);margin:14px 0 6px">Default heights above finished floor</div>'
+    + '<div class="row2" style="grid-template-columns:1fr 1fr 1fr">'
+    + '<label class="fld"><span>Plant <em>m</em></span><input type="number" id="pHp" step="0.1" value="' + s.plantHeight + '"></label>'
+    + '<label class="fld"><span>Mains <em>m</em></span><input type="number" id="pHm" step="0.1" value="' + s.mainHeight + '"></label>'
+    + '<label class="fld"><span>Loads <em>m</em></span><input type="number" id="pHl" step="0.1" value="' + s.loadHeight + '"></label>'
+    + '</div>'
+    + '<label class="fld"><span>Min velocity <em>m/s</em></span><input type="number" id="pVn" step="0.1" value="' + s.vMin + '"></label>'
+    + '<div style="display:flex;gap:8px;margin-top:12px">'
+    + '<button class="btn go" id="pOk">Apply</button>'
+    + '<button class="btn ghost" onclick="closeModal()">Cancel</button></div>');
+
+  el('pCond').addEventListener('change', () => {
+    const cond = el('pCond').value, mat = el('pMat').value;
+    const r = el('pRough');
+    if (cond === 'custom') { r.readOnly = false; r.style.background = ''; r.style.color = ''; }
+    else {
+      r.readOnly = true; r.style.background = 'var(--paper-2)'; r.style.color = 'var(--muted)';
+      r.value = (ROUGHNESS_PRESETS[cond] && ROUGHNESS_PRESETS[cond][mat]) || 0.000046;
+    }
+  });
+  el('pMat').addEventListener('change', () => {
+    const cond = el('pCond').value;
+    if (cond !== 'custom') el('pRough').value =
+      (ROUGHNESS_PRESETS[cond] && ROUGHNESS_PRESETS[cond][el('pMat').value]) || 0.000046;
+  });
+
+  el('pOk').addEventListener('click', () => {
+    S.ref = el('pRef').value; S.engineer = el('pEng').value;
+    s.supply = parseFloat(el('pSup').value) || 80;
+    s.ret = parseFloat(el('pRet').value) || 60;
+    s.dT = Math.max(1, Math.abs(s.supply - s.ret));
+    s.material = el('pMat').value;
+    s.condition = el('pCond').value;
+    s.customRough = parseFloat(el('pRough').value) || 0.000046;
+    s.jointing = el('pJoint').value;
+    s.flangeSpacing = parseFloat(el('pFlSp').value) || 4;
+    s.bendType = el('pBend').value;
+    s.termValves = el('pTerm').checked;
+    s.limitPd = parseFloat(el('pLim').value) || 300;
+    s.vMin = parseFloat(el('pVn').value) || 0.3;
+    s.vMax = parseFloat(el('pVx').value) || 3.0;
+    s.plantHeight = parseFloat(el('pHp').value) || 0;
+    s.mainHeight = parseFloat(el('pHm').value) || 0;
+    s.loadHeight = parseFloat(el('pHl').value) || 0;
+    S.setupDone = true;
+    closeModal(); render();
+    toast(MAT_LABEL[s.material] + ', ' + CONDITION_LABEL[s.condition].toLowerCase()
+      + ' \u2014 roughness ' + roughnessFor(s.material).toFixed(6) + ' m');
+  });
+}
+/* ==========================================================================
+   POINTER
+   ========================================================================== */
+let drag = null;      // dragging a node
+let panning = null;
+
+const sc = el('scroller');
+
+sc.addEventListener('pointerdown', ev => {
+  if (!S.img) return;
+  const p = toDwg(ev);
+
+  if (tool === 'pan' || ev.button === 1 || ev.shiftKey) {
+    panning = { sx: ev.clientX, sy: ev.clientY, l: sc.scrollLeft, t: sc.scrollTop };
+    sc.classList.add('down');
+    sc.setPointerCapture(ev.pointerId);
+    return;
+  }
+
+  if (tool === 'select') {
+    const n = hitNode(p);
+    if (n) {
+      drag = { id: n.id, dx: p.x - n.x, dy: p.y - n.y, moved: false };
+      sc.setPointerCapture(ev.pointerId);
+      select('node', n.id);
+      return;
+    }
+    const h = hitSeg(p);
+    if (h) { select('seg', h.seg.id); return; }
+    sel = null; closeInspector();
+    return;
+  }
+
+  if (tool === 'calib') {
+    if (!draft) draft = { kind: 'calib', pts: [] };
+    draft.pts.push(p);
+    if (draft.pts.length === 2) { const [a, b] = draft.pts; draft = null; askScale(a, b); }
+    render();
+    return;
+  }
+
+  if (tool === 'source')   { addSource(p);   setTool('select'); return; }
+  if (tool === 'consumer') { addConsumer(p); setTool('select'); return; }
+
+  if (tool === 'trace') {
+    if (!draft) {
+      const r = resolvePoint(p, false);
+      if (!r) { toast('Start on a component or an existing run'); return; }
+      draft = { kind: 'trace', startNode: r.node.id, pts: [r.at],
+                mode: 'pair', leg: 'flow' };
+      render();
+      return;
+    }
+    // finishing on something existing closes the run
+    const n = hitNode(p);
+    if (n && n.id !== draft.startNode) { draft.pts.push({ x: n.x, y: n.y }); finishTrace(n.id); return; }
+    const h = hitSeg(p);
+    if (h && h.seg.a !== draft.startNode && h.seg.b !== draft.startNode) {
+      const j = splitSegment(h.seg, h.r);
+      draft.pts.push({ x: j.x, y: j.y });
+      finishTrace(j.id);
+      return;
+    }
+    draft.pts.push(p);
+    render();
+  }
+});
+
+sc.addEventListener('pointermove', ev => {
+  if (panning) {
+    sc.scrollLeft = panning.l - (ev.clientX - panning.sx);
+    sc.scrollTop  = panning.t - (ev.clientY - panning.sy);
+    return;
+  }
+  if (drag) {
+    const p = toDwg(ev);
+    const n = nodeById(drag.id);
+    if (n) {
+      n.x = p.x - drag.dx; n.y = p.y - drag.dy;
+      drag.moved = true;
+      // keep the ends of every run stuck to the node
+      S.segs.forEach(s => {
+        if (s.a === n.id) s.pts[0] = { x: n.x, y: n.y };
+        if (s.b === n.id) s.pts[s.pts.length - 1] = { x: n.x, y: n.y };
+      });
+      render();
+    }
+    return;
+  }
+  if (draft) { hoverPt = toDwg(ev); render(); }
+});
+
+function endPointer(ev) {
+  if (panning) { panning = null; sc.classList.remove('down'); }
+  if (drag) { if (drag.moved) openInspector(); drag = null; }
+  try { sc.releasePointerCapture(ev.pointerId); } catch (e) {}
+}
+sc.addEventListener('pointerup', endPointer);
+sc.addEventListener('pointercancel', endPointer);
+
+sc.addEventListener('dblclick', ev => {
+  if (!S.img) return;
+  const p = toDwg(ev);
+  const n = hitNode(p);
+  if (n) { select('node', n.id); return; }
+  const h = hitSeg(p);
+  if (h) select('seg', h.seg.id);
+});
+
+sc.addEventListener('wheel', ev => {
+  if (!S.img) return;
+  if (!(ev.ctrlKey || ev.metaKey)) return;
+  ev.preventDefault();
+  const r = el('sheet').getBoundingClientRect();
+  setZoom(zoom * (ev.deltaY < 0 ? 1.13 : 0.885), {
+    x: (ev.clientX - r.left) / zoom, y: (ev.clientY - r.top) / zoom,
+    sx: ev.clientX - sc.getBoundingClientRect().left,
+    sy: ev.clientY - sc.getBoundingClientRect().top,
+  });
+}, { passive: false });
+
+/* ==========================================================================
+   KEYBOARD
+   ========================================================================== */
+document.addEventListener('keydown', ev => {
+  const typing = /^(INPUT|SELECT|TEXTAREA)$/.test((ev.target.tagName || ''));
+  if (typing) {
+    if (ev.key === 'Escape') ev.target.blur();
+    return;
+  }
+  const k = ev.key.toLowerCase();
+
+  if (ev.key === 'Escape') {
+    if (el('modal').classList.contains('on')) { closeModal(); return; }
+    if (draft) { draft = null; render(); return; }
+    setTool('select'); return;
+  }
+  if (ev.key === 'Enter' && draft && draft.kind === 'trace') {
+    // stop here and leave a tee, so a spur can be picked up later
+    if (draft.pts.length < 2) { draft = null; render(); return; }
+    const last = draft.pts[draft.pts.length - 1];
+    const j = addJunction(last);
+    finishTrace(j.id);
+    return;
+  }
+  if ((ev.key === 'Delete' || ev.key === 'Backspace') && sel) { ev.preventDefault(); deleteSelected(); return; }
+
+  if (ev.key === 'Backspace' && draft && draft.pts.length > 1) { draft.pts.pop(); render(); return; }
+
+  const t = TOOLS.find(x => x.key.toLowerCase() === k);
+  if (t) { setTool(t.id); return; }
+
+  if (k === 'd' && sel && sel.kind === 'node') {
+    const n = nodeById(sel.id);
+    if (n && n.type === 'consumer') {
+      clipboard = Object.assign({}, n);
+      select('node', addConsumer({ x: n.x + 90, y: n.y + 50 }, n).id);
+      toast('Duplicated \u2014 drag it into place');
+    }
+    return;
+  }
+  if (k === '1') { const s = segById(sel && sel.kind === 'seg' ? sel.id : -1);
+    if (s) { s.mode = s.mode === 'single' ? 'pair' : 'single'; render(); openInspector(); } return; }
+  if (k === '=' || k === '+') { setZoom(zoom * 1.2); return; }
+  if (k === '-') { setZoom(zoom / 1.2); return; }
+  if (k === '0') { zoomFit(); return; }
+});
+
+/* ==========================================================================
+   WIRING
+   ========================================================================== */
+el('bPick').addEventListener('click', () => el('fDwg').click());
+el('bOpenDwg').addEventListener('click', () => el('fDwg').click());
+el('fDwg').addEventListener('change', e => { loadDrawingFile(e.target.files[0]); e.target.value = ''; });
+
+el('bProj').addEventListener('click', projectDialog);
+el('bSteps').addEventListener('click', stepsDialog);
+el('bSave').addEventListener('click', saveProject);
+el('bLoad').addEventListener('click', () => el('fProj').click());
+el('fProj').addEventListener('change', e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try { loadProject(JSON.parse(r.result)); }
+    catch (err) { toast('That file could not be read'); }
+  };
+  r.readAsText(f);
+});
+
+el('bExport').addEventListener('click', exportToSizer);
+el('bName').addEventListener('click', () => autoNameRuns(false));
+el('bSched').addEventListener('click', () => {
+  const d = el('drawer');
+  const on = d.classList.toggle('on');
+  if (on) renderSchedule();
+});
+el('bSchedClose').addEventListener('click', () => el('drawer').classList.remove('on'));
+el('insClose').addEventListener('click', closeInspector);
+el('hintX').addEventListener('click', () => setTool('select'));
+
+el('zIn').addEventListener('click', () => setZoom(zoom * 1.2));
+el('zOut').addEventListener('click', () => setZoom(zoom / 1.2));
+el('zFit').addEventListener('click', zoomFit);
+
+el('modal').addEventListener('click', e => { if (e.target === el('modal')) closeModal(); });
+
+// drag a drawing straight onto the board
+const drop = el('drop');
+['dragenter', 'dragover'].forEach(t => document.addEventListener(t, e => {
+  e.preventDefault();
+  if (!S.img) drop.classList.add('hot');
+}));
+['dragleave', 'drop'].forEach(t => document.addEventListener(t, e => {
+  e.preventDefault();
+  drop.classList.remove('hot');
+}));
+document.addEventListener('drop', e => {
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (!f) return;
+  if (/json$/i.test(f.name)) {
+    const r = new FileReader();
+    r.onload = () => { try { loadProject(JSON.parse(r.result)); } catch (err) { toast('That file could not be read'); } };
+    r.readAsText(f);
+  } else loadDrawingFile(f);
+});
+
+window.addEventListener('resize', () => { if (S.img) render(); });
+
+/* ---------- go ---------- */
+buildRail();
+setTool('select');
+render();
+// the pipe basis decides every size, so ask for it before anything else
+setTimeout(() => { if (!S.setupDone && !S.img) stepsDialog(); }, 350);
+</script>
+</body>
+</html>
