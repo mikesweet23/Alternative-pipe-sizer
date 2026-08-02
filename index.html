@@ -1064,6 +1064,8 @@
       <button class="btn" id="exportCsvBtn">Export CSV</button>
       <button class="btn btn-primary" id="exportXlsxBtn">Export Excel</button>
       <button class="btn btn-primary" id="exportPdfBtn" style="background:var(--brand-blue-deep);color:var(--white)">PDF Report</button>
+      <a class="btn" href="./trace.html" title="Step 1 — trace the pipework off a drawing"
+         style="text-decoration:none;display:inline-flex;align-items:center">← Pipe Trace</a>
       <a class="btn" href="./simulator.html" title="Open the hydronic network simulator with this project"
          style="text-decoration:none;display:inline-flex;align-items:center">Simulator →</a>
       <button class="btn" id="schematicBtn" title="Draw the system as a schematic from the Fed-from tree">Schematic</button>
@@ -1737,6 +1739,21 @@
 
 <div class="toast" id="toast">Copied</div>
 
+<!-- Fittings schedule -->
+<div id="fittingModal" style="display:none;position:fixed;inset:0;background:rgba(10,10,10,0.55);z-index:200;align-items:center;justify-content:center;padding:16px">
+  <div style="background:var(--white);border-radius:8px;max-width:720px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 12px 48px rgba(0,0,0,0.3)">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;gap:12px;position:sticky;top:0;background:var(--white);z-index:2">
+      <div style="flex:1">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted)">Fittings schedule</div>
+        <div id="fittingTitle" style="font-size:17px;font-weight:700;margin-top:2px"></div>
+        <div id="fittingSub" style="font-size:12px;color:var(--muted);margin-top:2px"></div>
+      </div>
+      <button onclick="closeFittingEditor()" style="background:var(--brand-blue-deep);color:var(--white);border:none;border-radius:5px;padding:9px 16px;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px;min-height:40px">Done</button>
+    </div>
+    <div id="fittingBody" style="padding:18px 20px"></div>
+  </div>
+</div>
+
 <!-- Paste rows modal -->
 <div id="pasteOverlay" onclick="closePaste()" style="display:none;position:fixed;inset:0;background:rgba(10,10,10,0.5);z-index:1000"></div>
 <div id="pasteModal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(760px,94vw);max-height:88vh;overflow-y:auto;background:var(--white);z-index:1001;border-radius:6px;box-shadow:0 20px 60px rgba(0,0,0,0.35)">
@@ -2073,6 +2090,8 @@ function newCircuit(overrides = {}) {
     isBypass: overrides.isBypass ?? false,         // three-port / bypass: keeps flowing on start-up
     bypassMode: overrides.bypassMode ?? 'pct',     // 'pct' of design flow, or 'lps'
     bypassValue: overrides.bypassValue ?? '',      // '' = full design flow for this circuit
+    fittingsMode: overrides.fittingsMode ?? 'percent',   // 'percent' or 'counted'
+    fittingSchedule: overrides.fittingSchedule ?? {},    // { elbow90: 4, gate: 2, ... }
     valveCount: overrides.valveCount ?? 6,        // AUTO default per project spec
     valveAuto: overrides.valveAuto ?? true,
     flangeCount: overrides.flangeCount ?? null,   // null = auto from installed length
@@ -3512,6 +3531,237 @@ function setAllMainsAuto() {
   showToast(n === 0 ? 'No mains with branches to set' : n + ' main' + (n === 1 ? '' : 's') + ' set to automatic roll-up');
 }
 
+/* ============================================================
+   FITTINGS SCHEDULE
+   The percentage allowance is a planning figure. Where fittings are
+   actually known, counting them is far more defensible: each fitting
+   is a velocity-head loss, dp = K x rho x v^2 / 2, with K from
+   CIBSE Guide C / Crane TP-410.
+
+   K falls as the bore grows, so the tables below are interpolated on
+   nominal bore rather than applied flat. Bend radius matters as much
+   as size: a long-radius elbow is roughly half a short-radius one, and
+   a pulled bend less again.
+   ============================================================ */
+
+// K at DN15 / DN50 / DN150 / DN300, interpolated on bore between them
+const FITTING_TYPES = {
+  elbow90:    { label: '90\u00b0 elbow (short radius)', k: [1.00, 0.75, 0.60, 0.52] },
+  elbow90LR:  { label: '90\u00b0 elbow (long radius)',  k: [0.55, 0.42, 0.34, 0.30] },
+  bend90:     { label: '90\u00b0 pulled bend',          k: [0.35, 0.28, 0.22, 0.19] },
+  elbow45:    { label: '45\u00b0 elbow',                k: [0.45, 0.36, 0.30, 0.26] },
+  teeLine:    { label: 'Tee \u2014 flow through run',   k: [0.45, 0.35, 0.28, 0.24] },
+  teeBranch:  { label: 'Tee \u2014 flow through branch',k: [1.60, 1.30, 1.05, 0.92] },
+  gate:       { label: 'Gate valve (open)',            k: [0.30, 0.18, 0.12, 0.10] },
+  butterfly:  { label: 'Butterfly valve (open)',       k: [0.95, 0.60, 0.40, 0.32] },
+  globe:      { label: 'Globe valve (open)',           k: [9.00, 7.50, 6.50, 6.00] },
+  check:      { label: 'Check valve (swing)',          k: [2.50, 2.10, 1.80, 1.60] },
+  strainer:   { label: 'Strainer (clean)',             k: [2.80, 2.50, 2.20, 2.00] },
+  dblRegVal:  { label: 'Double regulating valve',      k: [3.50, 3.00, 2.60, 2.40] },
+  commSet:    { label: 'Commissioning set',            k: [4.00, 3.40, 3.00, 2.70] },
+  reducer:    { label: 'Reducer / enlarger',           k: [0.35, 0.30, 0.25, 0.22] },
+  entryExit:  { label: 'Tank entry or exit',           k: [1.00, 1.00, 1.00, 1.00] },
+  flange:     { label: 'Flanged joint',                k: [0.06, 0.05, 0.04, 0.04] },
+};
+
+const K_DN_POINTS = [15, 50, 150, 300];
+
+// Roughness affects K a little: a rougher bore turns the flow harder.
+// Carbon steel is the reference; smoother bores get a small credit.
+const K_MATERIAL_FACTOR = {
+  carbon: 1.00, mlcp: 0.94,
+  copper: 0.92,
+  trubore: 0.95, trubore316: 0.95, stainless: 0.95, stainless304: 0.95,
+  truboreMetric: 0.95, truboreMetric316: 0.95,
+};
+
+function fittingK(type, dn, material) {
+  const f = FITTING_TYPES[type];
+  if (!f) return 0;
+  const pts = K_DN_POINTS, ks = f.k;
+  let k;
+  if (dn <= pts[0]) k = ks[0];
+  else if (dn >= pts[pts.length - 1]) k = ks[ks.length - 1];
+  else {
+    for (let i = 0; i < pts.length - 1; i++) {
+      if (dn >= pts[i] && dn <= pts[i + 1]) {
+        const t = (dn - pts[i]) / (pts[i + 1] - pts[i]);
+        k = ks[i] + t * (ks[i + 1] - ks[i]);
+        break;
+      }
+    }
+  }
+  return k * (K_MATERIAL_FACTOR[material] || 1);
+}
+
+// Pressure loss in Pa for one fitting at the circuit's velocity
+function fittingDropPa(type, dn, material, velocity, rho) {
+  return fittingK(type, dn, material) * rho * velocity * velocity / 2;
+}
+
+/* Total for a circuit's counted fittings, in Pa.
+   Returns zero when the circuit is on the percentage allowance. */
+function countedFittingsPa(c, recommended, rho) {
+  if (!c.fittingsMode || c.fittingsMode !== 'counted' || !recommended) return 0;
+  const sched = c.fittingSchedule || {};
+  const dn = nominalDNFor(recommended.nom, recommended.id_mm);
+  const v = recommended.v;
+  let total = 0;
+  Object.keys(sched).forEach(type => {
+    const n = parseFloat(sched[type]) || 0;
+    if (n > 0) total += n * fittingDropPa(type, dn, c.material, v, rho);
+  });
+  return total;
+}
+
+// Equivalent percentage the counted fittings represent, for comparison
+function countedFittingsPct(c, recommended, rho) {
+  if (!recommended) return 0;
+  const straight = lengthTotal(c) * recommended.pd;
+  if (straight <= 0) return 0;
+  return countedFittingsPa(c, recommended, rho) / straight * 100;
+}
+
+function fittingCount(c) {
+  const s = c.fittingSchedule || {};
+  return Object.keys(s).reduce((n, k) => n + (parseFloat(s[k]) || 0), 0);
+}
+
+/* ---- Fittings schedule editor ---- */
+let fittingEditorId = null;
+
+function openFittingEditor(id) {
+  fittingEditorId = id;
+  renderFittingEditor();
+  document.getElementById('fittingModal').style.display = 'flex';
+}
+function closeFittingEditor() {
+  document.getElementById('fittingModal').style.display = 'none';
+  fittingEditorId = null;
+  renderCircuits();
+}
+function setFittingCount(type, val) {
+  const c = circuitById(fittingEditorId);
+  if (!c) return;
+  if (!c.fittingSchedule) c.fittingSchedule = {};
+  const n = Math.max(0, parseFloat(val) || 0);
+  if (n === 0) delete c.fittingSchedule[type]; else c.fittingSchedule[type] = n;
+  renderFittingEditor();
+}
+function stepFitting(type, delta) {
+  const c = circuitById(fittingEditorId);
+  if (!c) return;
+  const cur = (c.fittingSchedule || {})[type] || 0;
+  setFittingCount(type, cur + delta);
+}
+function setFittingsMode(mode) {
+  const c = circuitById(fittingEditorId);
+  if (!c) return;
+  c.fittingsMode = mode;
+  renderFittingEditor();
+}
+function clearFittingSchedule() {
+  const c = circuitById(fittingEditorId);
+  if (!c) return;
+  c.fittingSchedule = {};
+  renderFittingEditor();
+}
+// Apply this circuit's schedule to every circuit of the same type
+function applyScheduleToType() {
+  const src = circuitById(fittingEditorId);
+  if (!src) return;
+  const t = circuitType(src);
+  let n = 0;
+  circuits.forEach(x => {
+    if (x.id === src.id || circuitType(x) !== t) return;
+    x.fittingSchedule = Object.assign({}, src.fittingSchedule);
+    x.fittingsMode = src.fittingsMode;
+    n++;
+  });
+  showToast('Applied to ' + n + ' other ' + t + ' circuit' + (n === 1 ? '' : 's'));
+  renderFittingEditor();
+}
+
+function renderFittingEditor() {
+  const c = circuitById(fittingEditorId);
+  const body = document.getElementById('fittingBody');
+  if (!c || !body) return;
+  const r = calculateCircuit(c);
+  const rec = r.recommended;
+  const rho = parseFloat(document.getElementById('rho').value) || 999;
+  const dn = rec ? nominalDNFor(rec.nom, rec.id_mm) : 0;
+  const v = rec ? rec.v : 0;
+  const counted = c.fittingsMode === 'counted';
+
+  document.getElementById('fittingTitle').textContent = c.ref || 'Circuit';
+  document.getElementById('fittingSub').innerHTML = rec
+    ? rec.nom + ' \u00b7 bore ' + rec.id_mm.toFixed(1) + ' mm \u00b7 ' + v.toFixed(2) + ' m/s \u00b7 '
+      + MAT_LABEL[c.material]
+    : '<span style="color:#c74418">Circuit not sized yet</span>';
+
+  const sched = c.fittingSchedule || {};
+  let totalPa = 0;
+  const rows = Object.keys(FITTING_TYPES).map(type => {
+    const n = parseFloat(sched[type]) || 0;
+    const k = fittingK(type, dn, c.material);
+    const each = rec ? fittingDropPa(type, dn, c.material, v, rho) : 0;
+    const sub = n * each;
+    totalPa += sub;
+    return '<tr' + (n > 0 ? ' style="background:rgba(122,209,228,0.10)"' : '') + '>'
+      + '<td style="padding:6px 8px">' + FITTING_TYPES[type].label + '</td>'
+      + '<td class="n" style="padding:6px 8px;color:var(--muted)">' + k.toFixed(2) + '</td>'
+      + '<td class="n" style="padding:6px 8px;color:var(--muted)">' + (each / 1000).toFixed(2) + '</td>'
+      + '<td style="padding:4px 8px;white-space:nowrap">'
+      +   '<button onclick="stepFitting(\'' + type + '\',-1)" class="fit-step">\u2212</button>'
+      +   '<input type="number" min="0" step="1" value="' + (n || '') + '" placeholder="0" class="fit-num"'
+      +     ' onchange="setFittingCount(\'' + type + '\',this.value)">'
+      +   '<button onclick="stepFitting(\'' + type + '\',1)" class="fit-step">+</button>'
+      + '</td>'
+      + '<td class="n" style="padding:6px 8px;font-weight:' + (n > 0 ? '700' : '400') + '">'
+      +   (n > 0 ? (sub / 1000).toFixed(2) : '\u2014') + '</td>'
+      + '</tr>';
+  }).join('');
+
+  const straightPa = rec ? rec.pd * lengthTotal(c) : 0;
+  const pct = straightPa > 0 ? totalPa / straightPa * 100 : 0;
+
+  body.innerHTML =
+      '<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">'
+    +   '<button onclick="setFittingsMode(\'percent\')" class="fit-mode' + (counted ? '' : ' on') + '">Percentage allowance</button>'
+    +   '<button onclick="setFittingsMode(\'counted\')" class="fit-mode' + (counted ? ' on' : '') + '">Counted fittings</button>'
+    + '</div>'
+    + (counted
+        ? '<table style="width:100%;border-collapse:collapse;font-size:12.5px">'
+          + '<thead><tr style="background:var(--brand-blue-dark);color:var(--white)">'
+          + '<th style="text-align:left;padding:7px 8px;font-size:10px;letter-spacing:1px;text-transform:uppercase">Fitting</th>'
+          + '<th style="text-align:right;padding:7px 8px;font-size:10px;letter-spacing:1px;text-transform:uppercase">K</th>'
+          + '<th style="text-align:right;padding:7px 8px;font-size:10px;letter-spacing:1px;text-transform:uppercase">kPa each</th>'
+          + '<th style="text-align:left;padding:7px 8px;font-size:10px;letter-spacing:1px;text-transform:uppercase;width:132px">Qty</th>'
+          + '<th style="text-align:right;padding:7px 8px;font-size:10px;letter-spacing:1px;text-transform:uppercase">kPa</th>'
+          + '</tr></thead><tbody>' + rows + '</tbody></table>'
+          + '<div style="background:rgba(122,209,228,0.12);border-left:3px solid var(--brand-blue);padding:11px 14px;margin-top:12px;font-size:13px;line-height:1.6">'
+          +   '<strong>' + fittingCount(c) + ' fittings totalling ' + (totalPa / 1000).toFixed(2) + ' kPa</strong>'
+          +   ' \u2014 equivalent to a <strong>' + pct.toFixed(0) + '%</strong> allowance on '
+          +   lengthTotal(c).toFixed(0) + ' m of straight pipe'
+          +   (straightPa > 0 ? ' (' + (straightPa / 1000).toFixed(2) + ' kPa).' : '.')
+          +   '<div style="color:var(--muted);font-size:11.5px;margin-top:5px">'
+          +     'Losses are velocity-head based: \u0394p = K \u00d7 \u03c1v\u00b2/2, with K interpolated on bore from '
+          +     'CIBSE Guide C / Crane TP-410 and adjusted slightly for pipe material. Change the pipe size and these update.'
+          +   '</div></div>'
+          + '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'
+          +   '<button onclick="applyScheduleToType()" class="btn-sm">Apply to all ' + circuitType(c) + ' circuits</button>'
+          +   '<button onclick="clearFittingSchedule()" class="btn-sm">Clear</button>'
+          + '</div>'
+        : '<div style="font-size:13px;line-height:1.65;color:var(--ink-soft)">'
+          + 'This circuit is using the <strong>' + (parseFloat(c.fittings) || 0) + '%</strong> allowance from the '
+          + 'Fittings column \u2014 a planning figure applied to the straight-pipe loss.'
+          + '<div style="margin-top:8px">Switch to <strong>Counted fittings</strong> to schedule the actual '
+          + 'elbows, valves and strainers. Each is calculated from its own K factor at this circuit\u2019s bore and '
+          + 'velocity, which is far more defensible once the layout is known.</div></div>');
+}
+
+function openFittingEditor_end() {}
+
 function calculateCircuit(c) {
   const rho = parseFloat(document.getElementById('rho').value) || 999;
   const cp  = parseFloat(document.getElementById('cp').value)  || 4.182;
@@ -3587,12 +3837,21 @@ function calculateCircuit(c) {
   const length = lengthTotal(c);
   const fittings = parseFloat(c.fittings) || 0;
   const consumerLoad = parseFloat(c.consumerLoad) || 0;
-  const effectiveLength = length * (1 + fittings / 100);
-  const pipeLoss_Pa = recommended ? recommended.pd * effectiveLength : 0;
+  const counted = (c.fittingsMode === 'counted');
+  const straightLoss_Pa = recommended ? recommended.pd * length : 0;
+  const fittingsLoss_Pa = counted
+    ? countedFittingsPa(c, recommended, rho)
+    : straightLoss_Pa * (fittings / 100);
+  const effectiveLength = counted
+    ? (recommended && recommended.pd > 0 ? (straightLoss_Pa + fittingsLoss_Pa) / recommended.pd : length)
+    : length * (1 + fittings / 100);
+  const pipeLoss_Pa = straightLoss_Pa + fittingsLoss_Pa;
   const pipeLoss_kPa = pipeLoss_Pa / 1000;
   const totalLoss_kPa = pipeLoss_kPa + consumerLoad;
   const totalLoss_Pa = totalLoss_kPa * 1000;
   const totalLoss_mH2O = totalLoss_Pa / (rho * 9.81);
+  const fittingsLoss_kPa = fittingsLoss_Pa / 1000;
+  const straightLoss_kPa = straightLoss_Pa / 1000;
 
   // Weight & volume calculations — based on straight pipe length only (not equivalent length)
   // Lagging/cladding/fittings allowance is applied as a 20% uplift on totals at the end
@@ -4281,7 +4540,13 @@ function renderCircuits() {
       +     ' onchange="updateCircuitField(' + c.id + ',\'lengthReturn\',this.value)">'
       +   '<button onclick="toggleLengthPair(' + c.id + ')" title="' + (c.lengthsPaired !== false ? 'Locked to flow leg' : 'Independent') + '" style="background:transparent;border:none;cursor:pointer;font-size:10px;font-weight:700;padding:2px 3px;color:' + (c.lengthsPaired !== false ? 'var(--brand-blue-deep)' : '#c28a00') + '">' + (c.lengthsPaired !== false ? 'LINK' : 'FREE') + '</button>'
       + '</div></td>'
-      + '<td data-label="Fittings %"><input type="number" value="' + c.fittings + '" step="5" min="0" max="40" onchange="updateCircuitField(' + c.id + ',\'fittings\',this.value)"></td>'
+      + '<td data-label="Fittings %"><div style="display:flex;flex-direction:column;gap:2px">'
+      +   (c.fittingsMode === 'counted'
+            ? '<div style="font-weight:700;color:var(--brand-blue-deep);font-size:13px">' + countedFittingsPct(c, result.recommended, rho).toFixed(0) + '%</div>'
+              + '<div style="font-size:9px;font-weight:700;letter-spacing:0.4px;color:var(--brand-blue-deep)">' + fittingCount(c) + ' COUNTED</div>'
+            : '<input type="number" value="' + c.fittings + '" step="5" min="0" max="40" onchange="updateCircuitField(' + c.id + ',\'fittings\',this.value)">')
+      +   '<button class="fit-open" onclick="openFittingEditor(' + c.id + ')">' + (c.fittingsMode === 'counted' ? 'edit schedule' : 'count fittings') + '</button>'
+      + '</div></td>'
       + '<td data-label="Consumer Load (kPa)"><input type="number" value="' + c.consumerLoad + '" step="1" min="0" onchange="updateCircuitField(' + c.id + ',\'consumerLoad\',this.value)" title="Equipment \u0394P: AHU coil, HX, FCU etc."></td>'
       + '<td class="derived-cell td-out" data-label="Mass Flow (kg/s)">' + mdotDerived + '</td>'
       + '<td class="derived-cell td-out" data-label="Vol Flow (l/s)">' + lpsDerived + '</td>'
