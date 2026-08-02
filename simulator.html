@@ -192,6 +192,39 @@
   }
   .viewport svg { display: block; }
 
+
+  /* The diagram is the thing you read, so it gets the full width and its own
+     scrollable window rather than stretching the page. */
+  .viewport {
+    height: var(--vp-h, 62vh);
+    min-height: 320px;
+    resize: vertical;
+    overflow: auto;
+    cursor: grab;
+  }
+  .viewport.dragging { cursor: grabbing; }
+  .viewport svg { transform-origin: 0 0; }
+  body.vp-tall .viewport { --vp-h: 84vh; }
+
+  .zoom-btn {
+    width: 30px; height: 30px; min-height: 30px; padding: 0;
+    font-size: 15px; font-weight: 700; line-height: 1;
+    border: 1px solid var(--line-2); background: var(--white); border-radius: 4px;
+    cursor: pointer; color: var(--ink); font-family: inherit;
+  }
+  .zoom-btn:hover { background: var(--paper); }
+  .btn-apply {
+    width: 100%; background: var(--accent); color: var(--white); border: none;
+    border-radius: 4px; padding: 9px 13px; font-weight: 600; cursor: pointer;
+    font-family: inherit; font-size: 12.5px; min-height: 38px; margin-top: 4px;
+  }
+  .btn-apply:hover { background: #0d635c; }
+
+  @media (max-width: 640px) {
+    .viewport { height: 52vh; min-height: 260px; }
+    body.vp-tall .viewport { height: 76vh; }
+  }
+
   /* ---------- consumer list ---------- */
   .clist { display: flex; flex-direction: column; gap: 8px; }
   .crow {
@@ -430,17 +463,25 @@
 
     <div class="readout" id="readout"></div>
 
+    <div class="panel p-diagram">
+      <div class="panel-hd">
+        <h2>System diagram</h2>
+        <span class="note">flow and return, not to scale &middot; line weight tracks actual flow</span>
+        <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+          <button class="zoom-btn" id="btnZoomOut" title="Zoom out">&minus;</button>
+          <span id="zoomLevel" class="mono" style="font-size:11.5px;color:var(--muted);min-width:44px;text-align:center">100%</span>
+          <button class="zoom-btn" id="btnZoomIn" title="Zoom in">+</button>
+          <button class="zoom-btn" id="btnZoomFit" title="Fit to width" style="width:auto;padding:0 10px">Fit</button>
+          <button class="zoom-btn" id="btnTall" title="Taller or shorter viewport" style="width:auto;padding:0 10px">Taller</button>
+        </div>
+      </div>
+      <div class="panel-bd" style="padding:8px">
+        <div class="viewport" id="viewport"></div>
+      </div>
+    </div>
+
     <div class="split">
       <div>
-        <div class="panel p-diagram">
-          <div class="panel-hd">
-            <h2>System diagram</h2>
-            <span class="note">flow and return, not to scale &middot; line weight tracks actual flow</span>
-          </div>
-          <div class="panel-bd" style="padding:8px">
-            <div class="viewport" id="viewport"></div>
-          </div>
-        </div>
 
         <div class="panel p-branch">
           <div class="panel-hd">
@@ -533,6 +574,8 @@
           </div>
           <div class="panel-bd">
             <button class="primary" id="btnRecommend" style="width:100%;margin-bottom:12px">Recommend a pump</button>
+            <button id="btnCheckSelected" style="width:100%;margin-bottom:12px">Check the pump I&rsquo;ve selected</button>
+            <div id="selectedCheck" style="margin-bottom:12px"></div>
             <div id="pumpRec"><div style="font-size:12px;color:var(--muted)">
               Set the consumers you want running and the arrangement above, then size the pump against it.
               The Design flow and head fields stay editable, so you can enter what you can actually source
@@ -1275,6 +1318,21 @@ function availableDp(n, pump, Q, sysR) {
 
 /* ---------- helpers ---------- */
 function el(id) { return document.getElementById(id); }
+function showToast(msg) {
+  let t = el('simToast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'simToast';
+    t.style.cssText = 'position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--ink);'
+      + 'color:#fff;padding:10px 18px;border-radius:5px;font-size:13px;font-weight:600;z-index:300;'
+      + 'box-shadow:0 6px 24px rgba(0,0,0,.28);opacity:0;transition:opacity .18s';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  requestAnimationFrame(() => { t.style.opacity = '1'; });
+  clearTimeout(t._h);
+  t._h = setTimeout(() => { t.style.opacity = '0'; }, 2200);
+}
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function fmt(v, d) { return (isFinite(v) ? v : 0).toFixed(d === undefined ? 1 : d); }
@@ -1346,6 +1404,75 @@ function valveSymbol(x, y, type, open) {
   // two-port bowtie
   return svgEl('path', { d: `M${x-w} ${y-w} L${x+w} ${y+w} L${x+w} ${y-w} L${x-w} ${y+w} Z`,
     fill: open ? 'none' : '#33454f', stroke: c, 'stroke-width': 1.6 });
+}
+
+/* ---------- diagram zoom and pan ----------
+   A large network does not fit on a screen at a readable size, so the
+   viewport scrolls in both directions and the drawing can be scaled
+   independently of the page. Dragging pans it. */
+let zoom = 1;
+function applyZoom() {
+  const svg = document.querySelector('#viewport svg');
+  if (!svg) return;
+  const w = parseFloat(svg.getAttribute('width')) || 0;
+  const h = parseFloat(svg.getAttribute('height')) || 0;
+  svg.style.transform = 'scale(' + zoom + ')';
+  svg.style.width = (w * zoom) + 'px';
+  svg.style.height = (h * zoom) + 'px';
+  const lvl = el('zoomLevel');
+  if (lvl) lvl.textContent = Math.round(zoom * 100) + '%';
+}
+function setZoom(z) { zoom = clamp(z, 0.25, 3); applyZoom(); }
+function zoomToFit() {
+  const vp = el('viewport'), svg = vp && vp.querySelector('svg');
+  if (!svg) return;
+  const w = parseFloat(svg.getAttribute('width')) || 1;
+  setZoom((vp.clientWidth - 24) / w);
+}
+
+function initViewportControls() {
+  const vp = el('viewport');
+  if (!vp || vp.dataset.wired) return;
+  vp.dataset.wired = '1';
+
+  let down = false, sx = 0, sy = 0, sl = 0, st = 0;
+  vp.addEventListener('pointerdown', e => {
+    if (e.target.closest('button')) return;
+    down = true; sx = e.clientX; sy = e.clientY; sl = vp.scrollLeft; st = vp.scrollTop;
+    vp.classList.add('dragging');
+    vp.setPointerCapture(e.pointerId);
+  });
+  vp.addEventListener('pointermove', e => {
+    if (!down) return;
+    vp.scrollLeft = sl - (e.clientX - sx);
+    vp.scrollTop  = st - (e.clientY - sy);
+  });
+  const stop = e => { down = false; vp.classList.remove('dragging');
+    try { vp.releasePointerCapture(e.pointerId); } catch (err) {} };
+  vp.addEventListener('pointerup', stop);
+  vp.addEventListener('pointercancel', stop);
+
+  // ctrl/cmd + wheel zooms, plain wheel scrolls as normal
+  vp.addEventListener('wheel', e => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    setZoom(zoom * (e.deltaY < 0 ? 1.12 : 0.89));
+  }, { passive: false });
+
+  el('btnZoomIn').addEventListener('click', () => setZoom(zoom * 1.2));
+  el('btnZoomOut').addEventListener('click', () => setZoom(zoom / 1.2));
+  el('btnZoomFit').addEventListener('click', zoomToFit);
+  el('btnTall').addEventListener('click', () => {
+    const tall = document.body.classList.toggle('vp-tall');
+    el('btnTall').textContent = tall ? 'Shorter' : 'Taller';
+    try { localStorage.setItem('adi_sim_tall', tall ? '1' : '0'); } catch (e) {}
+  });
+  try {
+    if (localStorage.getItem('adi_sim_tall') === '1') {
+      document.body.classList.add('vp-tall');
+      el('btnTall').textContent = 'Shorter';
+    }
+  } catch (e) {}
 }
 
 function renderDiagram() {
@@ -1498,8 +1625,12 @@ function renderDiagram() {
     + svgEl('text', { x: W - 16, y: H - 18, 'text-anchor': 'end', 'font-size': 9.5, fill: '#5d6d7a',
         'font-family': 'IBM Plex Sans, sans-serif' }, 'Connectivity only \u2014 not to scale');
 
+  const keepL = vp.scrollLeft, keepT = vp.scrollTop;
   vp.innerHTML = '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">'
     + plant + rails + drops + labels + legend + '</svg>';
+  initViewportControls();
+  applyZoom();
+  vp.scrollLeft = keepL; vp.scrollTop = keepT;
 }
 
 /* ==========================================================================
@@ -1788,6 +1919,78 @@ function renderDiagnostics() {
    arrangement, checks the failure and minimum-flow cases, and shows where
    the head is being spent so it can be argued down.
    ========================================================================== */
+/* ---------- selected-pump check ----------
+   Once a real pump is typed into Design flow and head, its own curve sets
+   the minimum flow, not the theoretical duty. If the head it can make is
+   short of what the system needs, the shortfall has to be found somewhere. */
+function checkSelectedPump() {
+  const cons = NODES.filter(n => n.isConsumer);
+  if (cons.length === 0) return;
+
+  const savedOpen = cons.map(n => n.open);
+  const savedMode = el('pMode').value;
+  const savedQ = el('pQ').value, savedH = el('pH').value;
+
+  // What the system needs, balanced, everything open
+  cons.forEach(n => { n.open = true; });
+  el('pMode').value = 'fixed';
+  calculateBalance();
+  const Qneed = SOLUTION.Q, Hneed = SOLUTION.pumpHead;
+
+  // Put the selected pump back and see where it actually lands
+  el('pQ').value = savedQ; el('pH').value = savedH;
+  el('pMode').value = savedMode;
+  solve();
+  const Qgot = SOLUTION.Q, Hgot = SOLUTION.pumpHead;
+
+  const cfg = pumpConfig();
+  const ratedQ = (parseFloat(savedQ) || 0) / cfg.maxRun;
+  const minFlow = ratedQ * 0.25;
+  const shortfall = Qneed > 0 ? (1 - Qgot / Qneed) * 100 : 0;
+
+  cons.forEach((n, i) => { n.open = savedOpen[i]; });
+  refresh();
+
+  const box = el('selectedCheck');
+  if (!box) return;
+  const rows = [];
+  rows.push(['System needs', fmt(Qneed, 2) + ' l/s at ' + fmt(Hneed, 0) + ' kPa']);
+  rows.push(['Selected pump delivers', fmt(Qgot, 2) + ' l/s at ' + fmt(Hgot, 0) + ' kPa']);
+  rows.push(['Rated flow per pump', fmt(ratedQ, 2) + ' l/s']);
+  rows.push(['Its minimum flow (25%)', fmt(minFlow, 2) + ' l/s']);
+
+  let verdict;
+  if (shortfall > 5) {
+    verdict = '<div class="msg bad"><strong>This pump falls ' + fmt(shortfall, 0)
+      + '% short of design flow</strong><br>It reaches ' + fmt(Qgot, 2) + ' l/s against the '
+      + fmt(Qneed, 2) + ' l/s the system needs, because it cannot make the '
+      + fmt(Hneed, 0) + ' kPa the index branch requires. Either take head out of the system '
+      + '(the <em>where the head goes</em> table shows which section to attack), accept the reduced flow, '
+      + 'or select a pump with more head.</div>';
+  } else if (shortfall < -8) {
+    verdict = '<div class="msg warn"><strong>This pump overshoots by ' + fmt(-shortfall, 0)
+      + '%</strong><br>It will run out along its curve, which risks motor overload and wastes energy. '
+      + 'Throttle it at the regulating valves, or run it on constant pressure so the drive holds it back.</div>';
+  } else {
+    verdict = '<div class="msg info"><strong>This pump suits the system</strong><br>It delivers '
+      + fmt(Qgot, 2) + ' l/s against the ' + fmt(Qneed, 2) + ' l/s required.</div>';
+  }
+
+  box.innerHTML =
+      '<table class="data" style="margin-bottom:10px"><tbody>'
+    + rows.map(r => '<tr><td>' + r[0] + '</td><td class="n"><strong>' + r[1] + '</strong></td></tr>').join('')
+    + '</tbody></table>' + verdict
+    + '<button class="btn-apply" id="btnApplyMin">Use ' + fmt(minFlow, 2)
+    + ' l/s as the sweep minimum</button>';
+
+  const btn = el('btnApplyMin');
+  if (btn) btn.addEventListener('click', () => {
+    el('sweepMin').value = minFlow.toFixed(2);
+    showToast('Sweep minimum set to ' + fmt(minFlow, 2) + ' l/s');
+    runSweep();
+  });
+}
+
 function recommendPump() {
   const cons = NODES.filter(n => n.isConsumer);
   if (cons.length === 0) { el('pumpRec').innerHTML = '<div class="msg warn">No consumers to size against.</div>'; return; }
@@ -2090,6 +2293,7 @@ function loadProject(data) {
 
   renderConsumers();
   refresh();
+  setTimeout(zoomToFit, 60);
   return true;
 }
 
@@ -2158,6 +2362,7 @@ try {
 el('btnBalance').addEventListener('click', calculateBalance);
 el('btnSweep').addEventListener('click', runSweep);
 el('btnRecommend').addEventListener('click', recommendPump);
+el('btnCheckSelected').addEventListener('click', checkSelectedPump);
 el('btnClearBal').addEventListener('click', clearBalance);
 
 el('btnAllOn').addEventListener('click', () => {
