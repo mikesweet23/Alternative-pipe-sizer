@@ -14,7 +14,7 @@ this should be enough to make a safe change. Keep it current.
 
 | Step | File | URL | Does |
 |---|---|---|---|
-| 1 | `trace.html` | `/trace.html` | Take-off from a scaled drawing |
+| 1 | `trace.html` | `/trace.html` | Take-off from a scaled drawing, 3D height check |
 | 2 | `index.html` | `/` | Sizing, losses, heat loss, reheat |
 | 3 | `simulator.html` | `/simulator.html` | Network solve, pumps, balancing |
 | — | `primary-circuit-sizer.html` | `/primary-circuit-sizer.html` | Plant-side primary loop (standalone) |
@@ -130,6 +130,12 @@ Circuit fields that carry meaning across tools:
 | `fittingsMode`, `fittingSchedule` | `counted` plus the actual fitting counts |
 | `sizeOverride` | Steps from the automatic pick |
 | `isBypass` | Carries three-port / bypass arrangement to the simulator |
+| `isIndex` | On the critical path. Pipe Trace works this out and ticks it |
+
+Pipe Trace picks the index run the same way the sizer does: the terminal with
+the highest total back to plant, summing each run's pipe and fitting loss and
+adding the coil at the end. Both tools therefore agree, and `traceMeta` carries
+`indexTerminal`, `indexKpa` and `indexRuns` so the figure can be checked.
 
 Pipe Trace has its own separate save format, `app: 'adi-pipe-trace'`, holding
 the drawing, the scale and the traced geometry. That never goes to the sizer.
@@ -138,6 +144,16 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
 
 ## 5. Conventions that are easy to break
 
+- **Pipe Trace will not let anything be placed before the scale is set.** A
+  drawing that arrives without one opens a modal that cannot be dismissed, and
+  the plant, load and trace tools stay disabled. Swapping the sheet behind an
+  existing trace asks whether the scale still holds rather than gating, so a
+  revision at the same scale does not throw the take-off away.
+- **Pipe Trace lengths, in the schedule and the exchange file.** Route is one
+  way on the plan, riser is one way vertical (the height difference plus any
+  extra rise), and pipe metres is every leg as installed. Route + riser, times
+  the number of pipes, is the pipe figure. `length` in the exchange file is the
+  one-way installed length, with `lengthsPaired` saying whether it is doubled.
 - **Number inputs must not respond to the scroll wheel.** Wheel over a focused
   number field blurs it instead. Arrow keys blocked, spinners hidden. This was a
   deliberate safety decision — scrolling a page was silently changing design
@@ -149,7 +165,8 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
 - Every tool has a **deliberately different visual identity** so it is obvious
   which one you are in. Sizer: adi blue, Barlow Condensed. Simulator: IBM Plex,
   dark CAD viewport. Pipe Trace: Archivo, drawing paper, graphite rail.
-  Primary: copper/amber.
+  Primary: copper/amber. Pipe Trace's 3D check deliberately keeps the paper
+  background rather than borrowing the simulator's dark viewport.
 - Flow is **red**, return is **blue**, per UK convention.
 
 ---
@@ -175,9 +192,12 @@ Two minutes, and it exercises every join:
 
 1. Open `trace.html`, load any drawing, set a scale, place a plant and a load,
    trace one run.
-2. **Send to Sizer**, then open that file in the sizer.
-3. Confirm the **size and the fitting count match** what Pipe Trace showed.
-4. Save from the sizer, open it in the simulator, confirm it solves.
+2. Open **3D check**, confirm the plant, the main and the load sit at the
+   heights they were given, then come back to the plan.
+3. **Send to Sizer**, then open that file in the sizer.
+4. Confirm the **size and the fitting count match** what Pipe Trace showed, and
+   that the **index run is ticked on the same path** the trace schedule named.
+5. Save from the sizer, open it in the simulator, confirm it solves.
 
 If sizes differ between trace and sizer, look first at roughness, then at the
 viscosity note in section 2.
