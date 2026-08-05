@@ -5568,19 +5568,38 @@ function handleProjectFile(evt) {
       evt.target.value = '';
       return;
     }
-    if (!data || data.app !== 'adi-pipework-sizer' || !Array.isArray(data.circuits)) {
-      alert('That file is not an adi Pipework Sizer project file.');
-      evt.target.value = '';
-      return;
-    }
+    applyProjectData(data, { alerts: true });
+    evt.target.value = '';   // allow re-opening the same file
+  };
+  reader.onerror = function () {
+    alert('Could not read that file.');
+    evt.target.value = '';
+  };
+  reader.readAsText(file);
+}
+
+/* Put a project on screen, whoever it came from \u2014 a file the user opened, or
+   Pipe Trace handing one over directly. Returns true if it was applied.
+   opts.alerts  say so out loud when the data is not a project file
+   opts.source  a short phrase naming where it came from, for the prompts */
+function applyProjectData(data, opts) {
+  opts = opts || {};
+  const source = opts.source || '';
+  if (!data || data.app !== 'adi-pipework-sizer' || !Array.isArray(data.circuits)) {
+    if (opts.alerts) alert('That file is not an adi Pipework Sizer project file.');
+    return false;
+  }
+  {
     const savedOn = data.savedAt ? new Date(data.savedAt).toLocaleString('en-GB') : 'unknown date';
     const ref = (data.settings && data.settings.projectRef) || '(no reference)';
+    const what = source
+      ? 'Open "' + ref + '" from ' + source + ' (' + data.circuits.length + ' circuits)?'
+      : 'Open "' + ref + '" (' + data.circuits.length + ' circuits, saved ' + savedOn + ')?';
     if (circuits.length > 0 &&
-        !confirm('Open "' + ref + '" (' + data.circuits.length + ' circuits, saved ' + savedOn + ')?\n\n'
+        !confirm(what + '\n\n'
                  + 'This will REPLACE the ' + circuits.length + ' circuit(s) currently on screen.\n'
                  + 'Save the current project first if you need to keep it.')) {
-      evt.target.value = '';
-      return;
+      return false;
     }
     // Restore settings
     if (data.settings) {
@@ -5617,14 +5636,32 @@ function handleProjectFile(evt) {
     refreshGlycolDisplay();
     onBasisChange();
     saveToLocalStorage();
-    showToast('Opened ' + ref + ' \u2014 ' + circuits.length + ' circuits');
-    evt.target.value = '';   // allow re-opening the same file
-  };
-  reader.onerror = function () {
-    alert('Could not read that file.');
-    evt.target.value = '';
-  };
-  reader.readAsText(file);
+    showToast('Opened ' + ref + ' \u2014 ' + circuits.length + ' circuits'
+              + (source ? ' from ' + source : ''));
+    return true;
+  }
+}
+
+/* ============================================================
+   HAND-OVER FROM PIPE TRACE
+   Pipe Trace leaves the project in the browser's own store and opens this
+   page, so the take-off arrives without anyone having to find a file. The
+   key is cleared as soon as it is read, so a refresh does not re-open it
+   over the top of work done since, and anything older than ten minutes is
+   ignored as a leftover.
+   ============================================================ */
+var TRACE_HANDOFF_KEY = 'adi-pipework-handoff';
+
+function takeTraceHandoff() {
+  var raw = null;
+  try { raw = localStorage.getItem(TRACE_HANDOFF_KEY); } catch (e) { return false; }
+  if (!raw) return false;
+  try { localStorage.removeItem(TRACE_HANDOFF_KEY); } catch (e) {}
+  var pack;
+  try { pack = JSON.parse(raw); } catch (e) { return false; }
+  if (!pack || !pack.project) return false;
+  if (pack.at && (Date.now() - pack.at) > 10 * 60 * 1000) return false;
+  return applyProjectData(pack.project, { alerts: false, source: 'Pipe Trace' });
 }
 
 /* ============================================================
@@ -5987,7 +6024,10 @@ document.addEventListener('keydown', function (e) {
 });
 
 // Load saved state or seed with a sample row
-if (!loadFromLocalStorage() || circuits.length === 0) {
+loadFromLocalStorage();
+// then let a take-off handed over from Pipe Trace replace it
+var cameFromTrace = takeTraceHandoff();
+if (!cameFromTrace && circuits.length === 0) {
   addCircuit({ ref: 'AHU-01 Cooling Coil',   mode: 'fromKw',   kw: 75,  dT: 6, length: 45, fittings: 35, isIndex: true,  consumerLoad: 35, isLLH: false });
   addCircuit({ ref: 'FCU Riser North',        mode: 'fromFlow', lps: 1.2, dT: 6, length: 80, fittings: 30, isIndex: true,  consumerLoad: 20, isLLH: false });
   addCircuit({ ref: 'FCU Riser South',        mode: 'fromKw',   kw: 30,  dT: 6, length: 55, fittings: 30, isIndex: false, consumerLoad: 20, isLLH: false });

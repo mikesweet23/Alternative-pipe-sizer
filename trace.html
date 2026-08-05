@@ -201,6 +201,9 @@
   }
   .hint .x { background: none; border: none; color: #98a0ad; font-size: 15px; padding: 0 2px; }
   .hint .x:hover { color: #fff; }
+  .hint .hopt { display: none; align-items: center; gap: 6px; font-size: 11.5px; color: #cdd3dc; white-space: nowrap; }
+  .hint.trace .hopt { display: flex; }
+  .hint .hopt input { width: 15px; height: 15px; margin: 0; }
 
   /* ---- inspector ---- */
   .inspector {
@@ -410,6 +413,7 @@
     <a class="tb" href="./index.html" style="text-decoration:none;display:inline-flex;align-items:center"
        title="Step 2 &mdash; losses, heat loss and reheat">Sizer &rarr;</a>
     <button class="tb" id="bName" disabled>Rename runs</button>
+    <button class="tb" id="bCheck" disabled title="Look for connections that are not where they look">Check</button>
     <button class="tb" id="b3d" disabled title="Check the heights in three dimensions">3D check</button>
     <button class="tb" id="bSched" disabled>Schedule</button>
     <button class="tb" id="bSave" disabled>Save</button>
@@ -445,6 +449,7 @@
 
       <div class="hint" id="hint">
         <span id="hintTxt"></span>
+        <label class="hopt"><input type="checkbox" id="orthoChk"> Square up <kbd>O</kbd></label>
         <button class="x" id="hintX" title="Cancel">&times;</button>
       </div>
 
@@ -697,6 +702,8 @@ const S = {
     flangeSpacing: 4,            // metres between flanged joints
     bendType: 'elbow90',         // what a change of direction is made from
     autoName: true,
+    snapPoints: true,            // branch only at components, tees and corners
+    ortho: false,                // lock corners to square and 45 degrees
     termValves: true,            // isolation + strainer + regulating at each load
     limitPd: 300, vMin: 0.3, vMax: 3.0,
     supply: 80, ret: 60, ambient: 20,
@@ -733,48 +740,51 @@ function polyLenPx(pts) {
    B1, B2, B3. A run that leaves the spine but still carries onward flow is a
    sub-main, numbered from the main it left \u2014 M2.1, M2.2 \u2014 so the schedule
    reads the way the system is actually described on site. */
+const NAMING_NOTE =
+  'M1, M2 &hellip; mains from the plant &middot; SM1, SM2 &hellip; sub-mains that branch off a '
+  + 'main and still feed more than one load &middot; B1, B2 &hellip; branches into a load &middot; '
+  + 'a main or sub-main cut by a tee is numbered in sections from the plant, M1.1, M1.2';
+
 function autoNameRuns(quiet) {
   buildTree();
-  let m = 0, b = 0;
-  const subCount = {};
-  const spineSegs = {};          // the sections each main is made of, in order
-  const walk = (nodeId, spineName) => {
+  let m = 0, sm = 0, b = 0;
+  const runSegs = {};            // the sections each run is made of, in order
+  const walk = (nodeId, runName) => {
     const outs = S.segs.filter(s => s.up === nodeId);
-    // the heaviest leg continues the run it is on; the rest are branches off it
+    // the heaviest leg carries on as the same run; the rest branch off it
     outs.sort((x, y) => (y.kw || 0) - (x.kw || 0));
     outs.forEach((sg, i) => {
       const down = nodeById(sg.down);
       const isLeaf = down && down.type === 'consumer';
-      if (isLeaf) {
-        sg.ref = 'B' + (++b);
+      let name;
+      if (!runName) {
+        name = 'M' + (++m);                    // a main: it leaves the plant
+      } else if (isLeaf) {
+        name = 'B' + (++b);                    // a branch: it ends at a load
       } else if (i === 0) {
-        sg.ref = spineName ? spineName : 'M' + (++m);
-        if (!spineName) sg.spine = sg.ref;
-        (spineSegs[sg.ref] = spineSegs[sg.ref] || []).push(sg);
+        name = runName;                        // the same run, next section
       } else {
-        const parent = spineName || ('M' + m);
-        subCount[parent] = (subCount[parent] || 0) + 1;
-        sg.ref = parent + '.' + subCount[parent];
-        (spineSegs[sg.ref] = spineSegs[sg.ref] || []).push(sg);
+        name = 'SM' + (++sm);                  // a sub-main off a main
       }
-      if (down) walk(down.id, isLeaf ? null : sg.ref);
+      sg.ref = name;
+      if (!isLeaf || !runName) (runSegs[name] = runSegs[name] || []).push(sg);
+      if (down) walk(down.id, isLeaf ? null : name);
     });
   };
   S.nodes.filter(n => n.type === 'source').forEach(r => walk(r.id, null));
-  /* A main that runs through several tees is one main but several sections,
-     and every section is a row in the schedule and a hop on the index run.
-     Giving them letters — M1a, M1b — keeps them recognisable as one main
-     while making it clear which section is which. */
-  Object.keys(spineSegs).forEach(ref => {
-    const list = spineSegs[ref];
+  /* One main can be cut into several sections by the tees along it, and each
+     section is its own row and its own circuit. A main in one piece keeps its
+     plain number; a main in pieces is numbered from the plant. */
+  Object.keys(runSegs).forEach(ref => {
+    const list = runSegs[ref];
     if (list.length < 2) return;
-    list.forEach((sg, i) => { sg.ref = ref + (i < 26 ? String.fromCharCode(97 + i) : '.' + (i + 1)); });
+    list.forEach((sg, i) => { sg.ref = ref + '.' + (i + 1); });
   });
   // anything not reached keeps a plain name so it is obvious
   let o = 0;
   S.segs.filter(s => s.orphan).forEach(s => { s.ref = 'X' + (++o); });
   solve();
-  if (!quiet) { render(); toast('Runs renamed M / B'); }
+  if (!quiet) { render(); toast('Runs renamed — M mains, SM sub-mains, B branches'); }
 }
 
 function segLengthM(sg) { return S.pxPerM > 0 ? polyLenPx(sg.pts) / S.pxPerM : 0; }
@@ -1229,7 +1239,7 @@ function render() {
 
   // ---- live trace ----
   if (draft && draft.kind === 'trace' && draft.pts.length) {
-    const pts = hoverPt ? draft.pts.concat([hoverPt]) : draft.pts;
+    const pts = hoverPt ? draft.pts.concat([previewPoint(hoverPt)]) : draft.pts;
     const d = pts.map((p, i) => (i ? 'L' : 'M') + p.x + ' ' + p.y).join(' ');
     g.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--measure)', 'stroke-width': 2.4 * k,
       'stroke-dasharray': (8 * k) + ' ' + (5 * k), 'stroke-linecap': 'round' }));
@@ -1251,6 +1261,9 @@ function render() {
     g.appendChild(mk('line', { x1: a.x, y1: a.y, x2: hoverPt.x, y2: hoverPt.y,
       stroke: 'var(--measure)', 'stroke-width': 2 * k, 'stroke-dasharray': (7 * k) + ' ' + (4 * k) }));
   }
+
+  // ---- what a click would connect to ----
+  if (tool === 'trace' && hoverPt) drawSnap(g, k);
 
   // ---- nodes ----
   S.nodes.forEach(n => {
@@ -1290,6 +1303,42 @@ function render() {
   ov.innerHTML = '';
   ov.appendChild(g);
   renderStatus();
+}
+
+/* The connection the next click would make, drawn before it is made. This is
+   the whole point of the snapping: a branch cannot end up half a metre off
+   the corner it was meant to leave from when that corner is ringed on screen
+   and named before the click. */
+function drawSnap(g, k) {
+  const sn = snapAt(hoverPt, draft ? draft.startNode : null);
+  if (!sn) {
+    if (!draft) return;
+    const q = orthoPoint(draft.pts[draft.pts.length - 1], hoverPt);
+    g.appendChild(mk('circle', { cx: q.x, cy: q.y, r: 3.4 * k, fill: 'none',
+      stroke: 'var(--muted)', 'stroke-width': 1.3 * k }));
+    return;
+  }
+  const col = sn.kind === 'vertex' ? 'var(--measure)'
+            : sn.kind === 'run' ? 'var(--flow)'
+            : sn.what === 'load' ? 'var(--live)'
+            : sn.what === 'plant' ? 'var(--graphite)' : 'var(--return)';
+  const fg = sn.kind === 'vertex' ? '#241a00' : '#ffffff';
+  if (sn.pulled) {
+    g.appendChild(mk('line', { x1: hoverPt.x, y1: hoverPt.y, x2: sn.at.x, y2: sn.at.y,
+      stroke: col, 'stroke-width': 1.2 * k, 'stroke-dasharray': (3 * k) + ' ' + (3 * k), opacity: .85 }));
+  }
+  g.appendChild(mk('circle', { cx: sn.at.x, cy: sn.at.y, r: 10 * k, fill: 'none',
+    stroke: col, 'stroke-width': 2.2 * k }));
+  g.appendChild(mk('circle', { cx: sn.at.x, cy: sn.at.y, r: 2.6 * k, fill: col }));
+  const txt = sn.kind === 'vertex' ? 'corner on ' + sn.name
+            : sn.kind === 'run' ? 'new tee on ' + sn.name
+            : (sn.name || sn.what);
+  const w = txt.length * 6.1 + 13;
+  g.appendChild(mk('rect', { x: sn.at.x + 13 * k, y: sn.at.y - 20 * k,
+    width: w * k, height: 16 * k, rx: 2 * k, fill: col }));
+  g.appendChild(mk('text', { x: sn.at.x + 19 * k, y: sn.at.y - 8.5 * k,
+    'font-size': 10 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+    fill: fg }, txt));
 }
 
 function renderStatus() {
@@ -1346,8 +1395,8 @@ const HINTS = {
   calib: 'Click two points a known distance apart on the drawing, then type the real dimension.',
   source: 'Click where the plant sits.',
   consumer: 'Click where the load sits. Double-click any component to edit it.',
-  trace: 'Click a component or an existing run to start. Click to add corners. '
-       + 'Finish on another component, or press <kbd>Enter</kbd> to stop and leave a tee.',
+  trace: 'Start on the ringed point. Click to add corners &mdash; every corner becomes a '
+       + 'point you can branch from later. Finish on another component, tee or corner.',
   pan: 'Drag to move around the drawing.',
 };
 
@@ -1364,6 +1413,8 @@ function setTool(t) {
   const h = el('hint');
   if (HINTS[t]) { el('hintTxt').innerHTML = HINTS[t]; h.classList.add('on'); }
   else h.classList.remove('on');
+  h.classList.toggle('trace', t === 'trace');
+  el('orthoChk').checked = !!S.settings.ortho;
   render();
 }
 
@@ -1395,41 +1446,178 @@ function addConsumer(p, from) {
   render();
   return n;
 }
-function addJunction(p) {
+/* A tee takes the height of the run it sits on, not the default main height.
+   Taking the default was quietly inventing a riser at every tee, and the
+   extra elbows and metres went straight through to the sizer. */
+function junctionHeightOn(sg) {
+  const up = nodeById(sg && sg.up != null ? sg.up : (sg ? sg.a : null));
+  const dn = nodeById(sg && sg.down != null ? sg.down : (sg ? sg.b : null));
+  // a run into a terminal is at the high level until it drops at the terminal
+  if (dn && dn.type === 'consumer') return up ? heightOf(up) : S.settings.mainHeight;
+  if (dn) return heightOf(dn);
+  return up ? heightOf(up) : S.settings.mainHeight;
+}
+function addJunction(p, onSeg) {
   const n = { id: nid(), type: 'junction', x: p.x, y: p.y, name: 'Tee',
-    height: S.settings.mainHeight };
+    height: onSeg ? junctionHeightOn(onSeg) : S.settings.mainHeight };
   S.nodes.push(n);
   return n;
 }
 
-/* Split an existing run at a point so a branch can tee off it. */
+/* Half a metre of pipe, in drawing pixels. Anything shorter than this is a
+   slip of the mouse rather than a piece of pipework. */
+function stubPx() { return clamp(S.pxPerM > 0 ? S.pxPerM * 0.5 : 8, 4, 30); }
+
+/* Split an existing run so a branch can tee off it. Returns the node to
+   connect to, which is an existing end node when the split would leave a
+   stub too short to be real — those stubs were what littered the export
+   with extra circuits carrying nothing. */
 function splitSegment(sg, hit) {
-  const j = addJunction(hit.q);
+  const na = nodeById(sg.a), nb = nodeById(sg.b);
+  const minPx = stubPx();
+  if (na && dist(hit.q, na) < minPx) return na;
+  if (nb && dist(hit.q, nb) < minPx) return nb;
+  const j = addJunction({ x: hit.q.x, y: hit.q.y }, sg);
   const before = sg.pts.slice(0, hit.i).concat([{ x: hit.q.x, y: hit.q.y }]);
   const after = [{ x: hit.q.x, y: hit.q.y }].concat(sg.pts.slice(hit.i));
   const tail = { id: nid(), a: j.id, b: sg.b, pts: after,
     mode: sg.mode, leg: sg.leg, material: sg.material, step: sg.step,
-    ref: (sg.ref || 'Run') + 'b' };
+    ref: sg.ref || 'Run', extraRise: 0 };
   sg.pts = before; sg.b = j.id;
   S.segs.push(tail);
   return j;
 }
 
-/* Resolve where a trace click lands: an existing node, a tee on a run, or open air. */
-function resolvePoint(p, endOfTrace) {
-  const n = hitNode(p);
-  if (n) return { node: n, at: { x: n.x, y: n.y } };
-  const h = hitSeg(p);
-  if (h) { const j = splitSegment(h.seg, h.r); return { node: j, at: { x: j.x, y: j.y } }; }
-  if (endOfTrace) { const j = addJunction(p); return { node: j, at: p }; }
+/* Turn a corner that has already been traced into a tee, exactly on the
+   corner. No stub, no offset, and the branch leaves from the point that is
+   drawn on the plan. */
+function promoteVertex(sg, i) {
+  if (i <= 0) return nodeById(sg.a);
+  if (i >= sg.pts.length - 1) return nodeById(sg.b);
+  const v = sg.pts[i];
+  const j = addJunction({ x: v.x, y: v.y }, sg);
+  const tail = { id: nid(), a: j.id, b: sg.b, pts: sg.pts.slice(i),
+    mode: sg.mode, leg: sg.leg, material: sg.material, step: sg.step,
+    ref: sg.ref || 'Run', extraRise: 0 };
+  sg.pts = sg.pts.slice(0, i + 1);
+  sg.b = j.id;
+  S.segs.push(tail);
+  return j;
+}
+
+/* ==========================================================================
+   SNAPPING
+   A run can only be joined to something that is already a point: a component,
+   a tee, or a corner that has been traced. The cursor is pulled to the
+   nearest one and what the click will do is drawn before the click happens,
+   so a branch cannot end up a few centimetres off the corner it was meant to
+   leave from, and a load cannot be left hanging next to the run that was
+   supposed to feed it.
+   ========================================================================== */
+const SNAP_PX = 20;
+
+function nodeWord(n) {
+  return n.type === 'source' ? 'plant' : n.type === 'consumer' ? 'load' : 'tee';
+}
+function snapNode(n) {
+  return { kind: 'node', node: n, at: { x: n.x, y: n.y }, what: nodeWord(n), name: n.name || '' };
+}
+function snapVertex(sg, i) {
+  return { kind: 'vertex', seg: sg, i, at: { x: sg.pts[i].x, y: sg.pts[i].y },
+           what: 'corner', name: sg.ref || '' };
+}
+
+/* Everything that can legitimately be connected to. */
+function snapCandidates() {
+  const list = [];
+  S.nodes.forEach(n => list.push(snapNode(n)));
+  // ends of a run are already nodes, so only the corners in between
+  S.segs.forEach(sg => {
+    for (let i = 1; i < sg.pts.length - 1; i++) list.push(snapVertex(sg, i));
+  });
+  return list;
+}
+
+/* What a click at p would connect to. Pure — it works it out, it does not
+   change anything, so the same answer can be drawn and then acted on. */
+function snapAt(p, skipId) {
+  const tol = SNAP_PX / zoom;
+  let best = null;
+  snapCandidates().forEach(c => {
+    if (skipId && c.kind === 'node' && c.node.id === skipId) return;
+    const d = dist(c.at, p);
+    if (d <= tol && (!best || d < best.d)) best = Object.assign({ d }, c);
+  });
+  if (best) return best;
+
+  const h = hitSeg(p, 12);
+  if (!h) return null;
+  if (S.settings.snapPoints === false) {
+    return { kind: 'run', seg: h.seg, r: h.r, at: { x: h.r.q.x, y: h.r.q.y },
+             d: h.r.d, what: 'new tee', name: h.seg.ref || '' };
+  }
+  /* Branching only at points: a click along a run is pulled to that run's
+     nearest corner or end rather than cutting a tee wherever the cursor
+     happened to be. The leader line drawn to it says where it is going. */
+  let bp = null;
+  const consider = c => { const d = dist(c.at, p); if (!bp || d < bp.d) bp = Object.assign({ d }, c); };
+  const na = nodeById(h.seg.a), nb = nodeById(h.seg.b);
+  if (na && na.id !== skipId) consider(snapNode(na));
+  if (nb && nb.id !== skipId) consider(snapNode(nb));
+  for (let i = 1; i < h.seg.pts.length - 1; i++) consider(snapVertex(h.seg, i));
+  if (bp) bp.pulled = true;
+  return bp;
+}
+
+/* Act on a snap: give back the node to connect to, making one if the snap
+   was a corner or a point along a run. */
+function connectAt(sn) {
+  if (!sn) return null;
+  if (sn.kind === 'node') return sn.node;
+  if (sn.kind === 'vertex') return promoteVertex(sn.seg, sn.i);
+  if (sn.kind === 'run') return splitSegment(sn.seg, sn.r);
   return null;
+}
+
+/* Pipework on a plan is nearly always square to the building, so corners can
+   be locked to horizontal, vertical or 45 degrees from the last point. */
+function orthoPoint(prev, p) {
+  if (!prev || !S.settings.ortho) return { x: p.x, y: p.y };
+  const dx = p.x - prev.x, dy = p.y - prev.y;
+  const ax = Math.abs(dx), ay = Math.abs(dy);
+  if (ax > ay * 2.4142) return { x: p.x, y: prev.y };
+  if (ay > ax * 2.4142) return { x: prev.x, y: p.y };
+  const m = (ax + ay) / 2;
+  return { x: prev.x + (dx < 0 ? -m : m), y: prev.y + (dy < 0 ? -m : m) };
+}
+
+/* Where the next point would land: on the snap if there is one, otherwise
+   the cursor, squared up if the lock is on. */
+function previewPoint(p) {
+  const sn = snapAt(p, draft ? draft.startNode : null);
+  if (sn) return { x: sn.at.x, y: sn.at.y };
+  const prev = draft && draft.pts.length ? draft.pts[draft.pts.length - 1] : null;
+  return orthoPoint(prev, p);
+}
+
+function dedupePts(pts) {
+  const out = [];
+  pts.forEach(p => {
+    const last = out[out.length - 1];
+    if (!last || dist(last, p) > 0.4) out.push({ x: p.x, y: p.y });
+  });
+  return out;
 }
 
 function finishTrace(endNode) {
   if (!draft || draft.pts.length < 2) { draft = null; render(); return; }
+  const pts = dedupePts(draft.pts);
+  if (pts.length < 2 || polyLenPx(pts) < stubPx() * 0.5) {
+    draft = null; toast('Too short to be a run'); render(); return;
+  }
   const sg = {
     id: nid(), a: draft.startNode, b: endNode,
-    pts: draft.pts.slice(),
+    pts,
     mode: draft.mode || 'pair', leg: draft.leg || 'flow',
     material: S.settings.material, step: 0,
     ref: 'Run ' + (S.segs.length + 1),
@@ -1650,6 +1838,262 @@ function wireInspector() {
 }
 
 /* ==========================================================================
+   CHECK AND TIDY
+   A trace goes wrong in a small number of ways, and every one of them shows
+   up in the sizer as a circuit that cannot be sized or a connection that is
+   not where it looks. Rather than leave that to be found downstream, they are
+   listed here and, where the repair is unambiguous, done.
+   ========================================================================== */
+function weldPx() { return clamp(S.pxPerM > 0 ? S.pxPerM * 0.4 : 8, 4, 25); }
+
+function auditTrace() {
+  solve();
+  const out = [];
+  const add = (key, level, text, fix) => out.push({ key, level, text, fix: !!fix });
+
+  const loose = S.nodes.filter(n => n.type === 'consumer' && !n.reached);
+  if (loose.length) add('loose', 'bad',
+    loose.length + ' load' + (loose.length === 1 ? '' : 's') + ' not connected to plant ('
+    + loose.map(n => n.name).join(', ') + '). They are left out of the export.', false);
+
+  const orph = S.segs.filter(s => s.orphan);
+  if (orph.length) add('orphan', 'bad',
+    orph.length + ' run' + (orph.length === 1 ? '' : 's') + ' do not reach the plant.', false);
+
+  // a tee sitting all but on top of a component, which is the near miss that
+  // leaves a load unconnected while looking connected on the plan
+  const near = [];
+  const wp = weldPx();
+  S.nodes.filter(n => n.type === 'junction').forEach(j => {
+    S.nodes.forEach(n => {
+      if (n.id === j.id || n.type === 'junction') return;
+      if (dist(j, n) < wp) near.push({ j, n });
+    });
+  });
+  if (near.length) add('near', 'bad',
+    near.length + ' tee' + (near.length === 1 ? '' : 's') + ' sitting on top of a component ('
+    + near.map(x => x.n.name).join(', ') + '). The run looks joined but is not.', true);
+
+  // two tees on top of each other, from tracing to the same corner twice
+  const dupes = [];
+  const js = S.nodes.filter(n => n.type === 'junction');
+  for (let i = 0; i < js.length; i++)
+    for (let k = i + 1; k < js.length; k++)
+      if (dist(js[i], js[k]) < wp) dupes.push([js[i], js[k]]);
+  if (dupes.length) add('dupe', 'bad',
+    dupes.length + ' pair' + (dupes.length === 1 ? '' : 's') + ' of tees in the same place, '
+    + 'so what looks like one junction is two.', true);
+
+  const dead = deadEndJunctions();
+  if (dead.length) add('dead', 'warn',
+    dead.length + ' tee' + (dead.length === 1 ? '' : 's') + ' with nothing beyond '
+    + 'them &mdash; a run that stops in mid air. The run feeding them carries no load and '
+    + 'cannot be sized.', true);
+
+  const redundant = redundantJunctions();
+  if (redundant.length) add('redundant', 'warn',
+    redundant.length + ' tee' + (redundant.length === 1 ? '' : 's') + ' joining two runs in line '
+    + 'with nothing branching off. Each one splits a main into two circuits for no reason.', true);
+
+  const tiny = S.segs.filter(s => (s.runM || 0) > 0 && (s.runM || 0) < 0.25);
+  if (tiny.length) add('tiny', 'warn',
+    tiny.length + ' run' + (tiny.length === 1 ? '' : 's') + ' under 250 mm long, which is a slip '
+    + 'of the mouse rather than a length of pipe.', true);
+
+  const noLoad = S.segs.filter(s => !s.orphan && (s.nCons || 0) === 0);
+  if (noLoad.length) add('noload', 'warn',
+    noLoad.length + ' run' + (noLoad.length === 1 ? '' : 's') + ' with no load downstream ('
+    + noLoad.map(s => s.ref).join(', ') + '). Nothing flows through them, so they have no size.',
+    false);
+
+  const noDuty = S.nodes.filter(n => n.type === 'consumer' && consumerKw(n) <= 0 && consumerFlow(n) <= 0);
+  if (noDuty.length) add('noduty', 'warn',
+    noDuty.length + ' load' + (noDuty.length === 1 ? '' : 's') + ' with no duty set ('
+    + noDuty.map(n => n.name).join(', ') + ').', false);
+
+  return out;
+}
+
+/* a tee with one run on it and nothing beyond */
+function deadEndJunctions() {
+  return S.nodes.filter(n => n.type === 'junction' && neighbours(n.id).length <= 1);
+}
+
+/* a tee joining exactly two runs, with nothing branching off it, and not
+   marking a change of height — the classic accidental split */
+function redundantJunctions() {
+  return S.nodes.filter(n => {
+    if (n.type !== 'junction') return false;
+    const nb = neighbours(n.id);
+    if (nb.length !== 2) return false;
+    const a = nb[0].seg, b = nb[1].seg;
+    if ((a.mode || 'pair') !== (b.mode || 'pair')) return false;
+    if ((a.leg || 'flow') !== (b.leg || 'flow')) return false;
+    if ((a.material || '') !== (b.material || '')) return false;
+    if ((a.step || 0) !== (b.step || 0)) return false;
+    // a tee that steps the height up or down is doing a job; leave it alone
+    const ha = heightOf(nodeById(nb[0].other)), hb = heightOf(nodeById(nb[1].other));
+    const h = heightOf(n);
+    return h >= Math.min(ha, hb) - 0.01 && h <= Math.max(ha, hb) + 0.01;
+  });
+}
+
+/* Move every run off one node and on to another, then drop the node. */
+function rewireNode(fromId, toId) {
+  const to = nodeById(toId);
+  if (!to) return;
+  S.segs.forEach(s => {
+    if (s.a === fromId) { s.a = toId; s.pts[0] = { x: to.x, y: to.y }; }
+    if (s.b === fromId) { s.b = toId; s.pts[s.pts.length - 1] = { x: to.x, y: to.y }; }
+  });
+  S.nodes = S.nodes.filter(n => n.id !== fromId);
+}
+
+/* Join the two runs meeting at a tee back into one. */
+function mergeAtJunction(j) {
+  const nb = neighbours(j.id);
+  if (nb.length !== 2) return false;
+  const a = nb[0].seg, b = nb[1].seg;
+  // put both polylines the same way round: a runs into j, b runs out of it
+  const aPts = a.b === j.id ? a.pts.slice() : a.pts.slice().reverse();
+  const aFar = a.b === j.id ? a.a : a.b;
+  const bPts = b.a === j.id ? b.pts.slice() : b.pts.slice().reverse();
+  const bFar = b.a === j.id ? b.b : b.a;
+  if (aFar === bFar) return false;                 // would close a loop on itself
+  a.pts = aPts.concat(bPts.slice(1));
+  a.a = aFar; a.b = bFar;
+  a.extraRise = (parseFloat(a.extraRise) || 0) + (parseFloat(b.extraRise) || 0);
+  S.segs = S.segs.filter(s => s.id !== b.id);
+  S.nodes = S.nodes.filter(n => n.id !== j.id);
+  return true;
+}
+
+/* Everything that can be repaired without guessing. Returns what it did. */
+function tidyTrace() {
+  const did = { weld: 0, dupe: 0, dead: 0, merged: 0, tiny: 0 };
+  const wp = weldPx();
+
+  // 1. a tee all but on top of a component becomes that component
+  S.nodes.filter(n => n.type === 'junction').slice().forEach(j => {
+    if (!nodeById(j.id)) return;
+    let best = null;
+    S.nodes.forEach(n => {
+      if (n.type === 'junction') return;
+      const d = dist(j, n);
+      if (d < wp && (!best || d < best.d)) best = { d, n };
+    });
+    if (best) { rewireNode(j.id, best.n.id); did.weld++; }
+  });
+
+  // 2. two tees in the same place become one
+  let again = true, guard = 0;
+  while (again && guard++ < 60) {
+    again = false;
+    const js = S.nodes.filter(n => n.type === 'junction');
+    for (let i = 0; i < js.length && !again; i++)
+      for (let k = i + 1; k < js.length && !again; k++)
+        if (dist(js[i], js[k]) < wp) { rewireNode(js[k].id, js[i].id); did.dupe++; again = true; }
+  }
+
+  // 3. runs that go nowhere, including the loops left by welding
+  const before = S.segs.length;
+  S.segs = S.segs.filter(s => s.a !== s.b && polyLenPx(s.pts) >= 1);
+  did.tiny += before - S.segs.length;
+
+  // 4. a run a few centimetres long is a double click, not a piece of pipe:
+  //    collapse it on to whichever end is a real component
+  solve();
+  again = true; guard = 0;
+  while (again && guard++ < 200) {
+    again = false;
+    const shorty = S.segs.find(s => (s.runM || 0) > 0 && s.runM < 0.25);
+    if (!shorty) break;
+    const na = nodeById(shorty.a), nb = nodeById(shorty.b);
+    if (na && nb && na.type === 'junction') rewireNode(na.id, nb.id);
+    else if (na && nb && nb.type === 'junction') rewireNode(nb.id, na.id);
+    else S.segs = S.segs.filter(s => s.id !== shorty.id);
+    S.segs = S.segs.filter(s => s.a !== s.b);
+    did.tiny++; again = true;
+    solve();
+  }
+
+  // 5. tees left hanging, and the runs that feed them, until none are left
+  solve();
+  again = true; guard = 0;
+  while (again && guard++ < 200) {
+    again = false;
+    const dead = deadEndJunctions();
+    if (dead.length) {
+      const j = dead[0];
+      S.segs = S.segs.filter(s => s.a !== j.id && s.b !== j.id);
+      S.nodes = S.nodes.filter(n => n.id !== j.id);
+      did.dead++;
+      again = true;
+    }
+  }
+
+  // 6. accidental splits joined back up
+  solve();
+  again = true; guard = 0;
+  while (again && guard++ < 400) {
+    again = false;
+    const red = redundantJunctions();
+    if (red.length && mergeAtJunction(red[0])) { did.merged++; again = true; solve(); }
+  }
+
+  if (S.settings.autoName !== false) autoNameRuns(true);
+  solve();
+  return did;
+}
+
+function checkDialog(fromExport) {
+  const issues = auditTrace();
+  const fixable = issues.some(i => i.fix);
+  if (!issues.length) {
+    modal('The trace checks out',
+        '<p style="margin-top:0">Every load reaches the plant, every run carries something, '
+      + 'and every junction is where it looks. Nothing to repair.</p>'
+      + '<button class="btn" onclick="closeModal()">Close</button>');
+    return true;
+  }
+  const rows = issues.map(i =>
+    '<li style="margin-bottom:9px"><span class="chip ' + (i.level === 'bad' ? 'bad' : 'warn') + '">'
+    + (i.level === 'bad' ? 'error' : 'check') + '</span> ' + i.text
+    + (i.fix ? ' <span style="color:var(--live)">Tidy fixes this.</span>' : '') + '</li>').join('');
+  modal('Check the trace',
+      '<ul style="margin:0 0 12px;padding-left:18px;font-size:12.5px;line-height:1.55">' + rows + '</ul>'
+    + '<div class="note">Tidy welds tees that sit on top of a component, joins runs that were '
+    + 'split by accident back into one, and removes tees left hanging. It never moves a component '
+    + 'or changes a duty.</div>'
+    + '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'
+    + (fixable ? '<button class="btn go" id="ckFix">Tidy up</button>' : '')
+    + (fromExport ? '<button class="btn ghost" id="ckOn">Send anyway</button>' : '')
+    + '<button class="btn ghost" onclick="closeModal()">Close</button></div>');
+  const fix = el('ckFix');
+  if (fix) fix.addEventListener('click', () => {
+    const did = tidyTrace();
+    closeModal(true);
+    sel = null; closeInspector(); render();
+    const bits = [];
+    if (did.weld) bits.push(did.weld + ' tee' + (did.weld === 1 ? '' : 's') + ' joined to a component');
+    if (did.dupe) bits.push(did.dupe + ' duplicate tee' + (did.dupe === 1 ? '' : 's') + ' merged');
+    if (did.merged) bits.push(did.merged + ' split' + (did.merged === 1 ? '' : 's') + ' joined back up');
+    if (did.dead) bits.push(did.dead + ' hanging tee' + (did.dead === 1 ? '' : 's') + ' removed');
+    if (did.tiny) bits.push(did.tiny + ' zero length run' + (did.tiny === 1 ? '' : 's') + ' removed');
+    toast(bits.length ? bits.join(', ') : 'Nothing needed changing');
+    setTimeout(() => {
+      // if the tidy cleared everything on the way to the sizer, carry on there
+      const left = auditTrace();
+      if (fromExport && !left.some(i => i.level === 'bad' || i.fix)) doExport();
+      else checkDialog(fromExport);
+    }, 450);
+  });
+  const on = el('ckOn');
+  if (on) on.addEventListener('click', () => { closeModal(true); doExport(); });
+  return false;
+}
+
+/* ==========================================================================
    SCHEDULE
    ========================================================================== */
 function renderSchedule() {
@@ -1674,6 +2118,7 @@ function renderSchedule() {
       + '<td style="padding-left:' + (9 + r.depth * 14) + 'px">' + esc(sg.ref)
       +   (r.isCons ? ' <span class="chip ok">' + esc(r.down.name) + '</span>' : '')
       +   (sg.isIndex ? ' <span class="chip warn">index</span>' : '')
+      +   (!r.orphan && (sg.nCons || 0) === 0 ? ' <span class="chip bad">no load</span>' : '')
       +   (r.orphan ? ' <span class="chip bad">not connected</span>' : '') + '</td>'
       + '<td class="n">' + (p ? p.nom : '\u2014') + '</td>'
       + '<td class="n">' + fmt(sg.runM, 1) + '</td>'
@@ -1734,7 +2179,8 @@ function renderSchedule() {
     + S.settings.jointing + ' &middot; ' + S.settings.limitPd + ' Pa/m limit<br>'
     + t.consumers + ' load' + (t.consumers === 1 ? '' : 's') + ' &middot; ' + fmt(t.kw, 0) + ' kW &middot; '
     + fmt(t.pipeM, 0) + ' m of pipe &middot; ' + nf + ' fittings'
-    + (w ? ' &middot; index ' + esc(w.node.name) + ' at ' + fmt(w.drop, 0) + ' kPa' : '');
+    + (w ? ' &middot; index ' + esc(w.node.name) + ' at ' + fmt(w.drop, 0) + ' kPa' : '')
+    + '<br><span style="font-size:11px">' + NAMING_NOTE + '</span>';
 
   renderIndexPanel(w);
 
@@ -1793,12 +2239,18 @@ function buildSizerProject() {
   solve();
   const circuits = [];
   const idOf = {};
+  const dropped = [];
   let next = 1;
 
   const walk = (nodeId, parentCircuit) => {
     S.segs.filter(s => s.up === nodeId).forEach(sg => {
       const down = nodeById(sg.down);
       const isCons = down && down.type === 'consumer';
+      /* A run with nothing downstream carries no flow, so the sizer has
+         nothing to size it from and reports it as an error. It is a stub left
+         by a trace that stopped in mid air, and it is left out rather than
+         sent across to fail. */
+      if (!isCons && (sg.nCons || 0) === 0) { dropped.push(sg.ref); return; }
       const cid = next++;
       idOf[sg.id] = cid;
       const single = sg.mode === 'single';
@@ -1862,6 +2314,7 @@ function buildSizerProject() {
     nextId: next,
     plantItems: [],
     nextPlantId: 1,
+    dropped,
     traceMeta: {
       from: 'pipe-trace', pxPerM: S.pxPerM,
       jointing: S.settings.jointing,
@@ -1877,54 +2330,99 @@ function buildSizerProject() {
   };
 }
 
+/* ---------- the hand-over ----------
+   The sizer is the same site, so the project can be put where the sizer will
+   find it rather than downloaded and then hunted for. The file is still
+   written, so there is always a copy on disk, but the sizer opens with the
+   project already in it. If the browser will not allow the shared store —
+   private browsing, or the tools opened straight off a hard disk — the file
+   is the fallback and the message says so. */
+const HANDOFF_KEY = 'adi-pipework-handoff';
+
+function putHandoff(proj) {
+  try {
+    localStorage.setItem(HANDOFF_KEY, JSON.stringify({
+      at: Date.now(), from: 'pipe-trace',
+      ref: S.ref || 'Traced from drawing',
+      project: proj,
+    }));
+    return true;
+  } catch (e) { return false; }
+}
+
 function exportToSizer() {
-  const t = solve();
-  const unreached = S.nodes.filter(n => n.type === 'consumer' && !n.reached);
-  const orphans = S.segs.filter(s => s.orphan);
   if (S.nodes.filter(n => n.type === 'source').length === 0) {
     modal('Nothing to export', '<p>Place the plant first &mdash; it is the root everything hangs off.</p>'
       + '<button class="btn" onclick="closeModal()">Close</button>');
     return;
   }
-  if (S.pxPerM <= 0) {
-    modal('Set the scale first', '<p>Without a scale the traced lengths mean nothing. '
-      + 'Use the Scale tool to pick two points a known distance apart.</p>'
-      + '<button class="btn" onclick="closeModal()">Close</button>');
-    return;
-  }
-  const proj = buildSizerProject();
-  if (proj.circuits.length === 0) {
+  if (scaleNeeded()) { scaleGate(); return; }
+  solve();
+  if (!S.segs.length) {
     modal('Nothing traced', '<p>Trace at least one run from the plant to a load.</p>'
       + '<button class="btn" onclick="closeModal()">Close</button>');
     return;
   }
-  const warn = (unreached.length || orphans.length)
-    ? '<div class="note bad">' + unreached.length + ' load' + (unreached.length === 1 ? '' : 's')
-      + ' and ' + orphans.length + ' run' + (orphans.length === 1 ? '' : 's')
-      + ' are not connected to plant. They will be left out.</div>'
+  /* Anything that would arrive in the sizer as a circuit it cannot size is
+     worth sorting out here, on the drawing, where it can be seen. */
+  const issues = auditTrace();
+  if (issues.some(i => i.level === 'bad' || i.fix)) { checkDialog(true); return; }
+  doExport();
+}
+
+function doExport() {
+  const proj = buildSizerProject();
+  if (proj.circuits.length === 0) {
+    modal('Nothing to send', '<p>No run reaches a load, so there is nothing for the sizer to size.</p>'
+      + '<button class="btn" onclick="closeModal()">Close</button>');
+    return;
+  }
+  const unreached = S.nodes.filter(n => n.type === 'consumer' && !n.reached);
+  const orphans = S.segs.filter(s => s.orphan);
+  const warn = (unreached.length || orphans.length || proj.dropped.length)
+    ? '<div class="note bad">Left out: '
+      + [unreached.length ? unreached.length + ' unconnected load' + (unreached.length === 1 ? '' : 's') : '',
+         orphans.length ? orphans.length + ' unconnected run' + (orphans.length === 1 ? '' : 's') : '',
+         proj.dropped.length ? proj.dropped.length + ' run' + (proj.dropped.length === 1 ? '' : 's')
+           + ' carrying no load (' + esc(proj.dropped.join(', ')) + ')' : ''
+        ].filter(Boolean).join(', ') + '.</div>'
     : '';
   const idx = S.index;
   modal('Send to the Pipework Sizer',
       '<p style="margin-top:0">' + proj.circuits.length + ' circuits, '
     + fmt(totals().kw, 0) + ' kW, ' + fmt(totals().pipeM, 0) + ' m of pipe. '
-    + 'The sizer picks this up with the topology already built.</p>'
+    + 'The sizer opens with the topology, the lengths and the fittings already built.</p>'
     + (idx ? '<div class="note">Index run ticked on the way over: '
         + esc(idx.chain.map(s => s.ref).join(' → ')) + ' → ' + esc(idx.node.name)
         + ', ' + fmt(idx.drop, 1) + ' kPa including the coil.</div>' : '')
     + warn
     + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">'
-    + '<button class="btn go" id="mDl">Download project file</button>'
-    + '<button class="btn ghost" id="mOpen">Download and open the sizer</button>'
-    + '<button class="btn ghost" onclick="closeModal()">Cancel</button></div>');
+    + '<button class="btn go" id="mOpen">Open in the Sizer</button>'
+    + '<button class="btn ghost" id="mDl">Save the file only</button>'
+    + '<button class="btn ghost" onclick="closeModal()">Cancel</button></div>'
+    + '<div style="margin-top:9px;font-size:11.5px;color:var(--ink-soft)">'
+    + 'Either way a copy of the project file is saved to your downloads.</div>');
 
   const dl = () => {
     const name = (S.ref || 'Traced').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_');
     download(name + '_from_trace.json', JSON.stringify(proj, null, 1));
   };
-  el('mDl').addEventListener('click', () => { dl(); closeModal();
-    toast('Saved \u2014 open it in the sizer with Open Project'); });
-  el('mOpen').addEventListener('click', () => { dl(); closeModal();
-    setTimeout(() => window.open('./index.html', '_blank'), 400); });
+  el('mDl').addEventListener('click', () => {
+    dl(); closeModal(true);
+    toast('Saved \u2014 open it in the sizer with Open Project');
+  });
+  el('mOpen').addEventListener('click', () => {
+    dl();
+    const ok = putHandoff(proj);
+    closeModal(true);
+    if (ok) {
+      toast('Sent \u2014 the sizer is opening with the project in it');
+      setTimeout(() => window.open('./index.html?handoff=1', '_blank'), 350);
+    } else {
+      toast('Saved \u2014 this browser will not pass it across, so open the file in the sizer');
+      setTimeout(() => window.open('./index.html', '_blank'), 350);
+    }
+  });
 }
 
 /* ==========================================================================
@@ -1978,7 +2476,7 @@ function showDrawing(opts) {
   el('sheet').style.height = S.img.h + 'px';
   el('board').style.display = 'none';
   el('zoomer').style.display = 'flex';
-  ['bSched','bSave','bExport','bName','b3d'].forEach(id => el(id).disabled = false);
+  ['bSched','bSave','bExport','bName','b3d','bCheck'].forEach(id => el(id).disabled = false);
   el('bOpenDwg').textContent = 'Change drawing';
   el('bOpenDwg').title = 'Load a different drawing — the scale has to be set again';
   buildRail();
@@ -2149,15 +2647,23 @@ function stepsDialog() {
      'Duty in kW or flow in l/s, \u0394T, coil pressure drop, control valve and height. '
      + 'Duplicate one and drag the copy for repeated units.'],
     ['Trace the runs', tick(done.traced),
-     'Click a component or an existing run to start, click each corner, finish on another component. '
-     + 'Every corner becomes an elbow and every height difference becomes a riser with an elbow at each end.'],
+     'Start on a component, click each corner, finish on another component. Whatever the click will '
+     + 'connect to is ringed and named before you click it, and a branch can only leave from a '
+     + 'component, a tee or a corner already traced &mdash; so a run cannot end up joined a few '
+     + 'centimetres away from where it looks joined. Every corner becomes an elbow and every height '
+     + 'difference becomes a riser with an elbow at each end.'],
+    ['Check it', tick(false),
+     'Check looks for the things that break the sizer: a tee sitting on top of a load rather than '
+     + 'joined to it, a main split in two for no reason, a run stopping in mid air. Tidy repairs '
+     + 'what it can without guessing.'],
     ['Check the heights in 3D', tick(false),
      'The plan cannot show a riser. 3D check lifts the network off the sheet so the plant, the mains '
      + 'and the drops can be seen at their real heights. Read-only — come back to the plan to change anything.'],
     ['Check the schedule, then send it on', tick(false),
      'The schedule shows size, velocity, gradient and the fittings counted off the geometry, with the '
-     + 'index run marked and written out at the bottom. Send to Sizer hands over the topology, the '
-     + 'lengths, the fittings schedule and the index run, already ticked.'],
+     + 'index run marked and written out at the bottom. Send to Sizer opens the sizer with the '
+     + 'project already in it, and saves a copy of the file at the same time. Runs are named '
+     + NAMING_NOTE + '.'],
   ];
   modal('How Pipe Trace works',
     '<ol style="margin:0;padding-left:20px;font-size:13px;line-height:1.6">'
@@ -2204,6 +2710,11 @@ function projectDialog() {
     +   '<input type="checkbox" id="pTerm" ' + (s.termValves ? 'checked' : '')
     +   ' style="width:17px;height:17px;min-height:0"><span style="margin:0;text-transform:none;letter-spacing:0;font-size:12.5px;color:var(--ink)">'
     +   'Count isolation, strainer and regulating valves at each load</span></label>'
+    + '<label class="fld" style="display:flex;align-items:center;gap:9px">'
+    +   '<input type="checkbox" id="pSnap" ' + (s.snapPoints !== false ? 'checked' : '')
+    +   ' style="width:17px;height:17px;min-height:0"><span style="margin:0;text-transform:none;letter-spacing:0;font-size:12.5px;color:var(--ink)">'
+    +   'Branch only at components, tees and corners. A click along a run is pulled to its '
+    +   'nearest point rather than cutting a tee where the cursor happened to be.</span></label>'
     + '<hr style="border:none;border-top:1px solid var(--rule);margin:14px 0">'
     + '<label class="fld"><span>Project reference</span><input id="pRef" value="' + esc(S.ref) + '"></label>'
     + '<label class="fld"><span>Engineer</span><input id="pEng" value="' + esc(S.engineer) + '"></label>'
@@ -2253,6 +2764,7 @@ function projectDialog() {
     s.flangeSpacing = parseFloat(el('pFlSp').value) || 4;
     s.bendType = el('pBend').value;
     s.termValves = el('pTerm').checked;
+    s.snapPoints = el('pSnap').checked;
     s.limitPd = parseFloat(el('pLim').value) || 300;
     s.vMin = parseFloat(el('pVn').value) || 0.3;
     s.vMax = parseFloat(el('pVx').value) || 3.0;
@@ -2707,24 +3219,29 @@ sc.addEventListener('pointerdown', ev => {
 
   if (tool === 'trace') {
     if (!draft) {
-      const r = resolvePoint(p, false);
-      if (!r) { toast('Start on a component or an existing run'); return; }
-      draft = { kind: 'trace', startNode: r.node.id, pts: [r.at],
+      const sn = snapAt(p);
+      const node = connectAt(sn);
+      if (!node) { toast('Start on a component, a tee or a corner'); return; }
+      draft = { kind: 'trace', startNode: node.id, pts: [{ x: node.x, y: node.y }],
                 mode: 'pair', leg: 'flow' };
       render();
       return;
     }
-    // finishing on something existing closes the run
-    const n = hitNode(p);
-    if (n && n.id !== draft.startNode) { draft.pts.push({ x: n.x, y: n.y }); finishTrace(n.id); return; }
-    const h = hitSeg(p);
-    if (h && h.seg.a !== draft.startNode && h.seg.b !== draft.startNode) {
-      const j = splitSegment(h.seg, h.r);
-      draft.pts.push({ x: j.x, y: j.y });
-      finishTrace(j.id);
-      return;
+    // a click on anything already there closes the run onto it
+    const sn = snapAt(p);
+    if (sn) {
+      if (sn.kind === 'node' && sn.node.id === draft.startNode) {
+        toast('That is where this run started'); return;
+      }
+      const node = connectAt(sn);
+      if (node) {
+        if (node.id === draft.startNode) { toast('That is where this run started'); return; }
+        draft.pts.push({ x: node.x, y: node.y });
+        finishTrace(node.id);
+        return;
+      }
     }
-    draft.pts.push(p);
+    draft.pts.push(orthoPoint(draft.pts[draft.pts.length - 1], p));
     render();
   }
 });
@@ -2750,7 +3267,9 @@ sc.addEventListener('pointermove', ev => {
     }
     return;
   }
-  if (draft) { hoverPt = toDwg(ev); render(); }
+  // the trace tool shows what a click would connect to, so it tracks the
+  // cursor whether or not a run is under way
+  if (draft || tool === 'trace') { hoverPt = toDwg(ev); render(); }
 });
 
 function endPointer(ev) {
@@ -2831,6 +3350,13 @@ document.addEventListener('keydown', ev => {
     }
     return;
   }
+  if (k === 'o') {
+    S.settings.ortho = !S.settings.ortho;
+    el('orthoChk').checked = S.settings.ortho;
+    toast(S.settings.ortho ? 'Corners squared up' : 'Corners free');
+    render();
+    return;
+  }
   if (k === '1') { const s = segById(sel && sel.kind === 'seg' ? sel.id : -1);
     if (s) { s.mode = s.mode === 'single' ? 'pair' : 'single'; render(); openInspector(); } return; }
   if (k === '=' || k === '+') { setZoom(zoom * 1.2); return; }
@@ -2863,6 +3389,8 @@ el('fProj').addEventListener('change', e => {
 el('bExport').addEventListener('click', exportToSizer);
 el('bName').addEventListener('click', () => autoNameRuns(false));
 
+el('bCheck').addEventListener('click', () => checkDialog(false));
+el('orthoChk').addEventListener('change', e => { S.settings.ortho = e.target.checked; render(); });
 el('b3d').addEventListener('click', open3D);
 el('three2d').addEventListener('click', close3D);
 el('threeViews').querySelectorAll('button').forEach(b =>
