@@ -144,6 +144,29 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
 
 ## 5. Conventions that are easy to break
 
+- **A run can only be joined to a point that already exists** — a component, a
+  tee, or a corner that has been traced. The cursor is pulled to the nearest
+  one and the connection is ringed and named *before* the click. A corner used
+  as a branch point is split exactly on the corner, never a few pixels along,
+  because near-miss splits were arriving in the sizer as extra circuits
+  carrying nothing. A tee takes the height of the run it lands on, not the
+  default main height. Turn the rule off in Pipe & basis if a genuine mid-span
+  tee is needed.
+- **Run naming.** `M1, M2` mains from the plant; `SM1, SM2` sub-mains that
+  branch off a main and still feed more than one load; `B1, B2` branches into a
+  load; `X1` anything not connected. A main or sub-main cut by a tee is
+  numbered in sections from the plant — `M1.1, M1.2`. A run in one piece keeps
+  its plain number.
+- **Check and Tidy.** Check lists what would break downstream; Tidy repairs
+  only what is unambiguous — welds a tee sitting on a component, merges two
+  tees in the same place, joins runs split by accident, removes tees left
+  hanging and runs of no length. It never moves a component or changes a duty.
+  Send to Sizer runs the check first.
+- **Send to Sizer hands over directly.** The project goes into
+  `localStorage['adi-pipework-handoff']` and the sizer picks it up on load,
+  clearing the key so a refresh cannot re-import it. A copy of the file is
+  still downloaded, and if the store is unavailable the file is the fallback.
+  The sizer's side of this is `takeTraceHandoff()` calling `applyProjectData()`.
 - **Pipe Trace will not let anything be placed before the scale is set.** A
   drawing that arrives without one opens a modal that cannot be dismissed, and
   the plant, load and trace tools stay disabled. Swapping the sheet behind an
@@ -160,8 +183,9 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   figures.
 - **"adi" is always lowercase**, never ADI.
 - **British English** throughout.
-- The sizer's source file uses **CRLF line endings** and contains literal JS
-  escapes. Any scripted edit must match exact bytes and use `\r\n`.
+- The sizer's source file contains **literal `\uXXXX` escapes** in its JS
+  strings. Any scripted edit has to match those bytes rather than the character
+  they stand for. (It is plain LF now, whatever it once was.)
 - Every tool has a **deliberately different visual identity** so it is obvious
   which one you are in. Sizer: adi blue, Barlow Condensed. Simulator: IBM Plex,
   dark CAD viewport. Pipe Trace: Archivo, drawing paper, graphite rail.
@@ -194,10 +218,12 @@ Two minutes, and it exercises every join:
    trace one run.
 2. Open **3D check**, confirm the plant, the main and the load sit at the
    heights they were given, then come back to the plan.
-3. **Send to Sizer**, then open that file in the sizer.
-4. Confirm the **size and the fitting count match** what Pipe Trace showed, and
+3. **Check** — it should come back clean.
+4. **Send to Sizer**. The sizer should open with the project already in it and
+   say so in the toast.
+5. Confirm the **size and the fitting count match** what Pipe Trace showed, and
    that the **index run is ticked on the same path** the trace schedule named.
-5. Save from the sizer, open it in the simulator, confirm it solves.
+6. Save from the sizer, open it in the simulator, confirm it solves.
 
 If sizes differ between trace and sizer, look first at roughness, then at the
 viscosity note in section 2.
