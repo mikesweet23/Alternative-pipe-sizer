@@ -12,15 +12,21 @@ this should be enough to make a safe change. Keep it current.
 
 ## 1. The chain
 
-| Step | File | URL | Does |
-|---|---|---|---|
-| 1 | `trace.html` | `/trace.html` | Take-off from a scaled drawing, 3D height check |
-| 2 | `index.html` | `/` | Sizing, losses, heat loss, reheat |
-| 3 | `simulator.html` | `/simulator.html` | Network solve, pumps, balancing |
-| — | `primary-circuit-sizer.html` | `/primary-circuit-sizer.html` | Plant-side primary loop (standalone) |
+| Step | Name in the bar | File | URL | Does |
+|---|---|---|---|---|
+| 1 | Pipe Trace | `trace.html` | `/trace.html` | Take-off from a scaled drawing, 3D height check |
+| 2 | Pipework Sizer | `index.html` | `/` | Sizing, losses, heat loss, reheat |
+| 3 | Network Simulator | `simulator.html` | `/simulator.html` | Network solve, pumps, balancing |
+| — | Primary Circuit Sizer | `primary-circuit-sizer.html` | `/primary-circuit-sizer.html` | Plant-side primary loop (standalone) |
 
 Steps 1→2→3 pass a single JSON file between them. Cross-links in the top bars
 are **relative** (`./index.html` etc.) so they survive a repo rename.
+
+The order is fixed and every page states it: all three carry the same step rail
+— `1 Trace → 2 Sizer → 3 Simulator` — with the page you are on lit and the
+other two live links. Use those three names everywhere. Nothing else in a top
+bar should link sideways to another tool; the rail is the only route, so there
+is one place to change if a step is ever added.
 
 Repo: `github.com/mikesweet23/Alternative-pipe-sizer`
 
@@ -63,18 +69,70 @@ Break any of these and the tools stop agreeing with each other.
 Quoted at DN15 / DN50 / DN150 / DN300, **interpolated on bore**, then scaled by
 material (carbon 1.00, stainless 0.95, copper 0.92). Applied as
 `Δp = K · ρv² / 2` at the circuit's own velocity, so changing pipe size updates
-them automatically. Source: CIBSE Guide C / Crane TP-410.
+them automatically. Source: CIBSE Guide C / Crane TP-410 unless marked.
 
-| Fitting | DN15 | DN50 | DN150 | DN300 |
-|---|---|---|---|---|
-| 90° elbow (short radius) | 1.00 | 0.75 | 0.60 | 0.52 |
-| 90° elbow (long radius) | 0.55 | 0.42 | 0.34 | 0.30 |
-| Pulled bend | 0.35 | 0.28 | 0.22 | 0.19 |
-| Tee through branch | 1.60 | 1.30 | 1.05 | 0.92 |
-| Strainer | 2.80 | 2.50 | 2.20 | 2.00 |
-| Double regulating valve | 3.50 | 3.00 | 2.60 | 2.40 |
-| Commissioning set | 4.00 | 3.40 | 3.00 | 2.70 |
-| Flanged joint | 0.06 | 0.05 | 0.04 | 0.04 |
+**`FITTING_TYPES` is one table with two copies — `trace.html` and `index.html`
+— and they must stay identical.** Pipe Trace hands valve counts to the sizer
+inside `fittingSchedule`, and the sizer's `fittingK()` returns **0** for a key
+it does not know. A type added to one file and not the other therefore crosses
+the join and silently contributes nothing. Add to both, in one commit. There
+is a check for this in section 7.
+
+| Fitting | DN15 | DN50 | DN150 | DN300 | |
+|---|---|---|---|---|---|
+| 90° elbow (short radius) | 1.00 | 0.75 | 0.60 | 0.52 | |
+| 90° elbow (long radius) | 0.55 | 0.42 | 0.34 | 0.30 | |
+| Pulled bend | 0.35 | 0.28 | 0.22 | 0.19 | |
+| 45° elbow | 0.45 | 0.36 | 0.30 | 0.26 | |
+| Tee through run | 0.45 | 0.35 | 0.28 | 0.24 | |
+| Tee through branch | 1.60 | 1.30 | 1.05 | 0.92 | |
+| Gate valve | 0.30 | 0.18 | 0.12 | 0.10 | |
+| Ball valve (full bore) | 0.10 | 0.08 | 0.06 | 0.05 | |
+| Butterfly valve | 0.95 | 0.60 | 0.40 | 0.32 | |
+| Globe valve | 9.00 | 7.50 | 6.50 | 6.00 | |
+| Check valve (swing) | 2.50 | 2.10 | 1.80 | 1.60 | |
+| Check valve (wafer) | 2.00 | 1.70 | 1.45 | 1.30 | *assumed* |
+| Strainer (Y-type) | 2.80 | 2.50 | 2.20 | 2.00 | |
+| Strainer (basket) | 3.60 | 3.20 | 2.80 | 2.50 | *assumed* |
+| Dirt separator | 2.20 | 1.90 | 1.70 | 1.50 | *assumed* |
+| Double regulating valve | 3.50 | 3.00 | 2.60 | 2.40 | |
+| Commissioning set | 4.00 | 3.40 | 3.00 | 2.70 | |
+| Flow measuring station | 2.50 | 2.20 | 1.90 | 1.70 | *assumed* |
+| Flexible connector | 0.30 | 0.25 | 0.20 | 0.18 | *assumed* |
+| Reducer / enlarger | 0.35 | 0.30 | 0.25 | 0.22 | |
+| Tank entry or exit | 1.00 | 1.00 | 1.00 | 1.00 | |
+| Air vent, drain, relief valve, test point | 0 | 0 | 0 | 0 | on a branch |
+| Flanged joint | 0.06 | 0.05 | 0.04 | 0.04 | |
+
+*assumed* carries `assumed: true` in both files and is flagged in the UI
+wherever the figure is shown — palette tooltip, valve inspector, both
+schedules and the sizer's fittings editor. Replace with supplier data.
+
+The four zero-K rows sit on a branch off the bore, so they add nothing to the
+loss along the run. They exist so a count placed in Pipe Trace still appears
+on the schedule rather than disappearing.
+
+### Valves that hold a differential, not a velocity head
+
+A PICV, a 2- or 3-port control valve and a DPCV are selected on the drop they
+have to keep, not on their bore. Giving them a K would make the figure move
+every time the pipe changed size, which is backwards. They carry a **fixed
+kPa** instead (`kpa` in `VALVE_LIB` rather than `fit`), overridable per valve
+once a product is selected. Placeholders, all flagged as assumptions:
+PICV 25, 2-port 20, 3-port 20, DPCV 15 kPa.
+
+They reach the sizer by a different route from everything else:
+
+- **On a run that ends at a load** they are added to that circuit's
+  `consumerLoad`, which already means "the terminal's own pressure
+  requirement". The split is carried alongside in `traceCoilKpa` and
+  `traceValveKpa`, and the export dialog states it, so a coil drop reading
+  40 kPa in the sizer is not a mystery.
+- **On a distribution run** there is no sizer field that means this, and
+  inventing one would change what a circuit is. The figure is reported in
+  `traceMeta.valveKpaOnMains` and called out in the export dialog as something
+  to add to pump head by hand. This is a known gap, deliberately visible
+  rather than silently folded in somewhere wrong.
 
 ### Pipe tables
 - **Tru-Bore Metric** is exact-bore: OD = DN + 2 walls. 1.5 mm wall to DN50,
@@ -110,6 +168,8 @@ Flagged in the tools as assumptions. Replace when the figures arrive.
 | Flange / bag loss | 0.40 × valve jacket coefficient | Measured data |
 | Pump curves | Generic, shut-off at 125% of design | Real curves |
 | Valve Kv and PICV range | Generic | Selected products |
+| PICV / control valve differential | PICV 25, 2-port 20, 3-port 20, DPCV 15 kPa | Selected products, per valve |
+| K for wafer check, basket strainer, dirt separator, flow station, flexible | See section 2, marked *assumed* | Supplier data |
 
 ---
 
@@ -131,6 +191,16 @@ Circuit fields that carry meaning across tools:
 | `sizeOverride` | Steps from the automatic pick |
 | `isBypass` | Carries three-port / bypass arrangement to the simulator |
 | `isIndex` | On the critical path. Pipe Trace works this out and ticks it |
+| `traceValves` | The valves placed on this run — tag, type, leg, qty |
+| `traceCoilKpa`, `traceValveKpa` | How `consumerLoad` splits between coil and control valve |
+
+The project also carries a top-level **`valveSchedule`**: the whole take-off as
+a flat list — tag, type, symbol key, run, size, DN, leg, quantity, kPa, and
+whether the figure is an assumption. The sizer only needs the pressure, which
+is already inside the circuits; this list exists so the valves themselves are a
+read rather than a re-derivation. **It is the substrate a P&ID export is meant
+to be built on**, together with `sym` in `VALVE_LIB`, which is the key a symbol
+library would map against.
 
 Pipe Trace picks the index run the same way the sizer does: the terminal with
 the highest total back to plant, summing each run's pipe and fitting loss and
@@ -157,6 +227,30 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   load; `X1` anything not connected. A main or sub-main cut by a tee is
   numbered in sections from the plant — `M1.1, M1.2`. A run in one piece keeps
   its plain number.
+- **Valves go on a run, never near one.** A placed item stores the run it sits
+  on and a **fraction of that run's length**, not a point, so it stays put when
+  a node is dragged or a corner is added. Splitting, promoting a corner and
+  merging all re-cut the polylines that fraction is measured against, so those
+  three go through `keepingItemsInPlace()`: remember every valve's plan
+  position, do the surgery, put each one back on whichever run now passes
+  closest. Working out the new fraction by hand for each case is where an
+  off-by-one leaves a valve on the wrong side of a tee.
+- **The assumed terminal set switches itself off.** `segFittings()` only adds
+  the assumed two isolating valves, strainer and regulating valve at a load
+  when that run has **no** placed valves. Otherwise the drawing and the
+  assumption would both be counted. Said in the run inspector, not left to be
+  found in the numbers.
+- **Quantity and pressure agree on a paired run.** Flow and return are in
+  series round the circuit, so an item set to `both` legs is two valves *and*
+  two drops. Placed items are added to the fitting list **after** the ×2 that
+  doubles the geometry-counted fittings, carrying their own quantity, so a
+  valve on one leg stays one valve.
+- **Valve tags are handed out once**, next free number per prefix (`IV-`,
+  `ST-`, `NRV-`, `DRV-`, `CS-`, `PICV-`, `2PV-`, `3PV-`, `DPCV-`, `FM-`,
+  `AAV-`, `DR-`, `SV-`, `TP-`, `FC-`, `DS-`, `GV-`). They are not renumbered on
+  every placement, because a tag written on a drawing should not move under it.
+  *Rename runs* renumbers them down the drawing, and Tidy does it only if two
+  are the same.
 - **Check and Tidy.** Check lists what would break downstream; Tidy repairs
   only what is unambiguous — welds a tee sitting on a component, merges two
   tees in the same place, joins runs split by accident, removes tees left
@@ -181,17 +275,37 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   number field blurs it instead. Arrow keys blocked, spinners hidden. This was a
   deliberate safety decision — scrolling a page was silently changing design
   figures.
-- **"adi" is always lowercase**, never ADI.
+- **"adi" is always lowercase**, never ADI. That includes anything a
+  `text-transform: uppercase` would catch — the brand strapline in the top bar
+  is deliberately *not* uppercased for exactly this reason.
 - **British English** throughout.
 - The sizer's source file contains **literal `\uXXXX` escapes** in its JS
   strings. Any scripted edit has to match those bytes rather than the character
   they stand for. (It is plain LF now, whatever it once was.)
-- Every tool has a **deliberately different visual identity** so it is obvious
-  which one you are in. Sizer: adi blue, Barlow Condensed. Simulator: IBM Plex,
-  dark CAD viewport. Pipe Trace: Archivo, drawing paper, graphite rail.
-  Primary: copper/amber. Pipe Trace's 3D check deliberately keeps the paper
-  background rather than borrowing the simulator's dark viewport.
-- Flow is **red**, return is **blue**, per UK convention.
+- **The top bar is shared; everything below it is not.** `trace.html`,
+  `index.html` and `simulator.html` each hold a copy of the same block, marked
+  `adi SHARED BRAND BAR ... end shared brand bar`. Same adi logo at 30 px, same
+  `#10151a` bar, same 3 px adi-blue rule under it, same title and strapline
+  scale, same step rail (`.adi-bar`, `.adi-chain`, both namespaced because
+  `.steps` and `.chain` were already taken inside the tools). **Change one copy
+  and change all three in the same commit**, and keep the shared brand tokens
+  (`--adi-bar`, `--adi-bar-ink`, `--adi-bar-muted`, `--adi-bar-line`,
+  `--adi-blue`) identical too. Trace carries ten more buttons in the same bar,
+  so it alone adds two breakpoints below the block that drop the strapline and
+  then the step labels — that keeps it one row down to a 1366-wide laptop, and
+  is the only sanctioned local deviation.
+- Below the bar every tool keeps its **deliberately different visual identity**
+  so it is obvious which one you are in. Sizer: adi blue, Barlow Condensed.
+  Simulator: IBM Plex, dark CAD viewport. Pipe Trace: Archivo, drawing paper,
+  graphite rail. Primary: copper/amber. Pipe Trace's 3D check deliberately
+  keeps the paper background rather than borrowing the simulator's dark
+  viewport.
+- Each tool sets one `--tool-accent`, and its only job in the shared bar is to
+  light that tool's own step: Trace `#e0a422`, Sizer `#7ad1e4`, Simulator
+  `#2fb8a6`. Each is the colour that tool already uses inside itself, so the
+  lit step matches the page under it.
+- Flow is **red** `#c0392b`, return is **blue** `#2471a3`, per UK convention —
+  the same two values in Pipe Trace and the simulator.
 
 ---
 
@@ -227,6 +341,21 @@ Two minutes, and it exercises every join:
 
 If sizes differ between trace and sizer, look first at roughness, then at the
 viscosity note in section 2.
+
+### If you touched valves or fittings
+
+7. Drop a terminal set on a branch and an isolating pair on a main, then open
+   **Schedule → Valves & fittings**. Every item should have a tag, a size
+   inherited from its run and a kPa.
+8. **Confirm no fitting key falls through the join.** In the browser console on
+   the sizer, after importing:
+   `proj.circuits.flatMap(c=>Object.keys(c.fittingSchedule||{})).filter(k=>!FITTING_TYPES[k])`
+   must be empty. A key listed there is counted in Pipe Trace and worth zero in
+   the sizer.
+9. **Reconcile one circuit by hand.** A terminal run's `dropKpa` in Pipe Trace
+   should equal the sizer's `pipeLoss_kPa` **plus** the control-valve kPa that
+   moved into `consumerLoad`. On the worked example above: trace 26.69 =
+   sizer 6.69 + 20, and both tools total 41.69 kPa for that circuit.
 
 ---
 
