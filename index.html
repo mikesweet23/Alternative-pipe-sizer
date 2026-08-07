@@ -3590,23 +3590,42 @@ function setAllMainsAuto() {
    ============================================================ */
 
 // K at DN15 / DN50 / DN150 / DN300, interpolated on bore between them
+/* This table is identical in trace.html, which places valves on the drawing
+   and hands their counts over in fittingSchedule. A type that exists there
+   and not here crosses the join and contributes nothing, because fittingK()
+   below returns 0 for a key it does not know. Change both, in one commit.
+   `assumed` marks a K standing in for selected-product data rather than a
+   Guide C or Crane figure; it is flagged wherever the row is shown. */
 const FITTING_TYPES = {
-  elbow90:    { label: '90\u00b0 elbow (short radius)', k: [1.00, 0.75, 0.60, 0.52] },
-  elbow90LR:  { label: '90\u00b0 elbow (long radius)',  k: [0.55, 0.42, 0.34, 0.30] },
-  bend90:     { label: '90\u00b0 pulled bend',          k: [0.35, 0.28, 0.22, 0.19] },
-  elbow45:    { label: '45\u00b0 elbow',                k: [0.45, 0.36, 0.30, 0.26] },
-  teeLine:    { label: 'Tee \u2014 flow through run',   k: [0.45, 0.35, 0.28, 0.24] },
-  teeBranch:  { label: 'Tee \u2014 flow through branch',k: [1.60, 1.30, 1.05, 0.92] },
-  gate:       { label: 'Gate valve (open)',            k: [0.30, 0.18, 0.12, 0.10] },
-  butterfly:  { label: 'Butterfly valve (open)',       k: [0.95, 0.60, 0.40, 0.32] },
-  globe:      { label: 'Globe valve (open)',           k: [9.00, 7.50, 6.50, 6.00] },
-  check:      { label: 'Check valve (swing)',          k: [2.50, 2.10, 1.80, 1.60] },
-  strainer:   { label: 'Strainer (clean)',             k: [2.80, 2.50, 2.20, 2.00] },
-  dblRegVal:  { label: 'Double regulating valve',      k: [3.50, 3.00, 2.60, 2.40] },
-  commSet:    { label: 'Commissioning set',            k: [4.00, 3.40, 3.00, 2.70] },
-  reducer:    { label: 'Reducer / enlarger',           k: [0.35, 0.30, 0.25, 0.22] },
-  entryExit:  { label: 'Tank entry or exit',           k: [1.00, 1.00, 1.00, 1.00] },
-  flange:     { label: 'Flanged joint',                k: [0.06, 0.05, 0.04, 0.04] },
+  elbow90:        { label: '90\u00b0 elbow (short radius)',  k: [1.00, 0.75, 0.60, 0.52] },
+  elbow90LR:      { label: '90\u00b0 elbow (long radius)',   k: [0.55, 0.42, 0.34, 0.30] },
+  bend90:         { label: '90\u00b0 pulled bend',           k: [0.35, 0.28, 0.22, 0.19] },
+  elbow45:        { label: '45\u00b0 elbow',                 k: [0.45, 0.36, 0.30, 0.26] },
+  teeLine:        { label: 'Tee \u2014 flow through run',    k: [0.45, 0.35, 0.28, 0.24] },
+  teeBranch:      { label: 'Tee \u2014 flow through branch', k: [1.60, 1.30, 1.05, 0.92] },
+  gate:           { label: 'Gate valve (open)',              k: [0.30, 0.18, 0.12, 0.10] },
+  ball:           { label: 'Ball valve (full bore, open)',   k: [0.10, 0.08, 0.06, 0.05] },
+  butterfly:      { label: 'Butterfly valve (open)',         k: [0.95, 0.60, 0.40, 0.32] },
+  globe:          { label: 'Globe valve (open)',             k: [9.00, 7.50, 6.50, 6.00] },
+  check:          { label: 'Check valve (swing)',            k: [2.50, 2.10, 1.80, 1.60] },
+  checkWafer:     { label: 'Check valve (wafer, dual plate)',k: [2.00, 1.70, 1.45, 1.30], assumed: true },
+  strainer:       { label: 'Strainer (Y-type, clean)',       k: [2.80, 2.50, 2.20, 2.00] },
+  strainerBasket: { label: 'Strainer (basket, clean)',       k: [3.60, 3.20, 2.80, 2.50], assumed: true },
+  dirtSep:        { label: 'Dirt separator',                 k: [2.20, 1.90, 1.70, 1.50], assumed: true },
+  dblRegVal:      { label: 'Double regulating valve',        k: [3.50, 3.00, 2.60, 2.40] },
+  commSet:        { label: 'Commissioning set',              k: [4.00, 3.40, 3.00, 2.70] },
+  flowMeter:      { label: 'Flow measuring station',         k: [2.50, 2.20, 1.90, 1.70], assumed: true },
+  flexible:       { label: 'Flexible connector',             k: [0.30, 0.25, 0.20, 0.18], assumed: true },
+  reducer:        { label: 'Reducer / enlarger',             k: [0.35, 0.30, 0.25, 0.22] },
+  entryExit:      { label: 'Tank entry or exit',             k: [1.00, 1.00, 1.00, 1.00] },
+  /* These sit on a branch off the main bore, so they add nothing to the loss
+     along it. They are carried so a count placed in Pipe Trace still appears
+     on the schedule here rather than vanishing. */
+  aav:            { label: 'Automatic air vent (branch)',    k: [0, 0, 0, 0] },
+  drainCock:      { label: 'Drain valve (branch)',           k: [0, 0, 0, 0] },
+  safety:         { label: 'Pressure relief valve (branch)', k: [0, 0, 0, 0] },
+  testPoint:      { label: 'P/T test point',                 k: [0, 0, 0, 0] },
+  flange:         { label: 'Flanged joint',                  k: [0.06, 0.05, 0.04, 0.04] },
 };
 
 const K_DN_POINTS = [15, 50, 150, 300];
@@ -3753,7 +3772,11 @@ function renderFittingEditor() {
     const sub = n * each;
     totalPa += sub;
     return '<tr' + (n > 0 ? ' style="background:rgba(122,209,228,0.10)"' : '') + '>'
-      + '<td style="padding:6px 8px">' + FITTING_TYPES[type].label + '</td>'
+      + '<td style="padding:6px 8px">' + FITTING_TYPES[type].label
+      +   (FITTING_TYPES[type].assumed
+            ? ' <span style="font-size:10px;background:#fff4e0;color:#8a5d00;border:1px solid #f0d69b;'
+              + 'border-radius:2px;padding:1px 5px;white-space:nowrap">assumed K</span>' : '')
+      + '</td>'
       + '<td class="n" style="padding:6px 8px;color:var(--muted)">' + k.toFixed(2) + '</td>'
       + '<td class="n" style="padding:6px 8px;color:var(--muted)">' + (each / 1000).toFixed(2) + '</td>'
       + '<td style="padding:4px 8px;white-space:nowrap">'
