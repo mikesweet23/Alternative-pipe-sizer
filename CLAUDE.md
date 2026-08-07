@@ -12,15 +12,21 @@ this should be enough to make a safe change. Keep it current.
 
 ## 1. The chain
 
-| Step | File | URL | Does |
-|---|---|---|---|
-| 1 | `trace.html` | `/trace.html` | Take-off from a scaled drawing, 3D height check |
-| 2 | `index.html` | `/` | Sizing, losses, heat loss, reheat |
-| 3 | `simulator.html` | `/simulator.html` | Network solve, pumps, balancing |
-| — | `primary-circuit-sizer.html` | `/primary-circuit-sizer.html` | Plant-side primary loop (standalone) |
+| Step | Name in the bar | File | URL | Does |
+|---|---|---|---|---|
+| 1 | Pipe Trace | `trace.html` | `/trace.html` | Take-off from a scaled drawing, 3D height check |
+| 2 | Pipework Sizer | `index.html` | `/` | Sizing, losses, heat loss, reheat |
+| 3 | Network Simulator | `simulator.html` | `/simulator.html` | Network solve, pumps, balancing |
+| — | Primary Circuit Sizer | `primary-circuit-sizer.html` | `/primary-circuit-sizer.html` | Plant-side primary loop (standalone) |
 
 Steps 1→2→3 pass a single JSON file between them. Cross-links in the top bars
 are **relative** (`./index.html` etc.) so they survive a repo rename.
+
+The order is fixed and every page states it: all three carry the same step rail
+— `1 Trace → 2 Sizer → 3 Simulator` — with the page you are on lit and the
+other two live links. Use those three names everywhere. Nothing else in a top
+bar should link sideways to another tool; the rail is the only route, so there
+is one place to change if a step is ever added.
 
 Repo: `github.com/mikesweet23/Alternative-pipe-sizer`
 
@@ -181,17 +187,37 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   number field blurs it instead. Arrow keys blocked, spinners hidden. This was a
   deliberate safety decision — scrolling a page was silently changing design
   figures.
-- **"adi" is always lowercase**, never ADI.
+- **"adi" is always lowercase**, never ADI. That includes anything a
+  `text-transform: uppercase` would catch — the brand strapline in the top bar
+  is deliberately *not* uppercased for exactly this reason.
 - **British English** throughout.
 - The sizer's source file contains **literal `\uXXXX` escapes** in its JS
   strings. Any scripted edit has to match those bytes rather than the character
   they stand for. (It is plain LF now, whatever it once was.)
-- Every tool has a **deliberately different visual identity** so it is obvious
-  which one you are in. Sizer: adi blue, Barlow Condensed. Simulator: IBM Plex,
-  dark CAD viewport. Pipe Trace: Archivo, drawing paper, graphite rail.
-  Primary: copper/amber. Pipe Trace's 3D check deliberately keeps the paper
-  background rather than borrowing the simulator's dark viewport.
-- Flow is **red**, return is **blue**, per UK convention.
+- **The top bar is shared; everything below it is not.** `trace.html`,
+  `index.html` and `simulator.html` each hold a copy of the same block, marked
+  `adi SHARED BRAND BAR ... end shared brand bar`. Same adi logo at 30 px, same
+  `#10151a` bar, same 3 px adi-blue rule under it, same title and strapline
+  scale, same step rail (`.adi-bar`, `.adi-chain`, both namespaced because
+  `.steps` and `.chain` were already taken inside the tools). **Change one copy
+  and change all three in the same commit**, and keep the shared brand tokens
+  (`--adi-bar`, `--adi-bar-ink`, `--adi-bar-muted`, `--adi-bar-line`,
+  `--adi-blue`) identical too. Trace carries ten more buttons in the same bar,
+  so it alone adds two breakpoints below the block that drop the strapline and
+  then the step labels — that keeps it one row down to a 1366-wide laptop, and
+  is the only sanctioned local deviation.
+- Below the bar every tool keeps its **deliberately different visual identity**
+  so it is obvious which one you are in. Sizer: adi blue, Barlow Condensed.
+  Simulator: IBM Plex, dark CAD viewport. Pipe Trace: Archivo, drawing paper,
+  graphite rail. Primary: copper/amber. Pipe Trace's 3D check deliberately
+  keeps the paper background rather than borrowing the simulator's dark
+  viewport.
+- Each tool sets one `--tool-accent`, and its only job in the shared bar is to
+  light that tool's own step: Trace `#e0a422`, Sizer `#7ad1e4`, Simulator
+  `#2fb8a6`. Each is the colour that tool already uses inside itself, so the
+  lit step matches the page under it.
+- Flow is **red** `#c0392b`, return is **blue** `#2471a3`, per UK convention —
+  the same two values in Pipe Trace and the simulator.
 
 ---
 
