@@ -294,6 +294,11 @@
   .hint .x:hover { color: #fff; }
   .hint .hopt { display: none; align-items: center; gap: 6px; font-size: 11.5px; color: #cdd3dc; white-space: nowrap; }
   .hint.trace .hopt { display: flex; }
+  /* while the override key is down, so it is obvious the rules have changed */
+  .hint.alt { background: var(--measure); color: #241a00; }
+  .hint.alt kbd { background: rgba(0,0,0,.16); color: #241a00; }
+  .hint.alt .hopt { color: #3d2c00; }
+  .hint.alt .x { color: #6b5000; }
   .hint .hopt input { width: 15px; height: 15px; margin: 0; }
 
   /* ---- valve palette ---- */
@@ -558,6 +563,7 @@
     <button class="tb dwg" id="bOpenDwg">Open drawing</button>
     <button class="tb" id="bProj">Pipe &amp; basis</button>
     <button class="tb" id="bSteps">How to use</button>
+    <button class="tb" id="bUndo" disabled title="Nothing to undo">&#8630; Undo</button>
     <div class="sp"></div>
     <button class="tb" id="bName" disabled>Rename runs</button>
     <button class="tb" id="bCheck" disabled title="Look for connections that are not where they look">Check</button>
@@ -887,6 +893,14 @@ const VALVE_TYPES = {
            carried as a fixed drop instead. See exportValveKpa() for how they
            reach the sizer.
 
+   `typ` is the typical resistance at design duty, in kPa. It is what a
+   placed item uses until there is real product data, because that is the
+   figure a manufacturer quotes and the one an engineer recognises — the K
+   model gives a clean-and-new number that reads low against a real schedule.
+   Every item can be switched to the K basis or given a measured figure in
+   the inspector; `basis` on the placed item says which is in force. All the
+   `typ` figures are assumptions and are flagged as such wherever shown.
+
    `defLeg` is where the item usually goes on a two-pipe run, not a rule —
    every placed item can be moved to the other leg or to both.
    `branch` means it sits on a branch off the bore (a vent, a drain), so it
@@ -903,14 +917,14 @@ const VALVE_CATS = {
 };
 
 const VALVE_LIB = {
-  ball:           { label: 'Ball valve',              tag: 'IV',   cat: 'iso',  fit: 'ball',           sym: 'ball',      defLeg: 'both' },
-  gate:           { label: 'Gate valve',              tag: 'IV',   cat: 'iso',  fit: 'gate',           sym: 'gate',      defLeg: 'both' },
-  butterfly:      { label: 'Butterfly valve',         tag: 'IV',   cat: 'iso',  fit: 'butterfly',      sym: 'butterfly', defLeg: 'both' },
-  globe:          { label: 'Globe valve',             tag: 'GV',   cat: 'iso',  fit: 'globe',          sym: 'globe',     defLeg: 'flow' },
+  ball:           { label: 'Ball valve',              tag: 'IV',   cat: 'iso',  fit: 'ball',           sym: 'ball',      defLeg: 'both',   typ: 0.5 },
+  gate:           { label: 'Gate valve',              tag: 'IV',   cat: 'iso',  fit: 'gate',           sym: 'gate',      defLeg: 'both',   typ: 0.5 },
+  butterfly:      { label: 'Butterfly valve',         tag: 'IV',   cat: 'iso',  fit: 'butterfly',      sym: 'butterfly', defLeg: 'both',   typ: 3 },
+  globe:          { label: 'Globe valve',             tag: 'GV',   cat: 'iso',  fit: 'globe',          sym: 'globe',     defLeg: 'flow',   typ: 15 },
 
-  dblRegVal:      { label: 'Double regulating valve', tag: 'DRV',  cat: 'reg',  fit: 'dblRegVal',      sym: 'drv',       defLeg: 'return' },
-  commSet:        { label: 'Commissioning set',       tag: 'CS',   cat: 'reg',  fit: 'commSet',        sym: 'commset',   defLeg: 'return' },
-  flowMeter:      { label: 'Flow measuring station',  tag: 'FM',   cat: 'reg',  fit: 'flowMeter',      sym: 'meter',     defLeg: 'return' },
+  dblRegVal:      { label: 'Double regulating valve', tag: 'DRV',  cat: 'reg',  fit: 'dblRegVal',      sym: 'drv',       defLeg: 'return', typ: 12 },
+  commSet:        { label: 'Commissioning set',       tag: 'CS',   cat: 'reg',  fit: 'commSet',        sym: 'commset',   defLeg: 'return', typ: 15 },
+  flowMeter:      { label: 'Flow measuring station',  tag: 'FM',   cat: 'reg',  fit: 'flowMeter',      sym: 'meter',     defLeg: 'return', typ: 8 },
 
   picv:           { label: 'PICV',                    tag: 'PICV', cat: 'ctrl', kpa: 25,               sym: 'picv',      defLeg: 'return' },
   ctrl2Port:      { label: '2-port control valve',    tag: '2PV',  cat: 'ctrl', kpa: 20,               sym: 'ctrl2',     defLeg: 'flow' },
@@ -918,72 +932,130 @@ const VALVE_LIB = {
   dpcv:           { label: 'Differential pressure control valve',
                                                       tag: 'DPCV', cat: 'ctrl', kpa: 15,               sym: 'dpcv',      defLeg: 'return' },
 
-  strainer:       { label: 'Strainer (Y-type)',       tag: 'ST',   cat: 'prot', fit: 'strainer',       sym: 'strainer',  defLeg: 'flow' },
-  strainerBasket: { label: 'Strainer (basket)',       tag: 'ST',   cat: 'prot', fit: 'strainerBasket', sym: 'strainer',  defLeg: 'flow' },
-  check:          { label: 'Check valve (swing)',     tag: 'NRV',  cat: 'prot', fit: 'check',          sym: 'check',     defLeg: 'flow' },
-  checkWafer:     { label: 'Check valve (wafer)',     tag: 'NRV',  cat: 'prot', fit: 'checkWafer',     sym: 'check',     defLeg: 'flow' },
-  dirtSep:        { label: 'Dirt separator',          tag: 'DS',   cat: 'prot', fit: 'dirtSep',        sym: 'vessel',    defLeg: 'return' },
-  safety:         { label: 'Pressure relief valve',   tag: 'SV',   cat: 'prot', fit: 'safety',         sym: 'safety',    defLeg: 'flow',   branch: true },
+  strainer:       { label: 'Strainer (Y-type)',       tag: 'ST',   cat: 'prot', fit: 'strainer',       sym: 'strainer',  defLeg: 'flow',   typ: 8 },
+  strainerBasket: { label: 'Strainer (basket)',       tag: 'ST',   cat: 'prot', fit: 'strainerBasket', sym: 'strainer',  defLeg: 'flow',   typ: 10 },
+  check:          { label: 'Check valve (swing)',     tag: 'NRV',  cat: 'prot', fit: 'check',          sym: 'check',     defLeg: 'flow',   typ: 5 },
+  checkWafer:     { label: 'Check valve (wafer)',     tag: 'NRV',  cat: 'prot', fit: 'checkWafer',     sym: 'check',     defLeg: 'flow',   typ: 4 },
+  dirtSep:        { label: 'Dirt separator',          tag: 'DS',   cat: 'prot', fit: 'dirtSep',        sym: 'vessel',    defLeg: 'return', typ: 12 },
+  safety:         { label: 'Pressure relief valve',   tag: 'SV',   cat: 'prot', fit: 'safety',         sym: 'safety',    defLeg: 'flow',   branch: true, typ: 0 },
 
-  flexible:       { label: 'Flexible connector',      tag: 'FC',   cat: 'anc',  fit: 'flexible',       sym: 'flex',      defLeg: 'both' },
-  aav:            { label: 'Automatic air vent',      tag: 'AAV',  cat: 'anc',  fit: 'aav',            sym: 'aav',       defLeg: 'flow',   branch: true },
-  drainCock:      { label: 'Drain valve',             tag: 'DR',   cat: 'anc',  fit: 'drainCock',      sym: 'drain',     defLeg: 'both',   branch: true },
-  testPoint:      { label: 'P/T test point',          tag: 'TP',   cat: 'anc',  fit: 'testPoint',      sym: 'tp',        defLeg: 'both',   branch: true },
+  flexible:       { label: 'Flexible connector',      tag: 'FC',   cat: 'anc',  fit: 'flexible',       sym: 'flex',      defLeg: 'both',   typ: 1 },
+  aav:            { label: 'Automatic air vent',      tag: 'AAV',  cat: 'anc',  fit: 'aav',            sym: 'aav',       defLeg: 'flow',   branch: true, typ: 0 },
+  drainCock:      { label: 'Drain valve',             tag: 'DR',   cat: 'anc',  fit: 'drainCock',      sym: 'drain',     defLeg: 'both',   branch: true, typ: 0 },
+  testPoint:      { label: 'P/T test point',          tag: 'TP',   cat: 'anc',  fit: 'testPoint',      sym: 'tp',        defLeg: 'both',   branch: true, typ: 0 },
 };
 
 /* Assemblies. One click drops the whole set, laid out along the run in the
    order given, each item on the leg it belongs to. These are starting points
    from the adi standard details, not a specification — every item can be
    changed or deleted once it is down. */
+/* `items` are listed in the order they are met walking **along the run in the
+   direction it was traced**, which is away from plant and towards the load.
+   That is what makes the automatic fit come out in the right physical order:
+   on the flow, isolate then strain then control, with the control valve
+   nearest the coil; on the return, coming back out of the coil, the
+   regulating valve first and the isolating valve last.
+
+   `anchor` says which end of the run the set belongs against — 'down' is the
+   load end, 'up' is the plant or main end, 'mid' means wherever it is
+   dropped. `forValve` maps a load's control arrangement on to the set that
+   suits it, so a run traced to a load can fit its own valves. */
 const VALVE_SETS = {
-  termDrv: { label: 'Terminal set — 2-port + DRV',
+  termDrv: { label: 'Terminal set — 2-port + DRV', anchor: 'down', forValve: 'twoPortBp',
     note: 'Isolate, strain and control on the flow; regulate and isolate on the return.',
     items: [ { type: 'ball', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
              { type: 'ctrl2Port', leg: 'flow' },
-             { type: 'dblRegVal', leg: 'return' }, { type: 'ball', leg: 'return' } ] },
-  termCs: { label: 'Terminal set — 2-port + commissioning set',
+             { type: 'ball', leg: 'return' }, { type: 'dblRegVal', leg: 'return' } ] },
+  termCs: { label: 'Terminal set — 2-port + commissioning set', anchor: 'down', forValve: 'twoPortCS',
     note: 'As the DRV set, with a commissioning set so the branch can be measured.',
     items: [ { type: 'ball', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
              { type: 'ctrl2Port', leg: 'flow' },
-             { type: 'commSet', leg: 'return' }, { type: 'ball', leg: 'return' } ] },
-  termPicv: { label: 'Terminal set — PICV',
+             { type: 'ball', leg: 'return' }, { type: 'commSet', leg: 'return' } ] },
+  termPicv: { label: 'Terminal set — PICV', anchor: 'down', forValve: 'picv',
     note: 'No separate regulating valve: the PICV holds its own authority.',
     items: [ { type: 'ball', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
-             { type: 'picv', leg: 'return' }, { type: 'ball', leg: 'return' } ] },
-  term3p: { label: 'Terminal set — 3-port',
+             { type: 'ball', leg: 'return' }, { type: 'picv', leg: 'return' } ] },
+  term3p: { label: 'Terminal set — 3-port', anchor: 'down', forValve: 'threePort',
+    note: 'Three-port on the return with a regulating valve behind it.',
     items: [ { type: 'ball', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
-             { type: 'ctrl3Port', leg: 'return' },
-             { type: 'dblRegVal', leg: 'return' }, { type: 'ball', leg: 'return' } ] },
-  isoPair: { label: 'Isolation pair',
+             { type: 'ball', leg: 'return' }, { type: 'dblRegVal', leg: 'return' },
+             { type: 'ctrl3Port', leg: 'return' } ] },
+  term2p: { label: 'Terminal set — 2-port only', anchor: 'down', forValve: 'twoPort',
+    note: 'Isolate, strain and control, with no regulating valve on the return.',
+    items: [ { type: 'ball', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
+             { type: 'ctrl2Port', leg: 'flow' }, { type: 'ball', leg: 'return' } ] },
+  isoPair: { label: 'Isolation pair', anchor: 'mid',
     note: 'One valve on each leg, for sectioning a main or a riser.',
     items: [ { type: 'ball', leg: 'flow' }, { type: 'ball', leg: 'return' } ] },
-  branchCs: { label: 'Branch commissioning set',
+  branchCs: { label: 'Branch commissioning set', anchor: 'up',
     note: 'At the foot of a branch or riser, so it can be regulated on its own.',
-    items: [ { type: 'ball', leg: 'flow' }, { type: 'commSet', leg: 'return' },
-             { type: 'ball', leg: 'return' } ] },
-  pumpSet: { label: 'Pump set',
+    items: [ { type: 'ball', leg: 'flow' }, { type: 'ball', leg: 'return' },
+             { type: 'commSet', leg: 'return' } ] },
+  pumpSet: { label: 'Pump set', anchor: 'mid',
     note: 'Suction: isolate, strain, flexible. Discharge: flexible, check, isolate.',
     items: [ { type: 'ball', leg: 'return' }, { type: 'strainer', leg: 'return' },
              { type: 'flexible', leg: 'return' },
              { type: 'flexible', leg: 'flow' }, { type: 'check', leg: 'flow' },
              { type: 'ball', leg: 'flow' } ] },
-  plantSet: { label: 'Plant isolation & protection',
-    note: 'Isolation and a non-return on the flow, dirt separation on the return.',
+  plantSet: { label: 'Plant isolation & protection', anchor: 'up',
+    note: 'Isolation and a non-return leaving the plant, dirt separation coming back.',
     items: [ { type: 'ball', leg: 'flow' }, { type: 'check', leg: 'flow' },
-             { type: 'dirtSep', leg: 'return' }, { type: 'strainer', leg: 'return' },
-             { type: 'ball', leg: 'return' } ] },
+             { type: 'ball', leg: 'return' }, { type: 'strainer', leg: 'return' },
+             { type: 'dirtSep', leg: 'return' } ] },
 };
+/* The set that suits a load's control arrangement, for the automatic fit. */
+function setForValveType(v) {
+  const k = Object.keys(VALVE_SETS).find(x => VALVE_SETS[x].forValve === v);
+  return k || 'term2p';
+}
 
 function valveDef(type) { return VALVE_LIB[type] || null; }
-/* The fixed differential an item holds, in kPa. Placed items may override the
-   library default, because a selected product supersedes it. */
+
+/* A PICV, a control valve or a DPCV is only ever a fixed differential —
+   there is no sensible K for it, so it has no basis to choose. */
+function valveIsFixed(it) { const d = valveDef(it.type); return !!(d && d.kpa !== undefined); }
+
+/* Which way this item's loss is worked out.
+     'typ' — a typical resistance in kPa, the library figure unless one has
+             been typed over it. The default, because it is the figure a
+             supplier quotes and the one that reads right on a schedule.
+     'k'   — K x rho v^2 / 2 at the run's own size and velocity, so it moves
+             with the pipe. More defensible once the size is settled.
+   Differential devices are always fixed and ignore this. */
+function valveBasis(it) {
+  if (valveIsFixed(it)) return 'fixed';
+  if (it.basis === 'k' || it.basis === 'typ') return it.basis;   // set on the item
+  return S.settings.valveBasis === 'k' ? 'k' : 'typ';            // else the project default
+}
+/* The kPa an item holds when it is on a fixed or typical figure. A number
+   typed on the item always wins — that is the point of the box. */
 function valveKpaOf(it) {
   const d = valveDef(it.type);
-  if (!d || d.kpa === undefined) return 0;
-  const v = parseFloat(it.kpa);
-  return isNaN(v) ? d.kpa : Math.max(0, v);
+  if (!d) return 0;
+  const typed = parseFloat(it.kpa);
+  if (!isNaN(typed)) return Math.max(0, typed);
+  if (d.kpa !== undefined) return d.kpa;
+  return d.typ || 0;
 }
-function valveIsFixed(it) { const d = valveDef(it.type); return !!(d && d.kpa !== undefined); }
+/* True when the figure in force is a stand-in rather than measured or
+   derived: the library typical, or a library placeholder differential. */
+function valveKpaIsAssumed(it) {
+  const b = valveBasis(it);
+  if (b === 'k') return false;
+  return isNaN(parseFloat(it.kpa));
+}
+/* One place that answers "what does this item cost, each". */
+function valveEachKpa(it, sg) {
+  const d = valveDef(it.type);
+  if (!d) return 0;
+  if (d.branch) return 0;
+  if (valveBasis(it) === 'k') {
+    if (!sg || !sg.pipe || !d.fit) return 0;
+    return fittingPa(d.fit, nominalDN(sg.pipe.nom, sg.pipe.id),
+      sg.material || S.settings.material, sg.pipe.v, fluid().rho) / 1000;
+  }
+  return valveKpaOf(it);
+}
 
 /* ---------- project state ---------- */
 const S = {
@@ -1011,6 +1083,10 @@ const S = {
     termValves: true,            // isolation + strainer + regulating at each load,
                                  // assumed only on runs with no valves placed on them
     valveTags: true,             // draw the tag beside each placed valve
+    autoTermSet: true,           // fit the terminal set when a run reaches a load
+    valveBasis: 'typ',           // 'typ' typical kPa, or 'k' worked from the size
+    setSpacingM: 0.6,            // between items in a set, on the drawing
+    setOffsetM: 0.6,             // from the load or plant the set is anchored to
     limitPd: 300, vMin: 0.3, vMax: 3.0,
     supply: 80, ret: 60, ambient: 20,
     dT: 20,
@@ -1021,6 +1097,55 @@ const S = {
   setupDone: false,
 };
 const nid = () => S.nextId++;
+
+/* ==========================================================================
+   UNDO
+   Snapshots of what has been drawn — nodes, runs and placed valves — taken
+   before anything that changes them. The drawing itself, the scale and the
+   settings are deliberately left out: undo is for the take-off, not for the
+   sheet behind it, and a snapshot carrying the image would be megabytes.
+   ========================================================================== */
+const UNDO_MAX = 60;
+const undoStack = [];
+let undoSuspended = false;
+
+function undoSnapshot() {
+  return JSON.stringify({
+    nodes: S.nodes, segs: S.segs, items: S.items, nextId: S.nextId,
+  });
+}
+/* Call before the change, with a few words for the button's tooltip. */
+function pushUndo(label) {
+  if (undoSuspended) return;
+  undoStack.push({ label: label || 'change', state: undoSnapshot() });
+  if (undoStack.length > UNDO_MAX) undoStack.shift();
+  refreshUndoBtn();
+}
+/* Several edits that are really one action — placing a set, tidying — get one
+   entry between them rather than one each. */
+function asOneUndo(label, fn) {
+  pushUndo(label);
+  undoSuspended = true;
+  try { return fn(); } finally { undoSuspended = false; refreshUndoBtn(); }
+}
+function undo() {
+  const step = undoStack.pop();
+  if (!step) { toast('Nothing to undo'); return; }
+  const d = JSON.parse(step.state);
+  S.nodes = d.nodes; S.segs = d.segs; S.items = d.items || []; S.nextId = d.nextId;
+  draft = null; sel = null;
+  closeInspector();
+  refreshUndoBtn();
+  render();
+  toast('Undone: ' + step.label);
+}
+function refreshUndoBtn() {
+  const b = el('bUndo');
+  if (!b) return;
+  const step = undoStack[undoStack.length - 1];
+  b.disabled = !step;
+  b.title = step ? 'Undo ' + step.label + '  (Ctrl+Z)' : 'Nothing to undo';
+}
 
 /* ---------- geometry ---------- */
 /* Height above finished floor. The drawing is a plan, so risers and drops
@@ -1291,6 +1416,37 @@ function itemQty(it, sg) {
    than left to be discovered in the numbers. */
 function segHasPlacedValves(segId) { return S.items.some(it => it.seg === segId); }
 
+/* ---------- what a corner is actually made from ----------
+   A corner on the plan is a change of direction, and the angle decides the
+   fitting. A square corner is one 90° elbow and a 45 is one 45° elbow, but
+   anything in between cannot be bought: it is fabricated as a set, and a set
+   takes two elbows, not one. Counting every corner as a single elbow was
+   under-counting every angled run on the drawing.
+   Deflection is the angle turned through, so a straight line is 0°. */
+const ANGLE_TOL = 7.5;
+function cornerFitting(deflectDeg) {
+  const a = Math.abs(deflectDeg);
+  if (a < 1) return null;                                   // not really a corner
+  if (Math.abs(a - 90) <= ANGLE_TOL) return { type: S.settings.bendType || 'elbow90', n: 1, kind: 'sq' };
+  if (Math.abs(a - 45) <= ANGLE_TOL) return { type: 'elbow45', n: 1, kind: 'deg45' };
+  return { type: 'elbow45', n: 2, kind: 'made' };           // a made set
+}
+/* The deflection at each interior point of a polyline. */
+function cornerAngles(pts) {
+  const out = [];
+  if (!pts) return out;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = pts[i - 1], b = pts[i], c = pts[i + 1];
+    const a1 = Math.atan2(b.y - a.y, b.x - a.x);
+    const a2 = Math.atan2(c.y - b.y, c.x - b.x);
+    let d = (a2 - a1) * 180 / Math.PI;
+    while (d > 180) d -= 360;
+    while (d < -180) d += 360;
+    out.push(d);
+  }
+  return out;
+}
+
 function segFittings(sg) {
   const up = nodeById(sg.up), down = nodeById(sg.down);
   const rise = (up && down) ? Math.abs(heightOf(down) - heightOf(up)) : 0;
@@ -1301,7 +1457,15 @@ function segFittings(sg) {
   const add = (k, n) => { if (n > 0) f[k] = (f[k] || 0) + n; };
   const bend = S.settings.bendType || 'elbow90';
 
-  add(bend, corners);                       // corners on the plan
+  // corners on the plan, each costed on the angle it actually turns through
+  const angles = cornerAngles(sg.pts);
+  const cornerMix = { sq: 0, deg45: 0, made: 0 };
+  angles.forEach(d => {
+    const c = cornerFitting(d);
+    if (!c) return;
+    add(c.type, c.n);
+    cornerMix[c.kind]++;
+  });
   if (rise > 0.01)  add(bend, 2);           // up and back to horizontal
   if (extra > 0.01) add(bend, 4);           // over an obstruction and back down
 
@@ -1339,12 +1503,16 @@ function segFittings(sg) {
     if (!d) return;
     const q = itemQty(it, sg);
     /* Flow and return are in series round the circuit, so a valve on each leg
-       is two drops in series, not one. Quantity and pressure agree. */
-    if (d.kpa !== undefined) fixedKpa += valveKpaOf(it) * q;
-    else if (d.fit) add(d.fit, q);
+       is two drops in series, not one. Quantity and pressure agree.
+       An item on the K basis goes into the counted fittings and follows the
+       size; one on a typical or fixed figure is added as kPa. Either way it
+       is counted once, never both. */
+    if (valveBasis(it) === 'k') add(d.fit, q);
+    else fixedKpa += valveEachKpa(it, sg) * q;
   });
 
-  return { list: f, rise, extra, corners, autoTerm, placed: placed.length, fixedKpa };
+  return { list: f, rise, extra, corners, cornerMix, angles,
+           autoTerm, placed: placed.length, fixedKpa };
 }
 
 function fittingsPa(sg) {
@@ -1467,17 +1635,17 @@ function valveSchedule() {
     const qty = itemQty(it, sg);
     const dn = sg.pipe ? nominalDN(sg.pipe.nom, sg.pipe.id) : 0;
     const mat = sg.material || S.settings.material;
-    const fx = valveIsFixed(it);
-    let each = 0;
-    if (fx) each = valveKpaOf(it);
-    else if (d.fit && sg.pipe) each = fittingPa(d.fit, dn, mat, sg.pipe.v, fluid().rho) / 1000;
+    const basis = valveBasis(it);
+    const each = valveEachKpa(it, sg);
     rows.push({
       id: it.id, tag: it.tag || '', type: it.type, label: d.label,
       cat: d.cat, seg: sg.id, run: sg.ref || 'Run',
       size: sg.pipe ? sg.pipe.nom : '', dn,
-      leg: it.leg, qty, branch: !!d.branch, fixed: fx,
-      k: (!fx && d.fit) ? fittingK(d.fit, dn, mat) : 0,
-      assumed: !!(!fx && d.fit && FITTING_TYPES[d.fit] && FITTING_TYPES[d.fit].assumed),
+      leg: it.leg, qty, branch: !!d.branch, fixed: basis === 'fixed', basis,
+      k: (basis === 'k' && d.fit) ? fittingK(d.fit, dn, mat) : 0,
+      assumed: basis === 'k'
+        ? !!(d.fit && FITTING_TYPES[d.fit] && FITTING_TYPES[d.fit].assumed)
+        : valveKpaIsAssumed(it),
       eachKpa: each, totalKpa: each * qty,
       isIndex: !!sg.isIndex, note: it.note || '',
     });
@@ -1575,9 +1743,18 @@ function hitSeg(p, tolPx) {
    item on one leg is drawn on that line and an item on both is drawn on the
    centreline between them. The offset is the same one render() uses for the
    pipes, so the symbol always lands on the pipe it belongs to. */
-function pairOffset(sg) {
+/* How far each leg of a paired run is drawn off the traced centreline, in
+   drawing units. Zoomed out this is a constant on screen, so the couple reads
+   as one route. Zoomed in it becomes a real separation, the same way the
+   symbols become their real size — which is what lets you see that the
+   strainer is on the flow and the regulating valve on the return, instead of
+   five glyphs on top of one another. */
+const PAIR_REAL_M = 0.35;
+function pairOffsetDraw(sg, k) {
   const w = sg.pipe ? clamp(1.6 + sg.pipe.od / 90, 1.8, 7) : 2.2;
-  return w * 0.85 + 1.1;
+  const onScreen = (w * 0.85 + 1.1) * (k === undefined ? 1 / zoom : k);
+  if (!(S.pxPerM > 0)) return onScreen;
+  return Math.max(onScreen, PAIR_REAL_M * S.pxPerM / 2);
 }
 function itemPos(it, k) {
   const sg = segById(it.seg);
@@ -1585,14 +1762,16 @@ function itemPos(it, k) {
   const at = polyAt(sg.pts, it.t);
   let ox = 0, oy = 0;
   if (sg.mode !== 'single' && it.leg !== 'both') {
-    const off = pairOffset(sg) * (k === undefined ? 1 / zoom : k);
+    const off = pairOffsetDraw(sg, k);
     const s = it.leg === 'return' ? 1 : -1;
     ox = s * off; oy = s * off;
   }
   return { x: at.x + ox, y: at.y + oy, ang: at.ang, seg: sg };
 }
 function hitItem(p, tolPx) {
-  const tol = (tolPx || 13) / zoom;
+  // at least as big as the symbol is drawn, so a zoomed-in valve stays easy
+  // to grab rather than getting harder the bigger it looks
+  const tol = Math.max((tolPx || 13) / zoom, valveDrawScale(1 / zoom) * 9);
   let best = null;
   S.items.forEach(it => {
     const q = itemPos(it);
@@ -1655,7 +1834,7 @@ function render() {
         'stroke-width': w * k, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
     } else {
       // paired: flow and return drawn as an offset couple
-      const off = (w * 0.85 + 1.1) * k;
+      const off = pairOffsetDraw(sg, k);
       g.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--flow)',
         'stroke-width': w * k, 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
         transform: 'translate(' + (-off) + ',' + (-off) + ')' }));
@@ -1701,7 +1880,7 @@ function render() {
     if (!q) return;
     const picked = sel && sel.kind === 'item' && sel.id === it.id;
     const sym = mk('g', { transform: 'translate(' + q.x + ' ' + q.y + ') '
-      + 'rotate(' + (q.ang * 180 / Math.PI) + ') scale(' + (k * VALVE_SCALE) + ')' });
+      + 'rotate(' + (q.ang * 180 / Math.PI) + ') scale(' + valveDrawScale(k) + ')' });
     drawValveSymbol(sym, valveDef(it.type), picked);
     g.appendChild(sym);
 
@@ -1709,8 +1888,10 @@ function render() {
       const below = it.leg === 'return';
       const key = it.seg + '|' + (below ? 'b' : 'a');
       const n = (tagRow[key] = (tagRow[key] || 0) + 1) - 1;
-      const step = (n % 2) * 11;                       // every other one steps out
-      const ty = q.y + (below ? (24 + step) : -(16 + step)) * k;
+      const step = (n % 2) * 11 * k;                   // every other one steps out
+      // clear of the symbol, which grows once the drawing is zoomed right in
+      const clear = valveDrawScale(k) * 16 + 5 * k;
+      const ty = q.y + (below ? (clear + 9 * k + step) : -(clear + step));
       const wPx = it.tag.length * 5.4 + 8;
       g.appendChild(mk('rect', { x: q.x - wPx / 2 * k, y: ty - 8 * k, width: wPx * k, height: 11 * k,
         rx: 1.5 * k, fill: 'rgba(255,255,255,.92)' }));
@@ -1722,6 +1903,9 @@ function render() {
 
   // ---- where a valve would land ----
   if (tool === 'valve' && hoverPt) drawValveSnap(g, k);
+
+  // ---- where a tee would be cut ----
+  if (tool === 'tee' && hoverPt) drawTeeSnap(g, k);
 
   // ---- live trace ----
   if (draft && draft.kind === 'trace' && draft.pts.length) {
@@ -1801,6 +1985,23 @@ function render() {
    re-deriving what each item looks like.
    ========================================================================== */
 const VALVE_SCALE = 0.85;
+/* The symbol is about 14 units across its body, and a real valve on a run is
+   roughly this long including its flanges. */
+const VALVE_BODY_UNITS = 14;
+const VALVE_REAL_M = 0.30;
+
+/* How big to draw a symbol, in drawing units per symbol unit.
+   Zoomed out it holds a constant size on screen, so it stays visible on a
+   whole-floor view. Once zoomed in far enough that its true size on the
+   drawing is the larger of the two, it locks to that and grows with the
+   zoom — which is what makes zooming in show you what is in a set rather
+   than the same small glyphs further apart. */
+function valveDrawScale(k) {
+  const onScreen = k * VALVE_SCALE;
+  if (!(S.pxPerM > 0)) return onScreen;
+  const real = (VALVE_REAL_M * S.pxPerM) / VALVE_BODY_UNITS;
+  return Math.max(onScreen, real);
+}
 
 function drawValveSymbol(g, def, picked) {
   const ink = picked ? 'var(--measure)' : 'var(--graphite)';
@@ -1865,7 +2066,7 @@ function drawValveSnap(g, k) {
   const set = armedSet();
   setLayout(sn.seg, sn.t, set ? set.items : [{ type: armed }], k).forEach(L => {
     const sym = mk('g', { opacity: .75, transform: 'translate(' + L.x + ' ' + L.y + ') '
-      + 'rotate(' + (L.ang * 180 / Math.PI) + ') scale(' + (k * VALVE_SCALE) + ')' });
+      + 'rotate(' + (L.ang * 180 / Math.PI) + ') scale(' + valveDrawScale(k) + ')' });
     drawValveSymbol(sym, valveDef(L.type), true);
     g.appendChild(sym);
   });
@@ -1876,6 +2077,34 @@ function drawValveSnap(g, k) {
   g.appendChild(mk('rect', { x: sn.at.x + 14 * k, y: sn.at.y - 30 * k, width: wPx * k, height: 17 * k,
     rx: 2 * k, fill: 'var(--measure)' }));
   g.appendChild(mk('text', { x: sn.at.x + 21 * k, y: sn.at.y - 18 * k,
+    'font-size': 10 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+    fill: '#241a00' }, txt));
+}
+
+/* Where the Tee tool would cut, with how far along the run it lands, so a tee
+   can be put at a real chainage rather than by eye. */
+function drawTeeSnap(g, k) {
+  const h = hitSeg(hoverPt, VALVE_SNAP_PX);
+  if (!h) {
+    g.appendChild(mk('circle', { cx: hoverPt.x, cy: hoverPt.y, r: 4 * k, fill: 'none',
+      stroke: 'var(--muted)', 'stroke-width': 1.3 * k,
+      'stroke-dasharray': (3 * k) + ' ' + (3 * k) }));
+    return;
+  }
+  const q = h.r.q;
+  const t = polyTOf(h.seg.pts, h.r.i, h.r.t);
+  g.appendChild(mk('line', { x1: hoverPt.x, y1: hoverPt.y, x2: q.x, y2: q.y,
+    stroke: 'var(--measure)', 'stroke-width': 1.2 * k,
+    'stroke-dasharray': (3 * k) + ' ' + (3 * k), opacity: .85 }));
+  g.appendChild(mk('circle', { cx: q.x, cy: q.y, r: 10 * k, fill: 'none',
+    stroke: 'var(--measure)', 'stroke-width': 2.2 * k }));
+  g.appendChild(mk('circle', { cx: q.x, cy: q.y, r: 4 * k, fill: 'var(--measure)' }));
+  const along = (h.seg.runM || 0) * t;
+  const txt = 'tee on ' + (h.seg.ref || 'run') + '  ' + fmt(along, 2) + ' m along';
+  const wPx = txt.length * 6.0 + 14;
+  g.appendChild(mk('rect', { x: q.x + 14 * k, y: q.y - 30 * k, width: wPx * k, height: 17 * k,
+    rx: 2 * k, fill: 'var(--measure)' }));
+  g.appendChild(mk('text', { x: q.x + 21 * k, y: q.y - 18 * k,
     'font-size': 10 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
     fill: '#241a00' }, txt));
 }
@@ -1943,11 +2172,12 @@ const TOOLS = [
   { id: 'source',   label: 'Plant',  key: 'P', icon: 'M3 4h14v12H3zM7 8h6v4H7z' },
   { id: 'consumer', label: 'Load',   key: 'C', icon: 'M3 6h14v8H3zM6 6v8M10 6v8M14 6v8' },
   { id: 'trace',    label: 'Trace',  key: 'T', icon: 'M2 15l5-9 5 5 6-8' },
+  { id: 'tee',      label: 'Tee',    key: 'J', icon: 'M2 12h16M10 12V4' },
   { id: 'valve',    label: 'Valves', key: 'F', icon: 'M3 5v10l7-5zM17 5v10l-7-5zM10 10V4M7 4h6' },
 ];
 
 /* Nothing can be placed or traced until the drawing has a scale. */
-const NEEDS_SCALE = ['source', 'consumer', 'trace', 'valve'];
+const NEEDS_SCALE = ['source', 'consumer', 'trace', 'tee', 'valve'];
 
 function buildRail() {
   const rail = el('rail');
@@ -1972,11 +2202,33 @@ const HINTS = {
   source: 'Click where the plant sits.',
   consumer: 'Click where the load sits. Double-click any component to edit it.',
   trace: 'Start on the ringed point. Click to add corners &mdash; every corner becomes a '
-       + 'point you can branch from later. Finish on another component, tee or corner.',
+       + 'point you can branch from later. Finish on another component, tee or corner. '
+       + 'Hold <kbd>Alt</kbd> to flip the corner lock for one click, or to tee into the '
+       + 'middle of a run you have already traced.',
   pan: 'Drag to move around the drawing.',
+  tee: 'Click anywhere along a run to cut a tee into it. The run splits at that point, '
+     + 'and you can trace a branch off it straight away.',
   valve: 'Pick a valve or a set, then click the run it goes on &mdash; it snaps to the pipe. '
        + 'The choice stays armed, so keep clicking. Drag one along its run with Select.',
 };
+
+/* ---------- the override key ----------
+   One key, one meaning: ignore the constraint that is in the way. While
+   tracing, that means squaring up is inverted — a square job gets one free
+   corner without turning the lock off, and a free-form job gets one square
+   corner without turning it on — and a click along a run cuts a tee exactly
+   where the cursor is instead of being pulled to the nearest corner. */
+let overrideKey = false;
+function orthoNow() {
+  return overrideKey ? !S.settings.ortho : !!S.settings.ortho;
+}
+function setOverride(on) {
+  if (overrideKey === on) return;
+  overrideKey = on;
+  const h = el('hint');
+  if (h) h.classList.toggle('alt', on);
+  if (tool === 'trace' || tool === 'tee' || draft) render();
+}
 
 function setTool(t) {
   if (!S.img && t !== 'select') { toast('Load a drawing first'); return; }
@@ -2061,6 +2313,7 @@ function buildValvePalette() {
 
 /* ---------- creating things ---------- */
 function addSource(p) {
+  pushUndo('add plant');
   const n = { id: nid(), type: 'source', x: p.x, y: p.y,
     name: 'Plant ' + (S.nodes.filter(x => x.type === 'source').length + 1),
     plant: 'boiler', kw: 0, dT: S.settings.dT,
@@ -2070,6 +2323,7 @@ function addSource(p) {
   render();
 }
 function addConsumer(p, from) {
+  pushUndo('add load');
   const base = from || clipboard;
   const n = Object.assign({
     id: 0, type: 'consumer', x: 0, y: 0,
@@ -2222,9 +2476,12 @@ function snapAt(p, skipId) {
 
   const h = hitSeg(p, 12);
   if (!h) return null;
-  if (S.settings.snapPoints === false) {
+  /* Holding the override key, or turning the rule off in Pipe & basis, cuts
+     the tee exactly where the cursor is. This is how you go back along a run
+     that is already traced and branch off the middle of it. */
+  if (S.settings.snapPoints === false || overrideKey) {
     return { kind: 'run', seg: h.seg, r: h.r, at: { x: h.r.q.x, y: h.r.q.y },
-             d: h.r.d, what: 'new tee', name: h.seg.ref || '' };
+             d: h.r.d, what: 'new tee here', name: h.seg.ref || '' };
   }
   /* Branching only at points: a click along a run is pulled to that run's
      nearest corner or end rather than cutting a tee wherever the cursor
@@ -2252,7 +2509,7 @@ function connectAt(sn) {
 /* Pipework on a plan is nearly always square to the building, so corners can
    be locked to horizontal, vertical or 45 degrees from the last point. */
 function orthoPoint(prev, p) {
-  if (!prev || !S.settings.ortho) return { x: p.x, y: p.y };
+  if (!prev || !orthoNow()) return { x: p.x, y: p.y };
   const dx = p.x - prev.x, dy = p.y - prev.y;
   const ax = Math.abs(dx), ay = Math.abs(dy);
   if (ax > ay * 2.4142) return { x: p.x, y: prev.y };
@@ -2281,6 +2538,7 @@ function dedupePts(pts) {
 
 function finishTrace(endNode) {
   if (!draft || draft.pts.length < 2) { draft = null; render(); return; }
+  pushUndo('trace a run');
   const pts = dedupePts(draft.pts);
   if (pts.length < 2 || polyLenPx(pts) < stubPx() * 0.5) {
     draft = null; toast('Too short to be a run'); render(); return;
@@ -2295,8 +2553,15 @@ function finishTrace(endNode) {
   S.segs.push(sg);
   draft = null;
   if (S.settings.autoName !== false) autoNameRuns(true);
+  /* Part of tracing the run, so it shares that run's undo entry: one Undo
+     takes the run and the valves that came with it. */
+  undoSuspended = true;
+  const fitted = autoFitTerminalSet(sg);
+  undoSuspended = false;
+  refreshUndoBtn();
   select('seg', sg.id);
   render();
+  if (fitted) toast(fitted + ' terminal valves fitted — drag or re-type any of them');
 }
 
 /* ==========================================================================
@@ -2324,25 +2589,56 @@ function valveSnapAt(p) {
 /* Lay a set out along the run: the flow items in order on the flow leg, the
    return items in order on the return leg, both centred on the click. Spacing
    is a constant on screen, so a set stays readable at any zoom. */
-function setLayout(sg, t, slots, k) {
+/* Spacing is a real distance on the drawing, not a number of screen pixels.
+   That is what makes zooming in actually separate a terminal set: the items
+   are 0.45 m apart in the building, so they spread as you go in, while the
+   symbols hold their size until they reach their own true size. */
+function setSpacingPx() {
+  return S.pxPerM > 0 ? S.settings.setSpacingM * S.pxPerM : 30 / zoom;
+}
+function setOffsetPx() {
+  return S.pxPerM > 0 ? S.settings.setOffsetM * S.pxPerM : 40 / zoom;
+}
+
+/* anchor: 'down' sits the set just short of the load end, 'up' just past the
+   plant or main end, anything else centres it on t. Within a leg the items
+   keep the order they are listed in, which is the order they are met walking
+   down the run — so a terminal set comes out isolate, strain, control. */
+function setLayout(sg, t, slots, k, anchor) {
   const kk = (k === undefined) ? 1 / zoom : k;
   const total = polyCum(sg.pts).pop() || 1;
-  const dt = (30 * kk) / total;
+  const dt = setSpacingPx() / total;
   const legOf = s => s.leg || (valveDef(s.type) || {}).defLeg || 'both';
   const count = {};
   slots.forEach(s => { const L = legOf(s); count[L] = (count[L] || 0) + 1; });
+  const most = Math.max(1, ...Object.keys(count).map(x => count[x]));
+
+  /* Where the first item of the longest leg goes. Anchored sets are measured
+     from the end they belong to; a set that will not fit is squeezed rather
+     than allowed to run off the end of the run. */
+  const off = setOffsetPx() / total;
+  let start;
+  if (anchor === 'down')     start = 1 - off - (most - 1) * dt;
+  else if (anchor === 'up')  start = off;
+  else                       start = t - (most - 1) * dt / 2;
+  start = clamp(start, 0.02, Math.max(0.02, 1 - (most - 1) * dt - 0.02));
+
   const seen = {};
   return slots.map(s => {
     const leg = legOf(s);
     const i = (seen[leg] = (seen[leg] || 0) + 1) - 1;
-    const n = count[leg];
-    const tt = clamp(t + (i - (n - 1) / 2) * dt, 0, 1);
+    /* Both legs start at the same place and step together, so the isolating
+       valves face each other across the pair and the strainer faces the
+       regulating valve. Staggering them instead put one leg's symbols in the
+       gaps of the other's, which is exactly where they overlap when you zoom
+       in to read them. */
+    const tt = clamp(start + i * dt, 0, 1);
     const at = polyAt(sg.pts, tt);
     let ox = 0, oy = 0;
     if (sg.mode !== 'single' && leg !== 'both') {
-      const off = pairOffset(sg) * kk;
+      const o = pairOffsetDraw(sg, kk);
       const sgn = leg === 'return' ? 1 : -1;
-      ox = sgn * off; oy = sgn * off;
+      ox = sgn * o; oy = sgn * o;
     }
     return { type: s.type, leg, t: tt, x: at.x + ox, y: at.y + oy, ang: at.ang };
   });
@@ -2373,12 +2669,15 @@ function retagValves() {
   });
 }
 
-function placeArmedAt(sn) {
+function placeArmedAt(sn, opts) {
   if (!sn) return null;
   const set = armedSet();
-  const slots = set ? set.items : [{ type: armed }];
+  const slots = (opts && opts.slots) || (set ? set.items : [{ type: armed }]);
+  const label = (opts && opts.label) || (set ? set.label : (valveDef(armed) || {}).label || 'valve');
   const made = [];
-  setLayout(sn.seg, sn.t, slots, 1 / zoom).forEach(L => {
+  if (!(opts && opts.quiet)) pushUndo('place ' + label.toLowerCase());
+  undoSuspended = true;
+  setLayout(sn.seg, sn.t, slots, undefined, opts && opts.anchor).forEach(L => {
     const d = valveDef(L.type);
     if (!d) return;
     const it = { id: nid(), type: L.type, seg: sn.seg.id, t: L.t, leg: L.leg,
@@ -2386,13 +2685,63 @@ function placeArmedAt(sn) {
     S.items.push(it);
     made.push(it);
   });
+  undoSuspended = false;
+  refreshUndoBtn();
   if (!made.length) return null;
+  if (opts && opts.quiet) return made[0];
   const first = made[0];
   toast(made.length === 1
     ? (valveDef(first.type).label + ' — ' + first.tag + ' on ' + (sn.seg.ref || 'run'))
     : (set.label + ' — ' + made.length + ' items on ' + (sn.seg.ref || 'run')));
   render();
   return first;
+}
+
+/* ---------- fitting a set to a run automatically ----------
+   A terminal set goes in the same place on every job: a set distance back
+   from the coil, in the same order. Making the engineer place it by hand on
+   every branch is make-work, and leaving it as an invisible assumption means
+   the drawing does not show what has been allowed for. So a run traced to a
+   load fits its own set, matched to the load's control arrangement, and it
+   can be dragged, re-typed or deleted like anything else. */
+function fitSetOnRun(sg, setKey, opts) {
+  const set = VALVE_SETS[setKey];
+  if (!sg || !set) return 0;
+  const wasArmed = armed, wasKind = armedKind;
+  armed = setKey; armedKind = 'set';
+  const made = placeArmedAt({ seg: sg, t: 0.5 }, {
+    anchor: set.anchor, label: set.label, quiet: !!(opts && opts.quiet) });
+  armed = wasArmed; armedKind = wasKind;
+  return made ? set.items.length : 0;
+}
+
+/* Called after a run is traced. Only fires on a run that ends at a load, only
+   when that run has nothing on it already, and only while the setting is on. */
+function autoFitTerminalSet(sg) {
+  if (!S.settings.autoTermSet) return 0;
+  if (!sg || segHasPlacedValves(sg.id)) return 0;
+  buildTree();
+  const down = nodeById(sg.down !== null && sg.down !== undefined ? sg.down : sg.b);
+  if (!down || down.type !== 'consumer') return 0;
+  return fitSetOnRun(sg, setForValveType(down.valve), { quiet: true });
+}
+
+/* Every load that has a run to it and no valves on that run. Used by the
+   button in Pipe & basis, for a trace done before the setting was on. */
+function fitAllTerminalSets() {
+  solve();
+  let runs = 0, items = 0;
+  asOneUndo('fit the terminal sets', () => {
+    S.segs.forEach(sg => {
+      const down = nodeById(sg.down);
+      if (!down || down.type !== 'consumer') return;
+      if (segHasPlacedValves(sg.id)) return;
+      const n = fitSetOnRun(sg, setForValveType(down.valve), { quiet: true });
+      if (n) { runs++; items += n; }
+    });
+  });
+  render();
+  return { runs, items };
 }
 
 function deleteItem(id) {
@@ -2403,6 +2752,7 @@ function deleteItem(id) {
 
 function deleteSelected() {
   if (!sel) return;
+  pushUndo(sel.kind === 'item' ? 'delete a valve' : sel.kind === 'seg' ? 'delete a run' : 'delete a component');
   if (sel.kind === 'item') {
     S.items = S.items.filter(it => it.id !== sel.id);
   } else if (sel.kind === 'seg') {
@@ -2499,6 +2849,15 @@ function consumerForm(n) {
       ])
     + (n.reached ? '' : '<div class="note bad">Not connected to plant. Trace a run to it, '
         + 'or it will be left out of the export.</div>')
+    + (feed
+        ? '<button class="btn ghost sm" id="insRefit" style="margin-top:10px">'
+          + (segHasPlacedValves(feed.id) ? 'Refit the terminal set' : 'Fit the terminal set')
+          + '</button>'
+          + '<div class="note">Puts the set that suits <strong>'
+          + esc(VALVE_TYPES[n.valve] || n.valve) + '</strong> on ' + esc(feed.ref)
+          + ', in the usual order and standing off the load. Refitting replaces whatever '
+          + 'is on that run now.</div>'
+        : '')
     + rowBtns(true);
 }
 
@@ -2559,6 +2918,30 @@ function segForm(sg) {
     + rowBtns();
 }
 
+/* The read-only figures under a valve's form. The other basis is always shown
+   alongside the one in force, so switching is an informed choice rather than
+   a guess — and so the gap between a typical figure and the K-derived one is
+   visible rather than buried. */
+function itemDerivedRows(it, sg, x) {
+  const rows = [
+    ['On run', sg ? esc(sg.ref || 'Run') : '&mdash;'],
+    ['Size', sg && sg.pipe ? sg.pipe.nom : '<span style="color:var(--muted)">run not sized yet</span>'],
+    ['Quantity', String(x.qty) + (x.qty === 2 ? ' (one per leg)' : '')],
+    ['Each', fmt(x.each, 2) + ' kPa'],
+  ];
+  if (!x.fixed) {
+    rows.push(x.basis === 'k'
+      ? ['On typical figures', fmt(x.d.typ || 0, 1) + ' kPa']
+      : ['On K at this size', sg && sg.pipe
+          ? fmt(x.kAlt, 2) + ' kPa <span class="chip">K ' + fmt(fittingK(x.d.fit, x.dn, x.mat), 2) + '</span>'
+          : '&mdash;']);
+  }
+  rows.push(['Adds to the run', x.d.branch
+    ? '<span class="chip">nothing &mdash; on a branch</span>'
+    : '<strong>' + fmt(x.each * x.qty, 2) + ' kPa</strong>']);
+  return rows;
+}
+
 function itemForm(it) {
   const d = valveDef(it.type);
   const sg = segById(it.seg);
@@ -2567,9 +2950,10 @@ function itemForm(it) {
   const dn = sg && sg.pipe ? nominalDN(sg.pipe.nom, sg.pipe.id) : 0;
   const mat = (sg && sg.material) || S.settings.material;
   const fixed = valveIsFixed(it);
-  const each = fixed ? valveKpaOf(it)
-    : (d && d.fit && sg && sg.pipe ? fittingPa(d.fit, dn, mat, sg.pipe.v, fluid().rho) / 1000 : 0);
-  const assumedK = !fixed && d && d.fit && FITTING_TYPES[d.fit] && FITTING_TYPES[d.fit].assumed;
+  const basis = valveBasis(it);
+  const each = valveEachKpa(it, sg);
+  const assumedK = basis === 'k' && d && d.fit && FITTING_TYPES[d.fit] && FITTING_TYPES[d.fit].assumed;
+  const kAlt = d && d.fit && sg && sg.pipe ? fittingPa(d.fit, dn, mat, sg.pipe.v, fluid().rho) / 1000 : 0;
 
   const typeOpts = Object.keys(VALVE_LIB)
     .filter(k => VALVE_LIB[k].cat === d.cat)
@@ -2590,18 +2974,23 @@ function itemForm(it) {
     + (fixed
         ? '<label class="fld"><span>Design differential <em>kPa</em></span>'
           + '<input type="number" data-f="kpa" step="1" min="0" value="' + valveKpaOf(it) + '"></label>'
-        : '')
+        : '<label class="fld"><span>Pressure basis</span><select data-f="basis">'
+          + '<option value="typ"' + (basis === 'typ' ? ' selected' : '') + '>'
+          +   'Typical resistance in kPa</option>'
+          + '<option value="k"' + (basis === 'k' ? ' selected' : '') + '>'
+          +   'K &times; &rho;v&sup2;/2 at this size</option></select></label>'
+          + (basis === 'typ'
+              ? '<label class="fld"><span>Resistance <em>kPa, at design flow</em></span>'
+                + '<input type="number" data-f="kpa" step="0.5" min="0" placeholder="'
+                + fmt(d.typ || 0, 1) + '" value="' + (it.kpa === undefined || it.kpa === '' ? '' : it.kpa)
+                + '"></label>'
+                + '<div class="note">Empty uses the typical figure for this item, '
+                + fmt(d.typ || 0, 1) + ' kPa. Type the manufacturer&rsquo;s figure over it '
+                + 'when you have it &mdash; that is what makes it stop being an assumption.</div>'
+              : ''))
     + '<label class="fld"><span>Note <em>on the schedule</em></span>'
     +   '<input data-f="note" value="' + esc(it.note || '') + '"></label>'
-    + derivedBox([
-        ['On run', sg ? esc(sg.ref || 'Run') : '&mdash;'],
-        ['Size', sg && sg.pipe ? sg.pipe.nom : '<span style="color:var(--muted)">run not sized yet</span>'],
-        ['Quantity', String(qty) + (qty === 2 ? ' (one per leg)' : '')],
-        [fixed ? 'Differential each' : 'K at this size',
-          fixed ? fmt(each, 1) + ' kPa' : (sg && sg.pipe ? fmt(fittingK(d.fit, dn, mat), 2) : '&mdash;')],
-        ['Adds to the run', d.branch ? '<span class="chip">nothing &mdash; on a branch</span>'
-          : '<strong>' + fmt(each * qty, 2) + ' kPa</strong>'],
-      ])
+    + derivedBox(itemDerivedRows(it, sg, { d, qty, each, kAlt, dn, mat, fixed, basis }))
     + (fixed
         ? '<div class="note">A PICV or a control valve is selected on the differential it has to '
           + 'hold, not on its bore, so this is carried as a fixed drop rather than a K. '
@@ -2670,12 +3059,22 @@ function fittingsBox(sg) {
       + '<td style="padding:3px 0;text-align:right;font-family:Azeret Mono,monospace">'
       + fmt(n * each, 2) + '</td></tr>';
   }).join('');
+  const mix = sg.fit.cornerMix || { sq: 0, deg45: 0, made: 0 };
+  const cornerWords = [
+    mix.sq ? mix.sq + ' square' : '',
+    mix.deg45 ? mix.deg45 + ' at 45°' : '',
+    mix.made ? mix.made + ' at another angle' : '',
+  ].filter(Boolean).join(', ');
   return '<div style="font-family:Azeret Mono,monospace;font-size:9px;letter-spacing:.13em;'
     + 'text-transform:uppercase;color:var(--muted);margin:14px 0 5px">Fittings counted off the trace</div>'
     + '<table style="width:100%;font-size:12px;border-collapse:collapse">' + rows + '</table>'
     + '<div class="note">' + sg.fit.corners + ' corner' + (sg.fit.corners === 1 ? '' : 's') + ' on the plan'
+    + (cornerWords ? ' — ' + cornerWords : '')
     + (sg.fit.rise > 0.01 ? ', a ' + fmt(sg.fit.rise, 2) + ' m riser' : '')
-    + (sg.mode !== 'single' ? ', doubled for flow and return' : '') + '.</div>';
+    + (sg.mode !== 'single' ? ', doubled for flow and return' : '') + '.'
+    + (mix.made ? ' A corner that is neither square nor 45° cannot be bought as one '
+        + 'fitting, so it is counted as a set of two elbows.' : '')
+    + '</div>';
 }
 
 function velChip(p) {
@@ -2701,10 +3100,19 @@ function wireInspector() {
                 : sel.kind === 'node' ? nodeById(sel.id) : segById(sel.id);
       if (!obj) return;
       const f = inp.dataset.f;
+      /* An empty resistance box means "use the typical figure", which is not
+         the same as zero — so it clears the override rather than storing 0. */
+      if (sel.kind === 'item' && f === 'kpa' && inp.value.trim() === '') {
+        delete obj.kpa;
+        render(); openInspector();
+        return;
+      }
       obj[f] = (inp.type === 'number') ? (inp.value === '' ? 0 : parseFloat(inp.value)) : inp.value;
       /* Swapping one valve for another drops any differential typed against
          the old one, which no longer means anything. */
-      if (sel.kind === 'item' && f === 'type') delete obj.kpa;
+      /* Swapping one valve for another, or the basis it is worked on, drops
+         any figure typed against the old one — it no longer means anything. */
+      if (sel.kind === 'item' && (f === 'type' || f === 'basis')) delete obj.kpa;
       if (f === 'basis' || f === 'mode') openInspector();
       if (sel.kind !== 'item') el('insName').textContent = obj.name || obj.ref || '\u2014';
       render(); openInspector();
@@ -2731,6 +3139,18 @@ function wireInspector() {
     const copy = addConsumer({ x: n.x + 90, y: n.y + 50 }, n);
     toast('Copied ' + (n.name || 'load') + ' \u2014 drag it into place');
     select('node', copy.id);
+  });
+  const refit = el('insRefit');
+  if (refit) refit.addEventListener('click', () => {
+    const n = nodeById(sel.id);
+    const feed = n && n.feedSeg ? segById(n.feedSeg) : null;
+    if (!feed) return;
+    asOneUndo('refit the terminal set', () => {
+      S.items = S.items.filter(it => it.seg !== feed.id);
+      fitSetOnRun(feed, setForValveType(n.valve), { quiet: true });
+    });
+    render(); openInspector();
+    toast('Terminal set fitted on ' + (feed.ref || 'the run'));
   });
   const del = el('insDel');
   if (del) del.addEventListener('click', deleteSelected);
@@ -2893,6 +3313,11 @@ function mergeAtJunctionInner(j, nb) {
 
 /* Everything that can be repaired without guessing. Returns what it did. */
 function tidyTrace() {
+  pushUndo('tidy up');
+  undoSuspended = true;
+  try { return tidyTraceInner(); } finally { undoSuspended = false; refreshUndoBtn(); }
+}
+function tidyTraceInner() {
   const did = { weld: 0, dupe: 0, dead: 0, merged: 0, tiny: 0 };
   const wp = weldPx();
 
@@ -3082,8 +3507,7 @@ function renderValveSchedule() {
   const takeOff = gKeys.map(k => {
     const g = groups[k];
     return '<tr><td><strong>' + g.qty + '</strong> &times; ' + esc(g.label)
-      + (g.assumed ? ' <span class="chip warn">assumed K</span>' : '')
-      + (g.fixed ? ' <span class="chip warn">assumed kPa</span>' : '') + '</td>'
+      + (g.assumed ? ' <span class="chip warn">assumed</span>' : '') + '</td>'
       + '<td class="n">' + (g.size || '<span class="dim">unsized</span>') + '</td>'
       + '<td class="n">' + g.qty + '</td>'
       + '<td class="n">' + fmt(g.kpa, 2) + '</td></tr>';
@@ -3096,13 +3520,14 @@ function renderValveSchedule() {
     return '<tr data-item="' + r.id + '"' + (r.isIndex ? ' class="idx"' : '') + '>'
       + '<td><strong>' + esc(r.tag) + '</strong></td>'
       + '<td>' + esc(r.label)
-      + (r.assumed ? ' <span class="chip warn">assumed K</span>' : '')
-      + (r.fixed ? ' <span class="chip warn">assumed kPa</span>' : '') + '</td>'
+      + (r.assumed ? ' <span class="chip warn">assumed</span>' : '') + '</td>'
       + '<td>' + esc(r.run) + (r.isIndex ? ' <span class="chip">index</span>' : '') + '</td>'
       + '<td class="n">' + (r.size || '<span class="dim">&mdash;</span>') + '</td>'
       + '<td>' + (sg && sg.mode === 'single' ? '<span class="dim">single</span>' : esc(r.leg)) + '</td>'
       + '<td class="n">' + r.qty + '</td>'
-      + '<td class="n">' + (r.fixed || !r.k ? '<span class="dim">&mdash;</span>' : fmt(r.k, 2)) + '</td>'
+      + '<td>' + (r.basis === 'k' ? 'K ' + fmt(r.k, 2)
+                : r.basis === 'fixed' ? '<span class="dim">differential</span>'
+                : '<span class="dim">typical</span>') + '</td>'
       + '<td class="n">' + (r.branch ? '<span class="dim">&mdash;</span>' : fmt(r.eachKpa, 2)) + '</td>'
       + '<td class="n">' + (r.branch ? '<span class="dim">&mdash;</span>'
           : '<strong>' + fmt(r.totalKpa, 2) + '</strong>') + '</td>'
@@ -3121,7 +3546,7 @@ function renderValveSchedule() {
       '<thead><tr><th colspan="10" style="padding-top:16px">Itemised'
     +   '<i>tagged, in the order they sit on each run</i></th></tr>'
     + '<tr><th>Tag</th><th>Item</th><th>Run</th><th class="n">Size</th><th>Leg</th>'
-    +   '<th class="n">Qty</th><th class="n">K</th><th class="n">kPa each</th>'
+    +   '<th class="n">Qty</th><th>Basis</th><th class="n">kPa each</th>'
     +   '<th class="n">kPa total</th><th>Note</th></tr></thead>'
     + '<tbody>' + list + '</tbody>'
     + '<tfoot><tr><td colspan="5">All placed valves and fittings</td>'
@@ -3502,21 +3927,30 @@ function doExport() {
      goes where is spelled out rather than left to be discovered in the sizer. */
   const termKpa = S.segs.reduce((s, sg) => s + terminalValveKpa(sg), 0);
   const mainsKpa = strandedValveKpa();
+  /* Valves are the one thing that does not cross in a single piece, and which
+     route each one takes depends on how it is being costed. Spelling it out
+     here is the difference between a number the engineer can trust and one
+     they have to go looking for. */
+  const nCounted = S.items.filter(it => valveBasis(it) === 'k').length;
   const valveNote = t.valves ? '<div class="note">'
-      + '<strong>' + t.valves + ' valve' + (t.valves === 1 ? '' : 's') + ' and fittings</strong> go '
-      + 'across. Isolating valves, strainers, non-returns and regulating valves ride in each '
-      + 'circuit’s counted fittings, so they follow the size the sizer settles on.'
+      + '<strong>' + t.valves + ' valve' + (t.valves === 1 ? '' : 's') + '</strong> on the drawing. '
+      + (nCounted
+          ? nCounted + ' of them are on the K basis and ride in their circuit’s counted '
+            + 'fittings, so they follow the size the sizer settles on. '
+          : '')
       + (termKpa > 0
-          ? '<br>Control valves holding a set differential cannot: they are added to the terminal '
-            + 'pressure instead. <strong>' + fmt(termKpa, 1) + ' kPa</strong> of control valve is '
-            + 'carried that way, so a terminal’s coil pressure drop in the sizer reads as the coil '
-            + 'plus its valve rather than the coil alone.'
+          ? 'At a terminal, a valve costed in kPa is added to that circuit’s terminal pressure: '
+            + '<strong>' + fmt(termKpa, 1) + ' kPa</strong> is carried that way, so a coil '
+            + 'pressure drop in the sizer reads as the coil plus its valves rather than the '
+            + 'coil alone. '
           : '')
       + (mainsKpa > 0.005
-          ? '<br><strong>' + fmt(mainsKpa, 1) + ' kPa</strong> of set differential sits on '
-            + 'distribution runs rather than at a terminal. The sizer has no field that means '
-            + 'that, so it is reported here and in the file but is <strong>not</strong> in the '
-            + 'sizer’s circuit figures &mdash; add it to the pump head by hand.'
+          ? '<br><strong>' + fmt(mainsKpa, 1) + ' kPa</strong> of valve sits on <strong>'
+            + 'distribution</strong> runs and is costed in kPa. The sizer has no per-circuit '
+            + 'field for that which would not turn the main into a terminal, so it is reported '
+            + 'here and in the file but is <strong>not</strong> in the sizer’s circuit figures '
+            + '&mdash; add it to the pump head by hand, or switch the valve basis to K in '
+            + 'Pipe &amp; basis and it will cross with everything else.'
           : '')
       + '</div>' : '';
 
@@ -3788,14 +4222,23 @@ function stepsDialog() {
      'Start on a component, click each corner, finish on another component. Whatever the click will '
      + 'connect to is ringed and named before you click it, and a branch can only leave from a '
      + 'component, a tee or a corner already traced &mdash; so a run cannot end up joined a few '
-     + 'centimetres away from where it looks joined. Every corner becomes an elbow and every height '
-     + 'difference becomes a riser with an elbow at each end.'],
+     + 'centimetres away from where it looks joined. A square corner is one 90&deg; elbow, a 45 is '
+     + 'one 45&deg; elbow, and any other angle is counted as a made set of two. Every height '
+     + 'difference becomes a riser with an elbow at each end.<br>'
+     + 'Hold <kbd>Alt</kbd> to flip the corner lock for a single click, so a square job can take '
+     + 'one free angle and a free-form job one square corner without changing any setting. '
+     + 'Alt over a run you have already traced tees into it exactly where the cursor is &mdash; '
+     + 'or use the Tee tool to do the same thing without holding anything. '
+     + '<kbd>Ctrl</kbd>+<kbd>Z</kbd>, or Undo in the bar, steps back.'],
     ['Drop the valves on', tick(done.valves),
-     'Pick the Valves tool, choose a valve or a whole set &mdash; a terminal set is five items in one '
-     + 'click &mdash; and click the run it goes on. It snaps to the pipe and the choice stays armed, so '
-     + 'a line of isolating valves is a line of clicks. Everything placed is tagged, scheduled, counted '
-     + 'into the run loss at the run’s own size and carried across to the sizer. Put real valves on a '
-     + 'run and the assumed terminal set on it stops, so nothing is counted twice.'],
+     'A run traced to a load <strong>fits its own terminal set</strong>, matched to that load’s '
+     + 'control valve, standing off the coil and in the usual order. For anything else, pick the '
+     + 'Valves tool, choose a valve or a set, and click the run it goes on: it snaps to the pipe '
+     + 'and the choice stays armed, so a line of isolating valves is a line of clicks. Everything '
+     + 'placed is tagged, scheduled and counted into the run loss. Valves default to a typical '
+     + 'resistance in kPa &mdash; type the supplier’s figure over it once you have one. '
+     + '<strong>Zoom in</strong> to see a set properly: past about 2&times; the symbols draw at '
+     + 'their real size and spread out with the drawing.'],
     ['Check it', tick(false),
      'Check looks for the things that break the sizer: a tee sitting on top of a load rather than '
      + 'joined to it, a main split in two for no reason, a run stopping in mid air. Tidy repairs '
@@ -3858,7 +4301,36 @@ function projectDialog() {
     +   '<input type="checkbox" id="pSnap" ' + (s.snapPoints !== false ? 'checked' : '')
     +   ' style="width:17px;height:17px;min-height:0"><span style="margin:0;text-transform:none;letter-spacing:0;font-size:12.5px;color:var(--ink)">'
     +   'Branch only at components, tees and corners. A click along a run is pulled to its '
-    +   'nearest point rather than cutting a tee where the cursor happened to be.</span></label>'
+    +   'nearest point rather than cutting a tee where the cursor happened to be. '
+    +   'Hold <kbd>Alt</kbd> to override it for one click, or use the Tee tool.</span></label>'
+
+    + '<div style="font-family:Azeret Mono,monospace;font-size:9px;letter-spacing:.13em;'
+    +   'text-transform:uppercase;color:var(--muted);margin:14px 0 6px">Valves</div>'
+    + '<label class="fld" style="display:flex;align-items:center;gap:9px">'
+    +   '<input type="checkbox" id="pAutoSet" ' + (s.autoTermSet !== false ? 'checked' : '')
+    +   ' style="width:17px;height:17px;min-height:0"><span style="margin:0;text-transform:none;letter-spacing:0;font-size:12.5px;color:var(--ink)">'
+    +   'Fit the terminal set when a run reaches a load, matched to that load&rsquo;s control '
+    +   'valve and in the usual order. Everything it places can be moved, re-typed or deleted.</span></label>'
+    + '<label class="fld"><span>Valve pressure basis <em>what a placed valve costs</em></span>'
+    +   '<select id="pVBasis">'
+    +   '<option value="typ"' + (s.valveBasis !== 'k' ? ' selected' : '') + '>'
+    +     'Typical resistance in kPa &mdash; the figure a supplier quotes</option>'
+    +   '<option value="k"' + (s.valveBasis === 'k' ? ' selected' : '') + '>'
+    +     'K &times; &rho;v&sup2;/2 at the size the run settles on</option></select></label>'
+    + '<div class="note">Typical figures read like a real schedule and are what most people '
+    +   'expect, but only the K basis crosses to the sizer inside a circuit&rsquo;s counted '
+    +   'fittings. On typical figures, valves on a <strong>distribution</strong> run are '
+    +   'reported rather than carried &mdash; the export dialog gives the number. Either way '
+    +   'each valve can be overridden on its own once a product is picked.</div>'
+    + '<div class="row2">'
+    + '<label class="fld"><span>Set spacing <em>m</em></span>'
+    +   '<input type="number" id="pSetSp" step="0.05" min="0.05" value="' + s.setSpacingM + '"></label>'
+    + '<label class="fld"><span>Set stands off <em>m</em></span>'
+    +   '<input type="number" id="pSetOff" step="0.1" min="0" value="' + s.setOffsetM + '"></label>'
+    + '</div>'
+    + '<button class="btn ghost sm" id="pFitAll" style="margin-bottom:4px">'
+    +   'Fit terminal sets on every load that has none</button>'
+
     + '<hr style="border:none;border-top:1px solid var(--rule);margin:14px 0">'
     + '<label class="fld"><span>Project reference</span><input id="pRef" value="' + esc(S.ref) + '"></label>'
     + '<label class="fld"><span>Engineer</span><input id="pEng" value="' + esc(S.engineer) + '"></label>'
@@ -3896,6 +4368,15 @@ function projectDialog() {
       (ROUGHNESS_PRESETS[cond] && ROUGHNESS_PRESETS[cond][el('pMat').value]) || 0.000046;
   });
 
+  el('pFitAll').addEventListener('click', () => {
+    S.settings.setSpacingM = Math.max(0.05, parseFloat(el('pSetSp').value) || 0.6);
+    S.settings.setOffsetM = Math.max(0, parseFloat(el('pSetOff').value) || 0.6);
+    const r = fitAllTerminalSets();
+    closeModal(true);
+    toast(r.runs ? r.items + ' valves fitted on ' + r.runs + ' branch' + (r.runs === 1 ? '' : 'es')
+                 : 'Every load already has its valves');
+  });
+
   el('pOk').addEventListener('click', () => {
     S.ref = el('pRef').value; S.engineer = el('pEng').value;
     s.supply = parseFloat(el('pSup').value) || 80;
@@ -3909,6 +4390,10 @@ function projectDialog() {
     s.bendType = el('pBend').value;
     s.termValves = el('pTerm').checked;
     s.snapPoints = el('pSnap').checked;
+    s.autoTermSet = el('pAutoSet').checked;
+    s.valveBasis = el('pVBasis').value;
+    s.setSpacingM = Math.max(0.05, parseFloat(el('pSetSp').value) || 0.6);
+    s.setOffsetM = Math.max(0, parseFloat(el('pSetOff').value) || 0.6);
     s.limitPd = parseFloat(el('pLim').value) || 300;
     s.vMin = parseFloat(el('pVn').value) || 0.3;
     s.vMax = parseFloat(el('pVx').value) || 3.0;
@@ -4327,6 +4812,7 @@ const sc = el('scroller');
 
 sc.addEventListener('pointerdown', ev => {
   if (!S.img) return;
+  setOverride(ev.altKey);
   const p = toDwg(ev);
 
   if (tool === 'pan' || ev.button === 1 || ev.shiftKey) {
@@ -4356,6 +4842,20 @@ sc.addEventListener('pointerdown', ev => {
     const h = hitSeg(p);
     if (h) { select('seg', h.seg.id); return; }
     sel = null; closeInspector();
+    return;
+  }
+
+  if (tool === 'tee') {
+    const h = hitSeg(p, VALVE_SNAP_PX);
+    if (!h) { toast('Click along a run to cut a tee into it'); return; }
+    pushUndo('cut a tee');
+    undoSuspended = true;
+    const j = splitSegment(h.seg, h.r);
+    undoSuspended = false; refreshUndoBtn();
+    if (S.settings.autoName !== false) autoNameRuns(true);
+    select('node', j.id);
+    render();
+    toast('Tee cut into ' + (h.seg.ref || 'the run') + ' — trace a branch off it');
     return;
   }
 
@@ -4442,7 +4942,10 @@ sc.addEventListener('pointermove', ev => {
   }
   // the trace and valve tools show what a click would do, so they track the
   // cursor whether or not anything is under way
-  if (draft || tool === 'trace' || tool === 'valve') { hoverPt = toDwg(ev); render(); }
+  if (draft || tool === 'trace' || tool === 'valve' || tool === 'tee') {
+    setOverride(ev.altKey);
+    hoverPt = toDwg(ev); render();
+  }
 });
 
 function endPointer(ev) {
@@ -4495,6 +4998,8 @@ document.addEventListener('keydown', ev => {
     if (k === '0') { fit3D(); draw3D(); return; }
     return;
   }
+
+  if ((ev.ctrlKey || ev.metaKey) && k === 'z') { ev.preventDefault(); undo(); return; }
 
   if (ev.key === 'Escape') {
     if (el('modal').classList.contains('on')) { closeModal(); return; }
@@ -4572,6 +5077,7 @@ el('bName').addEventListener('click', () => {
   if (S.items.length) { retagValves(); render(); toast('Runs named and ' + S.items.length + ' valves renumbered'); }
 });
 
+el('bUndo').addEventListener('click', undo);
 el('vpalDone').addEventListener('click', () => setTool('select'));
 el('vpalTags').addEventListener('change', e => {
   S.settings.valveTags = e.target.checked;
@@ -4631,6 +5137,10 @@ document.addEventListener('drop', e => {
     r.readAsText(f);
   } else loadDrawingFile(f);
 });
+
+window.addEventListener('keydown', e => { if (e.key === 'Alt') setOverride(true); });
+window.addEventListener('keyup',   e => { if (e.key === 'Alt') setOverride(false); });
+window.addEventListener('blur',    () => setOverride(false));
 
 window.addEventListener('resize', () => {
   if (S.img) render();
