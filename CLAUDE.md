@@ -56,6 +56,22 @@ Break any of these and the tools stop agreeing with each other.
 - Laminar `f = 64/Re` below Re 2300
 - Default limit **300 Pa/m**, velocity **0.3–3.0 m/s**
 
+### What a corner costs
+
+Pipe Trace prices each corner on the angle it actually turns through, within
+±7.5°:
+
+| Deflection | Counted as |
+|---|---|
+| ≈ 90° | 1 × the configured 90° fitting (`bendType`) |
+| ≈ 45° | 1 × `elbow45` |
+| anything else | **2 × `elbow45`** — a made set |
+
+An odd angle cannot be bought as one fitting, so it is fabricated from two.
+Counting every corner as a single elbow, which is what it did before,
+under-counted every angled run on the drawing. `cornerAngles()` and
+`cornerFitting()` are the whole of it.
+
 ### Roughness (m) — identical tables in the sizer and Pipe Trace
 
 | Condition | Carbon | Stainless / Tru-Bore | Copper |
@@ -121,7 +137,37 @@ kPa** instead (`kpa` in `VALVE_LIB` rather than `fit`), overridable per valve
 once a product is selected. Placeholders, all flagged as assumptions:
 PICV 25, 2-port 20, 3-port 20, DPCV 15 kPa.
 
-They reach the sizer by a different route from everything else:
+### How a placed valve is costed — and why it decides what crosses
+
+Every placed item that is *not* one of those four carries a **basis**:
+
+- **`typ`** — a typical resistance in kPa from `VALVE_LIB[].typ`, overridable
+  per valve in the inspector. **This is the default**, because it is the figure
+  a supplier quotes and the one that reads right on a schedule; the K model
+  gives a clean-and-new number that looks low against a real quotation.
+- **`k`** — `K · ρv²/2` at the run's own size and velocity, so it moves with
+  the pipe.
+
+The project default is `S.settings.valveBasis`; an item can override it.
+
+**The basis decides the route to the sizer, and that is the whole trade-off:**
+
+| Basis | Where it ends up |
+|---|---|
+| `k` | the circuit's `fittingSchedule` — follows the size the sizer picks, reconciles exactly |
+| `typ`/fixed, at a terminal | that circuit's `consumerLoad` — reconciles exactly |
+| `typ`/fixed, on a distribution run | **reported only** — see below |
+
+There is no per-circuit field on a main that can hold a fixed kPa.
+`consumerLoad > 0` makes the sizer reclassify the circuit as a consumer
+(`index.html`, `c.circuitType = ... consumerLoad > 0 ? 'consumer' : 'main'`)
+and trips the index-run duplicate-load validation. So on the default basis a
+valve on a main is in Pipe Trace's own figures and in `traceMeta`, and the
+export dialog gives the number and says to add it to pump head by hand.
+Switching the project to the K basis makes everything cross and the two tools
+agree to the penny.
+
+The four differential valves reach the sizer by a different route again:
 
 - **On a run that ends at a load** they are added to that circuit's
   `consumerLoad`, which already means "the terminal's own pressure
@@ -170,6 +216,7 @@ Flagged in the tools as assumptions. Replace when the figures arrive.
 | Valve Kv and PICV range | Generic | Selected products |
 | PICV / control valve differential | PICV 25, 2-port 20, 3-port 20, DPCV 15 kPa | Selected products, per valve |
 | K for wafer check, basket strainer, dirt separator, flow station, flexible | See section 2, marked *assumed* | Supplier data |
+| Typical valve resistances (`VALVE_LIB[].typ`) | Ball/gate 0.5 · butterfly 3 · globe 15 · DRV 12 · comm set 15 · flow station 8 · Y-strainer 8 · basket 10 · swing check 5 · wafer check 4 · dirt separator 12 · flexible 1 kPa | Quoted figures at design flow. These are the **default** basis, so they set the numbers on every schedule until replaced |
 
 ---
 
@@ -227,6 +274,36 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   load; `X1` anything not connected. A main or sub-main cut by a tee is
   numbered in sections from the plant — `M1.1, M1.2`. A run in one piece keeps
   its plain number.
+- **Undo is snapshots of the take-off only** — nodes, runs and placed valves.
+  Not the drawing, the scale or the settings: a snapshot carrying the image
+  would be megabytes, and undo is for what you drew, not the sheet behind it.
+  `pushUndo(label)` goes *before* the change; `asOneUndo()` and the
+  `undoSuspended` flag group several edits that are really one action, so
+  tracing a run and the terminal set it fits are a single step back.
+- **Alt is the override key, and it means one thing: ignore the constraint in
+  the way.** Over open paper it flips the corner lock, so a square job takes
+  one free angle and a free-form job one square corner without changing a
+  setting — that is what makes the two mix. Over a run already traced it cuts
+  a tee exactly where the cursor is rather than being pulled to the nearest
+  corner. The hint bar turns amber while it is held. The Tee tool does the
+  same cut without holding anything.
+- **Two things become real size when you zoom in**, and both have to, or a
+  valve set stays unreadable no matter how far you go in: the symbols
+  (`valveDrawScale()`, true size 0.30 m) and the gap between the flow and
+  return legs (`pairOffsetDraw()`, 0.35 m). Each is `max(constant-on-screen,
+  real)` — so a whole-floor view keeps them visible, and past roughly 2× they
+  lock to life size and spread with the drawing. Change one without the other
+  and the symbols grow into each other.
+- **Both legs of a set start at the same chainage and step together**, so the
+  isolating valves face each other across the pair and the strainer faces the
+  regulating valve. Staggering the legs put one leg's symbols in the other's
+  gaps, which is exactly where they overlap when you zoom in to read them.
+- **A run traced to a load fits its own terminal set**, matched to the load's
+  control arrangement via `setForValveType()`, standing `setOffsetM` off the
+  coil at `setSpacingM` centres — both real metres, not screen pixels, which
+  is what makes zoom work. `VALVE_SETS[].items` are listed **in the order they
+  are met walking down the run**, away from plant; get that order wrong and
+  the automatic fit comes out back to front.
 - **Valves go on a run, never near one.** A placed item stores the run it sits
   on and a **fraction of that run's length**, not a point, so it stays put when
   a node is dragged or a corner is added. Splitting, promoting a corner and
@@ -352,10 +429,18 @@ viscosity note in section 2.
    `proj.circuits.flatMap(c=>Object.keys(c.fittingSchedule||{})).filter(k=>!FITTING_TYPES[k])`
    must be empty. A key listed there is counted in Pipe Trace and worth zero in
    the sizer.
-9. **Reconcile one circuit by hand.** A terminal run's `dropKpa` in Pipe Trace
-   should equal the sizer's `pipeLoss_kPa` **plus** the control-valve kPa that
-   moved into `consumerLoad`. On the worked example above: trace 26.69 =
-   sizer 6.69 + 20, and both tools total 41.69 kPa for that circuit.
+9. **Reconcile one circuit by hand.** A terminal circuit must agree exactly on
+   both bases: Pipe Trace's `dropKpa + coilKpa` for the run equals the sizer's
+   `pipeLoss_kPa + consumerLoad`. On the worked example, default basis:
+   trace 46.76 + 15 = sizer 5.76 + 56 = **61.76 kPa**.
+10. **Check the gap on a main is only what it should be.** With any valve on a
+    main on the default basis, Pipe Trace's `dropKpa` is ahead of the sizer's
+    `pipeLoss_kPa` by exactly `traceMeta.valveKpaOnMains`, and the export
+    dialog quotes that figure. Set `valveBasis` to `k`, re-export, and the two
+    should then match to the penny with nothing stranded.
+11. **Trace a run with an odd-angle corner** and confirm the run inspector
+    says "counted as a set of two elbows" and the fitting list shows 2 ×
+    45° elbow for it.
 
 ---
 
