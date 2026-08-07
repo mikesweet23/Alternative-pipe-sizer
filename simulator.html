@@ -372,12 +372,15 @@
   .msg.info { background: #f0fdfa; border-color: var(--accent); }
   .msg.warn { background: #fffbeb; border-color: var(--warn); }
   .msg.bad  { background: #fef2f2; border-color: var(--alarm); }
+  .msg.ok   { background: #f0fdf4; border-color: var(--live); }
   .msg strong { font-weight: 600; }
 
   .empty { text-align: center; padding: 48px 20px; color: var(--muted); }
   .empty h3 { font-size: 16px; font-weight: 600; color: var(--ink); margin: 0 0 6px; }
 
   .split { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+  .under-diagram { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .under-diagram { grid-template-columns: minmax(0, 1fr); } }
   @media (max-width: 1100px) { .split { grid-template-columns: minmax(0, 1fr); } }
 
   @media (max-width: 640px) {
@@ -413,13 +416,14 @@
     .steps { order: -1; }
     .readout { order: 0; }
     .p-diagram { order: 1; }
+    .under-diagram { display: contents; }
     .p-cons    { order: 2; }
-    .p-pump    { order: 3; }
-    .p-select  { order: 4; }
-    .p-branch  { order: 5; }
-    .p-sweep  { order: 6; }
-    .p-diag  { order: 7; }
-    .p-mains  { order: 8; }
+    .p-pump    { order: 4; }
+    .p-select  { order: 5; }
+    .p-branch  { order: 6; }
+    .p-sweep  { order: 7; }
+    .p-diag  { order: 8; }
+    .p-mains  { order: 3; }
     .p-assum  { order: 9; }
     #emptyState { order: 0; }
   }
@@ -549,6 +553,44 @@
       </div>
     </div>
 
+    <!-- The two things you actually touch while watching the diagram sit
+         directly under it, so a consumer can be shut and the effect seen
+         without scrolling the page. -->
+    <div class="under-diagram">
+        <div class="panel p-cons">
+          <div class="panel-hd">
+            <h2>Consumers</h2>
+            <span class="note" id="consumerCount"></span>
+          </div>
+          <div class="panel-bd">
+            <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
+              <button id="btnAllOn" style="flex:1">All on</button>
+              <button id="btnAllOff" style="flex:1">All off</button>
+              <button class="primary" id="btnBalance" style="flex:1 1 100%">Calculate balancing</button>
+              <button id="btnClearBal" style="flex:1 1 100%">Clear balancing</button>
+            </div>
+            <div class="clist" id="consumerList"></div>
+          </div>
+        </div>
+
+        <div class="panel p-mains">
+          <div class="panel-hd">
+            <h2>Bypasses</h2>
+            <span class="note">end-of-line, on mains or consumers</span>
+          </div>
+          <div class="panel-bd">
+            <p style="font-size:11.5px;color:var(--muted);margin:0 0 10px;line-height:1.55">
+              A bypass across the ends of a line keeps water moving when the two-port valves shut.
+              Set to <strong>Only as consumers shut</strong> it behaves like a differential-pressure or
+              minimum-flow valve &mdash; closed while the consumers are drawing, opening just enough to
+              hold the set flow as they close. Leave the flow blank for 10% of that line's design flow.
+            </p>
+            <div class="clist" id="mainsList"></div>
+          </div>
+        </div>
+
+    </div>
+
     <div class="split">
       <div>
 
@@ -595,7 +637,7 @@
         <div class="panel p-pump">
           <div class="panel-hd">
             <h2>Pump</h2>
-            <span class="note">generic curve</span>
+            <span class="note" id="pumpNote">generic curve</span>
           </div>
           <div class="panel-bd">
             <div id="pumpChart" style="margin-bottom:12px"></div>
@@ -625,8 +667,38 @@
                   <option value="proportional">Proportional pressure</option>
                 </select></label>
               <label class="fld"><span>Setpoint <span class="u">% of design head</span></span>
-                <input type="number" id="pSet" step="5" min="20" max="150" value="100"></label>
+                <input type="number" id="pSet" step="5" min="20" max="150" value="85"
+                       title="Below the design point on purpose. Sitting the setpoint at 100% leaves the pump with nothing in hand — it is already at full speed at design flow, so there is no head left to give when a branch opens."></label>
             </div>
+            <details style="margin-top:12px">
+              <summary style="cursor:pointer;font-size:12px;font-weight:600">Use a real pump curve</summary>
+              <p style="font-size:11.5px;color:var(--muted);line-height:1.55;margin:8px 0">
+                Take the duty below to a manufacturer&rsquo;s selection, then paste the published
+                curve back here &mdash; one <em>flow, head</em> pair per line, from shut-off down to
+                run-out. Everything on this page then solves against the real machine instead of
+                the generic parabola.
+              </p>
+              <div class="grid g2">
+                <label class="fld"><span>Flow in</span>
+                  <select id="pcQUnit">
+                    <option value="ls" selected>l/s</option>
+                    <option value="m3h">m&sup3;/h</option>
+                  </select></label>
+                <label class="fld"><span>Head in</span>
+                  <select id="pcHUnit">
+                    <option value="kpa" selected>kPa</option>
+                    <option value="m">m</option>
+                  </select></label>
+              </div>
+              <textarea id="pCurve" rows="6" placeholder="0, 420&#10;2, 405&#10;4, 380&#10;6, 340&#10;8, 285&#10;10, 210"
+                style="width:100%;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:8px;
+                       border:1px solid var(--line-2);border-radius:4px;resize:vertical"></textarea>
+              <div style="display:flex;gap:8px;margin-top:8px">
+                <button class="primary" id="btnCurveApply" style="flex:1">Use this curve</button>
+                <button id="btnCurveClear" style="flex:1">Back to generic</button>
+              </div>
+              <div id="curveMsg" style="margin-top:8px"></div>
+            </details>
             <p style="font-size:11px;color:var(--muted);line-height:1.55;margin:10px 0 0">
               Centrifugal pumps run best around <strong>80% of rated flow</strong> and should not sit below
               roughly <strong>25%</strong>. For an equally split pair, stage the assist in near
@@ -649,38 +721,6 @@
               Set the consumers you want running and the arrangement above, then size the pump against it.
               The Design flow and head fields stay editable, so you can enter what you can actually source
               and see how the system behaves on it.</div></div>
-          </div>
-        </div>
-
-        <div class="panel p-cons">
-          <div class="panel-hd">
-            <h2>Consumers</h2>
-            <span class="note" id="consumerCount"></span>
-          </div>
-          <div class="panel-bd">
-            <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
-              <button id="btnAllOn" style="flex:1">All on</button>
-              <button id="btnAllOff" style="flex:1">All off</button>
-              <button class="primary" id="btnBalance" style="flex:1 1 100%">Calculate balancing</button>
-              <button id="btnClearBal" style="flex:1 1 100%">Clear balancing</button>
-            </div>
-            <div class="clist" id="consumerList"></div>
-          </div>
-        </div>
-
-        <div class="panel p-mains">
-          <div class="panel-hd">
-            <h2>Bypasses</h2>
-            <span class="note">end-of-line, on mains or consumers</span>
-          </div>
-          <div class="panel-bd">
-            <p style="font-size:11.5px;color:var(--muted);margin:0 0 10px;line-height:1.55">
-              A bypass across the ends of a line keeps water moving when the two-port valves shut.
-              Set to <strong>Only as consumers shut</strong> it behaves like a differential-pressure or
-              minimum-flow valve &mdash; closed while the consumers are drawing, opening just enough to
-              hold the set flow as they close. Leave the flow blank for 10% of that line's design flow.
-            </p>
-            <div class="clist" id="mainsList"></div>
           </div>
         </div>
 
@@ -1088,6 +1128,99 @@ function pumpConfig() {
   return PUMP_CONFIGS[(el('pConfig') || {}).value] || PUMP_CONFIGS.duty;
 }
 
+/* ==========================================================================
+   A REAL PUMP CURVE
+   The generic parabola is a planning figure. Once a machine has been selected
+   the published curve is available, and pasting it in makes every number on
+   this page belong to that pump rather than to an idealised one. Points are
+   held per pump, at full speed; the affinity laws take care of the rest, the
+   same as they do for the parabola.
+   ========================================================================== */
+let PUMP_CURVE = null;        // [{ q, h }] per pump, l/s and kPa, ascending q
+
+function parsePumpCurve(text, qUnit, hUnit) {
+  const qk = qUnit === 'm3h' ? 1 / 3.6 : 1;          // m3/h -> l/s
+  const hk = hUnit === 'm' ? 9.80665 : 1;            // m head -> kPa (fresh water)
+  const pts = [];
+  String(text || '').split(/[\n;]+/).forEach(line => {
+    const m = line.trim().match(/^(-?[\d.]+)\s*[,\t ]\s*(-?[\d.]+)$/);
+    if (!m) return;
+    const q = parseFloat(m[1]) * qk, h = parseFloat(m[2]) * hk;
+    if (isFinite(q) && isFinite(h) && q >= 0 && h >= 0) pts.push({ q, h });
+  });
+  pts.sort((a, b) => a.q - b.q);
+  // one point per flow, and head must fall as flow rises or it is not a curve
+  const out = [];
+  pts.forEach(pt => { if (!out.length || pt.q > out[out.length - 1].q + 1e-9) out.push(pt); });
+  return out;
+}
+function curveHeadAt(pts, q) {
+  if (!pts || !pts.length) return 0;
+  if (q <= pts[0].q) return pts[0].h;
+  const last = pts[pts.length - 1];
+  if (q >= last.q) {
+    // past run-out, carry the final slope down rather than going flat
+    if (pts.length < 2) return Math.max(0, last.h);
+    const a = pts[pts.length - 2];
+    const m = (last.h - a.h) / Math.max(1e-9, last.q - a.q);
+    return Math.max(0, last.h + m * (q - last.q));
+  }
+  for (let i = 1; i < pts.length; i++) {
+    if (q <= pts[i].q) {
+      const a = pts[i - 1], b = pts[i];
+      const t = (q - a.q) / Math.max(1e-9, b.q - a.q);
+      return a.h + t * (b.h - a.h);
+    }
+  }
+  return 0;
+}
+/* Flow at which a curve reaches a given head — used to say where the duty
+   point sits as a fraction of the pump's run-out. */
+function curveFlowAtHead(pts, h) {
+  if (!pts || pts.length < 2) return 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    if ((a.h >= h && b.h <= h) || (a.h <= h && b.h >= h)) {
+      const t = (a.h - h) / Math.max(1e-9, a.h - b.h);
+      return a.q + t * (b.q - a.q);
+    }
+  }
+  return pts[pts.length - 1].q;
+}
+function curveRunOut(pts) { return curveFlowAtHead(pts, 0) || (pts[pts.length - 1] || {}).q || 0; }
+
+function applyPumpCurve() {
+  const pts = parsePumpCurve(el('pCurve').value, el('pcQUnit').value, el('pcHUnit').value);
+  const box = el('curveMsg');
+  if (pts.length < 3) {
+    PUMP_CURVE = null;
+    box.innerHTML = '<div class="msg warn">Needs at least three <em>flow, head</em> pairs, '
+      + 'one per line. Shut-off first, run-out last.</div>';
+    return;
+  }
+  if (pts[0].h <= pts[pts.length - 1].h) {
+    PUMP_CURVE = null;
+    box.innerHTML = '<div class="msg warn">Head has to fall as flow rises. Check the columns '
+      + 'are the right way round.</div>';
+    return;
+  }
+  PUMP_CURVE = pts;
+  const last = pts[pts.length - 1];
+  box.innerHTML = '<div class="msg ok">Using a real curve: ' + pts.length + ' points, shut-off '
+    + fmt(pts[0].h, 0) + ' kPa, ending at ' + fmt(last.q, 2) + ' l/s / ' + fmt(last.h, 0)
+    + ' kPa per pump.'
+    + (last.h > 1 ? ' Past that point the final slope is carried on, so paste the curve as far '
+        + 'as the published one goes.' : '') + '</div>';
+  el('pumpNote').textContent = 'real curve';
+  refresh();
+}
+function clearPumpCurve() {
+  PUMP_CURVE = null;
+  el('curveMsg').innerHTML = '';
+  el('pumpNote').textContent = 'generic curve';
+  refresh();
+}
+
 function pumpCurve(runOverride) {
   const Qd = Math.max(0.01, parseFloat(el('pQ').value) || 1);
   const Hd = Math.max(1, parseFloat(el('pH').value) || 100);
@@ -1096,7 +1229,7 @@ function pumpCurve(runOverride) {
   const nPumps = runOverride || 1;
   const mode = (el('pMode') || {}).value || 'fixed';
   const setPct = clamp(parseFloat((el('pSet') || {}).value) || 100, 20, 150) / 100;
-  const H0 = Hd * shutPct;
+  const H0 = PUMP_CURVE ? PUMP_CURVE[0].h : Hd * shutPct;
   // Each pump is rated for its share of the duty: a duty/standby pair are both
   // full-duty machines, whereas a duty/assist pair are each about half. That
   // rating sets the curve steepness, so two assist pumps together land on the
@@ -1104,9 +1237,12 @@ function pumpCurve(runOverride) {
   const qRated = Qd / cfg.maxRun;
   const k = (H0 - Hd) / (qRated * qRated);
   const Hset = Hd * setPct;
-  return { H0, k, nPumps, Qd, Hd, mode, Hset, cfg, qRated,
-    // full-speed curve
-    head: Q => H0 - k * Math.pow(Q / nPumps, 2),
+  return { H0, k, nPumps, Qd, Hd, mode, Hset, cfg, qRated, real: !!PUMP_CURVE,
+    // full-speed curve: the published points when there are any, else the
+    // parabola through shut-off and the duty point
+    head: Q => PUMP_CURVE
+      ? curveHeadAt(PUMP_CURVE, Q / nPumps)
+      : H0 - k * Math.pow(Q / nPumps, 2),
     // what the control is asking for at a given flow
     setpoint: Q => mode === 'constant' ? Hset
                  : mode === 'proportional' ? (Hset * 0.5 + Hset * 0.5 * Math.min(Q / Qd, 1.6))
@@ -1116,9 +1252,22 @@ function pumpCurve(runOverride) {
 /* Speed ratio needed to sit at (Q,H), from the affinity laws.
    Scaled curve is H = s^2*H0 - k*Q^2, so s = sqrt((H + kQ^2)/H0). */
 function speedRatio(pump, Q, H) {
-  const qe = Q / pump.nPumps;
-  const s = Math.sqrt(Math.max(0, (H + pump.k * qe * qe) / pump.H0));
-  return s;
+  if (!pump.real) {
+    const qe = Q / pump.nPumps;
+    return Math.sqrt(Math.max(0, (H + pump.k * qe * qe) / pump.H0));
+  }
+  /* A published curve has no closed form, so the speed is found by bisection
+     on the affinity laws: at ratio s the curve passes through
+     (s*q, s^2*h), so the head it makes at Q is s^2 * h(Q/s). */
+  const f = sp => sp * sp * curveHeadAt(PUMP_CURVE, Q / Math.max(1e-6, sp) / pump.nPumps) - H;
+  let lo = 0.02, hi = 1.5;
+  if (f(hi) < 0) return hi;                  // cannot reach it even at full tilt
+  if (f(lo) > 0) return lo;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (f(mid) >= 0) hi = mid; else lo = mid;
+  }
+  return (lo + hi) / 2;
 }
 
 /* ---------- proportional balancing ----------
@@ -1411,7 +1560,10 @@ function fmt(v, d) { return (isFinite(v) ? v : 0).toFixed(d === undefined ? 1 : 
    dropping between them. Sub-mains get their own rail pair one tier down.
    Line weight tracks solved flow, so shutting valves visibly thins the mains.
    ========================================================================== */
-const GEO = { rail: 26, drop: 46, coilH: 46, tier: 184, slot: 138, pad: 30, plantW: 96, top: 52 };
+/* Tighter than it reads on paper on purpose: the point of this diagram is to
+   watch the whole network react at once, so fitting more on screen beats
+   drawing any one branch large. Zoom is there for the detail. */
+const GEO = { rail: 20, drop: 32, coilH: 34, tier: 126, slot: 96, pad: 22, plantW: 74, top: 40 };
 
 function layoutSpine(n, x, y, state) {
   n._x0 = x; n._y = y;
@@ -1458,7 +1610,7 @@ function weightFor(flow, maxFlow) {
 
 function valveSymbol(x, y, type, open) {
   const c = open ? '#6ee7b7' : '#8fa6b5';
-  const w = 7;
+  const w = 5.5;
   if (type === 'picv') {
     return svgEl('rect', { x: x - w, y: y - w, width: w * 2, height: w * 2, rx: 2,
       fill: '#16212b', stroke: c, 'stroke-width': 1.6 })
@@ -1496,7 +1648,14 @@ function zoomToFit() {
   const vp = el('viewport'), svg = vp && vp.querySelector('svg');
   if (!svg) return;
   const w = parseFloat(svg.getAttribute('width')) || 1;
-  setZoom((vp.clientWidth - 24) / w);
+  const h = parseFloat(svg.getAttribute('height')) || 1;
+  /* Fit shrinks to suit, it does not blow up. Scaling a small network past
+     life size would undo the point of drawing it tightly — the space is there
+     so a big one fits, not so a small one fills the screen. Height counts as
+     well as width, or "fit" leaves half the branches below the fold. */
+  const byW = (vp.clientWidth - 24) / w;
+  const byH = (vp.clientHeight - 16) / h;
+  setZoom(Math.min(1, byW, byH));
 }
 
 function initViewportControls() {
@@ -1570,14 +1729,14 @@ function renderDiagram() {
   plant += svgEl('text', { x: 16 + GEO.plantW / 2, y: GEO.top + 14, 'text-anchor': 'middle',
     'font-size': 11, 'font-weight': 700, 'font-family': 'IBM Plex Sans, sans-serif',
     fill: pumpOn ? '#6ee7b7' : '#8fa6b5', 'letter-spacing': '0.08em' }, 'PLANT');
-  plant += svgEl('circle', { cx: 16 + GEO.plantW / 2, cy: GEO.top + 44, r: 15,
+  plant += svgEl('circle', { cx: 16 + GEO.plantW / 2, cy: GEO.top + 40, r: 13,
     fill: 'none', stroke: pumpOn ? '#6ee7b7' : '#8fa6b5', 'stroke-width': 1.8 });
-  plant += svgEl('path', { d: `M${16 + GEO.plantW/2 - 6} ${GEO.top + 38} L${16 + GEO.plantW/2 + 7} ${GEO.top + 44} L${16 + GEO.plantW/2 - 6} ${GEO.top + 50} Z`,
+  plant += svgEl('path', { d: `M${16 + GEO.plantW/2 - 5} ${GEO.top + 35} L${16 + GEO.plantW/2 + 6} ${GEO.top + 40} L${16 + GEO.plantW/2 - 5} ${GEO.top + 45} Z`,
     fill: pumpOn ? '#6ee7b7' : '#8fa6b5' });
-  plant += svgEl('text', { x: 16 + GEO.plantW / 2, y: GEO.top + 76, 'text-anchor': 'middle',
+  plant += svgEl('text', { x: 16 + GEO.plantW / 2, y: GEO.top + 66, 'text-anchor': 'middle',
     'font-size': 10.5, 'font-family': 'IBM Plex Mono, monospace', fill: '#cfe0e8' },
     fmt(SOLUTION.Q, 2) + ' l/s');
-  plant += svgEl('text', { x: 16 + GEO.plantW / 2, y: GEO.top + 91, 'text-anchor': 'middle',
+  plant += svgEl('text', { x: 16 + GEO.plantW / 2, y: GEO.top + 79, 'text-anchor': 'middle',
     'font-size': 10.5, 'font-family': 'IBM Plex Mono, monospace', fill: '#cfe0e8' },
     fmt(SOLUTION.pumpHead, 0) + ' kPa');
 
@@ -1647,23 +1806,23 @@ function renderDiagram() {
     const w = weightFor(n.flow, maxFlow);
     const dash = flowing ? '' : '6 5';
     const coilTop = y + GEO.rail + GEO.drop;
-    const boxW = GEO.slot - 34;
+    const boxW = GEO.slot - 22;
 
-    drops += svgEl('path', { d: `M${x - 15} ${y} V${coilTop + 8}`,
+    drops += svgEl('path', { d: `M${x - 11} ${y} V${coilTop + 8}`,
       stroke: flowing ? '#c0392b' : '#4a5b68', 'stroke-width': w, fill: 'none', 'stroke-dasharray': dash });
-    drops += svgEl('path', { d: `M${x + 15} ${coilTop + 8} V${y + GEO.rail}`,
+    drops += svgEl('path', { d: `M${x + 11} ${coilTop + 8} V${y + GEO.rail}`,
       stroke: flowing ? '#2471a3' : '#4a5b68', 'stroke-width': w, fill: 'none', 'stroke-dasharray': dash });
 
     // valve on the return leg
-    drops += valveSymbol(x + 15, y + GEO.rail + 20, n.arrangement, n.open);
+    drops += valveSymbol(x + 11, y + GEO.rail + 15, n.arrangement, n.open);
 
     // bypass link for arrangements that keep flowing when shut
     const arr = ARRANGEMENTS[n.arrangement];
     if (arr && arr.bypass) {
-      drops += svgEl('path', { d: `M${x - 15} ${y + GEO.rail + 34} H${x + 15}`,
+      drops += svgEl('path', { d: `M${x - 11} ${y + GEO.rail + 25} H${x + 11}`,
         stroke: n.open ? '#4a5b68' : '#6ee7b7', 'stroke-width': n.open ? 1.3 : w,
         fill: 'none', 'stroke-dasharray': n.open ? '4 4' : '' });
-      drops += svgEl('circle', { cx: x, cy: y + GEO.rail + 34, r: 3.5, fill: 'none',
+      drops += svgEl('circle', { cx: x, cy: y + GEO.rail + 25, r: 3, fill: 'none',
         stroke: n.open ? '#4a5b68' : '#6ee7b7', 'stroke-width': 1.4 });
     }
 
@@ -1672,13 +1831,13 @@ function renderDiagram() {
     drops += svgEl('rect', { x: x - boxW / 2, y: coilTop, width: boxW, height: GEO.coilH, rx: 4,
       fill: n.open ? '#1e2f3a' : '#161f27',
       stroke: !n.open ? '#4a5b68' : (bad ? '#d97706' : '#6ee7b7'), 'stroke-width': 1.5 });
-    drops += svgEl('text', { x: x, y: coilTop + 17, 'text-anchor': 'middle', 'font-size': 10.5,
+    drops += svgEl('text', { x: x, y: coilTop + 13, 'text-anchor': 'middle', 'font-size': 9.5,
       'font-weight': 600, 'font-family': 'IBM Plex Sans, sans-serif',
-      fill: n.open ? '#ffffff' : '#7c8b99' }, esc(String(n.ref).slice(0, 15)));
-    drops += svgEl('text', { x: x, y: coilTop + 31, 'text-anchor': 'middle', 'font-size': 9.5,
+      fill: n.open ? '#ffffff' : '#7c8b99' }, esc(String(n.ref).slice(0, 13)));
+    drops += svgEl('text', { x: x, y: coilTop + 24, 'text-anchor': 'middle', 'font-size': 8.5,
       'font-family': 'IBM Plex Mono, monospace', fill: n.open ? '#cfe0e8' : '#5d6d7a' },
       fmt(n.flow, 2) + ' l/s');
-    drops += svgEl('text', { x: x, y: coilTop + 42, 'text-anchor': 'middle', 'font-size': 9,
+    drops += svgEl('text', { x: x, y: coilTop + 33, 'text-anchor': 'middle', 'font-size': 8,
       'font-family': 'IBM Plex Mono, monospace',
       fill: !n.open ? '#5d6d7a' : (bad ? '#fbbf24' : '#8fa6b5') },
       n.open ? fmt(n.pctDesign, 0) + '% design' : 'shut');
@@ -2060,6 +2219,13 @@ function checkSelectedPump() {
   });
 }
 
+/* Where the duty point should sit on the selected pump's curve, as a fraction
+   of its run-out flow. Around three quarters keeps it in the efficient part of
+   the curve with head still in hand above it — a pump picked to sit exactly on
+   its duty point is already flat out at design flow, so constant-pressure
+   control has nothing to give when a branch opens. */
+const DUTY_AT_RUNOUT = 0.75;
+
 function recommendPump() {
   const cons = NODES.filter(n => n.isConsumer);
   if (cons.length === 0) { el('pumpRec').innerHTML = '<div class="msg warn">No consumers to size against.</div>'; return; }
@@ -2124,15 +2290,20 @@ function recommendPump() {
     + row('Arrangement', cfg.installed + ' installed, ' + nRun + ' running')
     + row('Duty per pump', fmt(perPumpQ, 2) + ' l/s at ' + fmt(Hreq, 0) + ' kPa')
     + row('Minimum continuous flow', fmt(minFlow, 2) + ' l/s (25% of one pump)')
+    + row('Look for run-out near', fmt(perPumpQ / DUTY_AT_RUNOUT, 2) + ' l/s per pump')
     + '</tbody></table>'
     + '<div class="msg info"><strong>Specify ' + cfg.installed + ' pump' + (cfg.installed === 1 ? '' : 's')
       + ', each ' + fmt(perPumpQ, 2) + ' l/s at ' + fmt(Hreq, 0) + ' kPa</strong><br>' + failText + '</div>'
-    + (bypassCap < minFlow
-        ? '<div class="msg bad"><strong>Minimum flow is not covered</strong><br>About ' + fmt(minFlow, 2)
-          + ' l/s must keep circulating, but bypass provision totals ' + fmt(bypassCap, 2)
-          + ' l/s. Add an end-of-main bypass or put three-port valves on enough branches.</div>'
-        : '<div class="msg info"><strong>Minimum flow is covered</strong><br>Bypass provision of '
-          + fmt(bypassCap, 2) + ' l/s meets the ' + fmt(minFlow, 2) + ' l/s required.</div>')
+    + '<div class="msg info"><strong>Taking this to a selection</strong><br>'
+      + 'Ask for a machine whose duty point lands around <strong>'
+      + fmt(DUTY_AT_RUNOUT * 100, 0) + '% of its run-out flow</strong> &mdash; near '
+      + fmt(perPumpQ / DUTY_AT_RUNOUT, 2) + ' l/s per pump. That keeps the duty in the efficient '
+      + 'part of the curve and leaves head in hand above it, which is what constant-pressure '
+      + 'control needs to hold a setpoint when a branch opens. A pump chosen to sit exactly on '
+      + 'its duty point has nothing left to give.<br>'
+      + 'When you have the curve, paste it into <em>Use a real pump curve</em> under Pump and '
+      + 'everything here re-solves against the real machine.</div>'
+    + bypassAdvice(minFlow, bypassCap, cons)
     + '<div style="font-weight:600;font-size:12px;margin:14px 0 6px">Where the head goes \u2014 index branch ('
       + esc(idx.ref) + ')</div>'
     + '<table class="data"><thead><tr><th>Section</th><th class="n">Size</th><th class="n">m</th>'
@@ -2146,6 +2317,76 @@ function recommendPump() {
       + fmt(valveDp, 1) + '</td><td class="n">' + fmt(valveDp / Hreq * 100, 0) + '%</td></tr>'
     + '</tbody></table>'
     + optimisationNotes(Qreq, Hreq, spend, pipeDpTotal, coilDp, valveDp);
+}
+
+/* ---------- where to put the bypass, and how big ----------
+   Saying "this will not work" leaves the engineer to work out the fix. What is
+   actually wanted is the shortfall in litres per second and the cheapest place
+   on this network to find it, so the advice names the branches and the flow
+   each one would contribute. */
+function bypassAdvice(minFlow, bypassCap, cons) {
+  const short = minFlow - bypassCap;
+  if (short <= 0.001) {
+    return '<div class="msg ok"><strong>Minimum flow is covered</strong><br>'
+      + 'Bypass provision of ' + fmt(bypassCap, 2) + ' l/s meets the ' + fmt(minFlow, 2)
+      + ' l/s the pump needs with everything shut'
+      + (bypassCap > minFlow * 2.2
+          ? '. It is generous — ' + fmt(bypassCap, 2) + ' l/s short-circuiting at part load '
+            + 'costs pump energy and lifts return temperature. Trimming the end-of-main bypass '
+            + 'towards ' + fmt(minFlow * 1.2, 2) + ' l/s would still cover the pump.'
+          : '.') + '</div>';
+  }
+
+  const bypFrac = clamp((parseFloat(el('bypassPct').value) || 100) / 100, 0.05, 1);
+  /* The cheapest branches to convert are the small ones: a bypass only has to
+     carry its own branch flow, and a small branch closest to the shortfall
+     wastes least when everything is running. */
+  const candidates = cons
+    .filter(n => !(ARRANGEMENTS[n.arrangement] || {}).bypass)
+    .map(n => ({ n, gain: n.designLps * bypFrac }))
+    .sort((a, b) => a.gain - b.gain);
+
+  const picks = [];
+  let got = 0;
+  // smallest branches first until the shortfall is met
+  for (const c of candidates) { if (got >= short) break; picks.push(c); got += c.gain; }
+  // if converting every branch still falls short, an end-of-main bypass makes up the rest
+  const stillShort = Math.max(0, short - got);
+
+  const ends = NODES.filter(n => !n.isConsumer && !n.eomBypass);
+  const endName = ends.length ? esc(ends[ends.length - 1].ref) : 'the end of the index main';
+
+  return '<div class="msg warn"><strong>Short of minimum flow by ' + fmt(short, 2) + ' l/s</strong><br>'
+    + 'With every consumer shut the pump still needs ' + fmt(minFlow, 2) + ' l/s moving, and the '
+    + 'bypasses on this network provide ' + fmt(bypassCap, 2) + '. Two ways to find the difference:'
+    + '<div style="margin-top:8px">'
+    + '<strong>1 &mdash; an end-of-main bypass</strong><br>'
+    + 'Set a bypass of <strong>' + fmt(short * 1.15, 2) + ' l/s</strong> at ' + endName
+    + ' (the shortfall plus about 15% so it is not sitting on its limit). In the '
+    + '<em>Bypasses</em> panel choose <em>Only as consumers shut</em>, so it stays closed while '
+    + 'the branches are drawing and opens just enough to hold the flow as they close &mdash; that '
+    + 'is a differential-pressure or minimum-flow valve doing its job, and it costs nothing at '
+    + 'full load.'
+    + '</div>'
+    + (picks.length
+        ? '<div style="margin-top:8px"><strong>2 &mdash; put ' + picks.length + ' branch'
+          + (picks.length === 1 ? '' : 'es') + ' on a bypass arrangement</strong><br>'
+          + 'Changing ' + picks.map(c => '<strong>' + esc(c.n.ref) + '</strong> ('
+              + fmt(c.gain, 2) + ' l/s)').join(', ')
+          + ' to three-port or two-port-with-bypass adds ' + fmt(got, 2) + ' l/s of guaranteed '
+          + 'circulation. These are the smallest branches that cover it, so the least flow is '
+          + 'short-circuited when everything is running.'
+          + (stillShort > 0.001
+              ? '<br>Even with all of them there is ' + fmt(stillShort, 2) + ' l/s left to find, '
+                + 'so an end-of-main bypass is needed as well.'
+              : '')
+          + '</div>'
+        : '')
+    + '<div style="margin-top:8px;color:var(--muted)">A bigger pump is the wrong answer here: the '
+    + 'problem is the pump having nowhere to push at part load, not a shortage of duty. If the '
+    + 'shortfall is large against the system, a smaller lead pump or a duty/assist split lowers '
+    + 'the minimum instead of raising the bypass.</div>'
+    + '</div>';
 }
 
 function optimisationNotes(Qreq, Hreq, spend, pipeDp, coilDp, valveDp) {
@@ -2431,6 +2672,8 @@ try {
 el('btnBalance').addEventListener('click', calculateBalance);
 el('btnSweep').addEventListener('click', runSweep);
 el('btnRecommend').addEventListener('click', recommendPump);
+el('btnCurveApply').addEventListener('click', applyPumpCurve);
+el('btnCurveClear').addEventListener('click', clearPumpCurve);
 el('btnCheckSelected').addEventListener('click', checkSelectedPump);
 el('btnClearBal').addEventListener('click', clearBalance);
 
