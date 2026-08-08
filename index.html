@@ -1113,6 +1113,7 @@
       <button class="btn" id="exportCsvBtn">Export CSV</button>
       <button class="btn btn-primary" id="exportXlsxBtn">Export Excel</button>
       <button class="btn btn-primary" id="exportPdfBtn" style="background:var(--brand-blue-deep);color:var(--white)">PDF Report</button>
+      <button class="btn btn-primary" id="toSimBtn" style="background:var(--brand-blue-deep);color:var(--white)" title="Step 3 — save a copy and open this project in the Network Simulator">Send to Simulator →</button>
       <button class="btn" id="schematicBtn" title="Draw the system as a schematic from the Fed-from tree">Schematic</button>
       <button class="btn" id="saveProjectBtn" title="Download this project as a file you can archive or re-open later">Save Project</button>
       <button class="btn" id="openProjectBtn" title="Open a previously saved project file">Open Project</button>
@@ -2138,6 +2139,15 @@ function newCircuit(overrides = {}) {
     parentId: overrides.parentId ?? null,          // null = fed directly from plant
     ambient: overrides.ambient ?? '',              // '' = use the project ambient
     isBypass: overrides.isBypass ?? false,         // three-port / bypass: keeps flowing on start-up
+    /* The terminal's control arrangement, decided in Pipe Trace. The sizer
+       does not use it, but the simulator does, and it must not be dropped in
+       passing or the simulator defaults everything back to a modulating
+       2-port and re-invents the pump duty. */
+    controlValve: overrides.controlValve ?? overrides.traceValve ?? '',
+    traceValve: overrides.traceValve ?? overrides.controlValve ?? '',
+    traceValves: overrides.traceValves ?? undefined,
+    traceCoilKpa: overrides.traceCoilKpa ?? undefined,
+    traceValveKpa: overrides.traceValveKpa ?? undefined,
     bypassMode: overrides.bypassMode ?? 'pct',     // 'pct' of design flow, or 'lps'
     bypassValue: overrides.bypassValue ?? '',      // '' = full design flow for this circuit
     fittingsMode: overrides.fittingsMode ?? 'percent',   // 'percent' or 'counted'
@@ -5738,6 +5748,47 @@ function takeTraceHandoff() {
 }
 
 /* ============================================================
+   HAND OVER TO THE SIMULATOR
+   The same trick Pipe Trace uses to reach this page, one step further
+   along: the project goes into the shared store, the simulator picks it
+   up on load and clears the key so a refresh cannot re-import it. A copy
+   of the file is still downloaded, so there is always something on disk
+   and something to fall back on if the store is unavailable.
+   ============================================================ */
+var SIM_HANDOFF_KEY = 'adi-sizer-handoff';
+
+function sendToSimulator() {
+  if (!circuits.length) {
+    alert('There are no circuits to send. Add some, or open a project first.');
+    return;
+  }
+  const proj = buildProjectSnapshot();
+  const flat = circuits.every(c => c.parentId === null || c.parentId === undefined);
+  if (flat && circuits.length > 1 &&
+      !confirm('None of these circuits has a Fed-from set, so the simulator will show every '
+             + 'line fed straight from the plant in parallel rather than the real network.\n\n'
+             + 'Send it anyway?')) return;
+
+  saveProjectFile();                      // always leave a copy on disk
+
+  let ok = false;
+  try {
+    localStorage.setItem(SIM_HANDOFF_KEY, JSON.stringify({
+      at: Date.now(),
+      ref: (document.getElementById('projectRef') || {}).value || '',
+      project: proj,
+    }));
+    ok = true;
+  } catch (e) { ok = false; }
+
+  showToast(ok ? 'Sent \u2014 the simulator is opening with the project in it'
+               : 'Saved \u2014 this browser will not pass it across, so open the file in the simulator');
+  setTimeout(function () {
+    window.open(ok ? './simulator.html?handoff=1' : './simulator.html', '_blank');
+  }, 350);
+}
+
+/* ============================================================
    MERGE / IMPORT FROM ANOTHER SAVE
    Appends the circuits (and plant items) from another project file to
    the current one. Every imported id is renumbered past the current
@@ -6067,6 +6118,7 @@ document.getElementById('exportPdfBtn').addEventListener('click', exportPDFRepor
 document.getElementById('saveProjectBtn').addEventListener('click', saveProjectFile);
 document.getElementById('openProjectBtn').addEventListener('click', openProjectFile);
 document.getElementById('schematicBtn').addEventListener('click', openSchematic);
+document.getElementById('toSimBtn').addEventListener('click', sendToSimulator);
 document.getElementById('mergeProjectBtn').addEventListener('click', () => document.getElementById('mergeFileInput').click());
 document.getElementById('mergeFileInput').addEventListener('change', handleMergeFile);
 document.getElementById('projectFileInput').addEventListener('change', handleProjectFile);
