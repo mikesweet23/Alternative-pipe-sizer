@@ -50,6 +50,13 @@ Break any of these and the tools stop agreeing with each other.
 > saved project. If this is ever corrected it must be corrected in all four
 > tools in the same commit, and every live project re-checked.
 
+> **The simulator broke this rule until it was caught.** It ran
+> `waterMu(FLUID.Tm)`, giving about 4.0e-4 Pa·s at a 70 °C mean — a third of
+> the sizer's figure. Higher Reynolds, lower friction factor, and pipe losses
+> roughly 15% under what the sizer had reported for the same pipe. It now uses
+> the same fixed `SIZER_MU`. This is the first thing to check if the two tools
+> ever disagree on a run's loss again.
+
 ### Hydraulics
 - `Q = ṁ·cp·ΔT`
 - Darcy-Weisbach, Colebrook-White via the Swamee-Jain explicit form
@@ -442,6 +449,16 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   curve does not, so it bisects on the affinity laws — at ratio *s* the curve
   passes through `(s·q, s²·h)`, so the head at Q is `s²·h(Q/s)`. Change one and
   check the other.
+- **The simulator's head is not the sizer's index figure, and that is not a
+  fault.** The sizer's index run is pipe + the terminal's own drop. A two-port
+  system also needs a control valve with enough authority to control, and the
+  simulator sizes one on every consumer against `aTarget` (0.5 by default).
+  That valve is commonly **a quarter to a half of the whole duty**, so the two
+  tools differ by a lot and it looks like a bug. `renderHeadOrigin()` itemises
+  the index path — pipe, coil, control valve — and says in words which two rows
+  the sizer's number covers. Do not "fix" the difference by removing the valve;
+  a real system has one. If a sizer figure already had a valve allowance folded
+  into the coil drop, take it out there or it is counted twice.
 - **Bypass advice names the branches and the flow.** `bypassAdvice()` gives the
   shortfall in l/s, an end-of-main figure with 15% on top, and the smallest
   branches that would cover it if converted — smallest first, because a bypass
