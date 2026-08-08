@@ -81,6 +81,42 @@ gives you. Counting every corner as a single elbow, which is what it did
 before, under-counted every angled run on the drawing. `cornerAngles()` and
 `cornerFitting()` are the whole of it.
 
+### Modulating against on/off, and why it changes the duty
+
+The terminal's control arrangement is the single biggest lever on pump head,
+and the distinction that matters is not 2-port against 3-port — it is
+**modulating against on/off**:
+
+| Arrangement | Authority | Why |
+|---|---|---|
+| 2-port modulating | **yes** | Throttles to hold a temperature, so it must take a real share of the branch pressure or it cannot control |
+| 2-port on/off | **no** | Only ever fully open or fully shut. A plate exchanger with the client modulating on the secondary is the usual case — the primary flow is on or it is not |
+| 2-port + bypass, 3-port | yes | Still modulating |
+| PICV | no | Sets its own differential; handled by `picvMin`/`picvMax` |
+
+Sizing an on/off valve for authority invents duty the system does not need. On
+the worked example it is the difference between a **66 kPa** valve and an
+**8 kPa** one — 132 kPa of pump head against 74.
+
+`valveNeedsAuthority()` in Pipe Trace and `ARRANGEMENTS[].authority` in the
+simulator are the same rule and must agree.
+
+### Which valves go with which arrangement
+
+A **PICV holds its own flow**, so it never gets a double regulating valve or a
+commissioning set behind it — that would be regulating something already
+regulated. Everything else does. `setForValveType()` maps the arrangement to
+its set; `termPicv` is the one with no DRV.
+
+### The arrangement travels the whole chain
+
+Set on the load in Pipe Trace → `controlValve` on the exported circuit →
+carried untouched through the sizer (which does not use it) → read by the
+simulator as the node's `arrangement`. The simulator used to hard-code
+`twoPort` and default everything back to modulating, which re-invented the
+pump duty at the last step. Circuit factories in `index.html` must keep
+passing `controlValve` through or the chain breaks silently again.
+
 ### The standard isolating valve
 
 adi standard: **ball valves to DN50, butterfly valves from DN65 up.**
@@ -360,6 +396,11 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   every placement, because a tag written on a drawing should not move under it.
   *Rename runs* renumbers them down the drawing, and Tidy does it only if two
   are the same.
+- **Deleting a tee heals the pipework.** A tee joining two runs in line merges
+  them back into one and keeps every metre; it used to delete every run
+  touching the tee, which threw away the trace either side of a tee that was
+  only in the wrong place. Three or more runs cannot be healed, so it says so
+  and offers the explicit destructive option rather than doing it quietly.
 - **Check and Tidy.** Check lists what would break downstream; Tidy repairs
   only what is unambiguous — welds a tee sitting on a component, merges two
   tees in the same place, joins runs split by accident, removes tees left
@@ -430,6 +471,15 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   lit step matches the page under it.
 - Flow is **red** `#c0392b`, return is **blue** `#2471a3`, per UK convention —
   the same two values in Pipe Trace and the simulator.
+- **Everything on the simulator is full width except the pair under the
+  diagram.** Consumers and Bypasses sit side by side directly beneath it
+  because they are what you touch while watching it; every other panel runs
+  the full width. A 340px side column made every table and chart read in a
+  third of the screen while the page grew twice as long as it needed to be.
+- **The sizer hands over to the simulator the same way Pipe Trace hands over
+  to the sizer** — `adi-sizer-handoff` in the shared store, cleared on read,
+  with the file still downloaded as the fallback. One key per join, one step
+  each.
 - **The simulator's diagram is drawn tight on purpose.** `GEO` is sized so a
   whole network fits at 100% rather than any one branch being large — the
   point of that view is watching everything react at once, and zoom is there

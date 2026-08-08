@@ -378,10 +378,14 @@
   .empty { text-align: center; padding: 48px 20px; color: var(--muted); }
   .empty h3 { font-size: 16px; font-weight: 600; color: var(--ink); margin: 0 0 6px; }
 
-  .split { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+  /* Everything is full width except the pair of panels directly under the
+     diagram. A 340px side column made every table and chart read in a third
+     of the screen while the page grew twice as long as it needed to be. */
+  .split { display: contents; }
+  .split > div { display: contents; }
   .under-diagram { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
   @media (max-width: 900px) { .under-diagram { grid-template-columns: minmax(0, 1fr); } }
-  @media (max-width: 1100px) { .split { grid-template-columns: minmax(0, 1fr); } }
+
 
   @media (max-width: 640px) {
     .wrap { padding: 12px 12px 48px; }
@@ -410,8 +414,6 @@
      results, sweep and diagnostics before reaching the controls you came to
      touch. Dissolving the split lets each panel be ordered on its own. */
   @media (max-width: 1100px) {
-    .split { display: contents; }
-    .split > div { display: contents; }
     #main { display: flex; flex-direction: column; }
     .steps { order: -1; }
     .readout { order: 0; }
@@ -843,12 +845,28 @@ const KFACTOR = { butterfly: 0.35, gate: 0.15, strainer: 2.5, drv: 3.0, check: 2
 
 /* Valve arrangements. `closedR` describes what the branch becomes when the
    consumer is satisfied and its control valve closes. */
+/* `authority` is the one that changes the pump duty. A modulating valve has to
+   take a real share of the branch's pressure or it cannot hold a temperature.
+   An on/off valve never modulates — a plate exchanger with the client
+   controlling on the secondary side is the usual case — so it is selected line
+   size, costs almost nothing, and sizing it for authority would invent duty
+   that the system does not need. A PICV sets its own differential and is
+   handled by picvMin/picvMax rather than by authority. */
 const ARRANGEMENTS = {
-  twoPort:   { label: '2-port only',            shuts: true,  bypass: false },
-  twoPortBp: { label: '2-port + bypass (DRV)',  shuts: false, bypass: true  },
-  threePort: { label: '3-port diverting',       shuts: false, bypass: true  },
-  picv:      { label: 'PICV',                   shuts: true,  bypass: false },
+  twoPortMod:   { label: '2-port modulating',        shuts: true,  bypass: false, authority: true  },
+  twoPortOnOff: { label: '2-port on/off',            shuts: true,  bypass: false, authority: false },
+  twoPortBp:    { label: '2-port + bypass (DRV)',    shuts: false, bypass: true,  authority: true  },
+  threePort:    { label: '3-port diverting',         shuts: false, bypass: true,  authority: true  },
+  picv:         { label: 'PICV',                     shuts: true,  bypass: false, authority: false },
 };
+/* Projects written before modulating and on/off were told apart. */
+function migrateArrangement(v) {
+  if (v === 'twoPort' || v === 'twoPortCS') return v === 'twoPortCS' ? 'twoPortBp' : 'twoPortMod';
+  return ARRANGEMENTS[v] ? v : 'twoPortMod';
+}
+/* A line-size on/off valve still costs something. Assumed until a product is
+   picked, and flagged as such in the head panel. */
+const ONOFF_VALVE_KPA = 8;
 
 /* ---------- hydraulics ---------- */
 function frictionFactor(Re, relRough) {
@@ -957,7 +975,7 @@ function buildNetwork(data) {
       lps: parseFloat(c.lps) || 0,
       // simulator state
       open: true,
-      arrangement: 'twoPort',
+      arrangement: migrateArrangement(c.controlValve || c.traceValve),
       eomBypass: false,      // end-of-line bypass to hold minimum flow
       eomLps: '',            // blank = 10% of this line's design flow
       eomMode: 'onDemand',   // 'onDemand' opens only as consumers shut; 'always' is a fixed DRV
@@ -1014,7 +1032,6 @@ function buildNetwork(data) {
   // known, otherwise a plain 2-port
   NODES.forEach(n => {
     n.isConsumer = (n.children.length === 0) || n.ownKw > 0;
-    if (n.isConsumer && n.coilKpa > 0) n.arrangement = 'twoPort';
   });
 
   sizeControlValves();
@@ -1050,9 +1067,15 @@ function sizeControlValves() {
     if (!n.isConsumer) return;
     const q = n.designLps;
     const variable = pipeDrop(n, q) + n.coilKpa;
+    const arr = ARRANGEMENTS[n.arrangement] || ARRANGEMENTS.twoPortMod;
     let dpValve = 0;
-    if (mode === 'authority') dpValve = variable * N / (1 - N);
-    else if (mode === 'fixed') dpValve = fixedKpa;
+    if (mode === 'authority') {
+      /* Only a modulating valve is sized for authority. An on/off valve is
+         line size and takes a flat, small drop however this is set. */
+      dpValve = arr.authority ? variable * N / (1 - N)
+              : (n.arrangement === 'picv' ? 0 : ONOFF_VALVE_KPA);
+    }
+    else if (mode === 'fixed') dpValve = arr.authority ? fixedKpa : ONOFF_VALVE_KPA;
     n.cvDp = dpValve;
     n.cvKvs = dpValve > 0 ? kvsFor(q, dpValve) : 0;
     n.authority = dpValve > 0 ? dpValve / (dpValve + variable) : 0;
@@ -1635,7 +1658,7 @@ function fmt(v, d) { return (isFinite(v) ? v : 0).toFixed(d === undefined ? 1 : 
 /* Tighter than it reads on paper on purpose: the point of this diagram is to
    watch the whole network react at once, so fitting more on screen beats
    drawing any one branch large. Zoom is there for the detail. */
-const GEO = { rail: 20, drop: 32, coilH: 34, tier: 126, slot: 96, pad: 22, plantW: 74, top: 40 };
+const GEO = { rail: 20, drop: 30, coilH: 46, tier: 132, slot: 92, pad: 20, plantW: 70, top: 38 };
 
 function layoutSpine(n, x, y, state) {
   n._x0 = x; n._y = y;
@@ -1715,7 +1738,7 @@ function applyZoom() {
   const lvl = el('zoomLevel');
   if (lvl) lvl.textContent = Math.round(zoom * 100) + '%';
 }
-function setZoom(z) { zoom = clamp(z, 0.25, 3); applyZoom(); }
+function setZoom(z) { zoom = clamp(z, 0.12, 3); applyZoom(); }
 function zoomToFit() {
   const vp = el('viewport'), svg = vp && vp.querySelector('svg');
   if (!svg) return;
@@ -1906,10 +1929,16 @@ function renderDiagram() {
     drops += svgEl('text', { x: x, y: coilTop + 13, 'text-anchor': 'middle', 'font-size': 9.5,
       'font-weight': 600, 'font-family': 'IBM Plex Sans, sans-serif',
       fill: n.open ? '#ffffff' : '#7c8b99' }, esc(String(n.ref).slice(0, 13)));
-    drops += svgEl('text', { x: x, y: coilTop + 24, 'text-anchor': 'middle', 'font-size': 8.5,
+    /* The branch's own size and length, which is the thing you go looking for
+       when a branch is misbehaving and the only way to see it used to be the
+       results table. */
+    drops += svgEl('text', { x: x, y: coilTop + 23, 'text-anchor': 'middle', 'font-size': 8,
+      'font-family': 'IBM Plex Mono, monospace', fill: n.open ? '#8fa6b5' : '#4a5b68' },
+      (n.pipe ? n.pipe.nom : '') + '  ' + fmt(n.lengthTotal, 0) + 'm');
+    drops += svgEl('text', { x: x, y: coilTop + 32, 'text-anchor': 'middle', 'font-size': 8.5,
       'font-family': 'IBM Plex Mono, monospace', fill: n.open ? '#cfe0e8' : '#5d6d7a' },
       fmt(n.flow, 2) + ' l/s');
-    drops += svgEl('text', { x: x, y: coilTop + 33, 'text-anchor': 'middle', 'font-size': 8,
+    drops += svgEl('text', { x: x, y: coilTop + 41, 'text-anchor': 'middle', 'font-size': 8,
       'font-family': 'IBM Plex Mono, monospace',
       fill: !n.open ? '#5d6d7a' : (bad ? '#fbbf24' : '#8fa6b5') },
       n.open ? fmt(n.pctDesign, 0) + '% design' : 'shut');
@@ -2747,6 +2776,32 @@ function seedPumpDuty(alsoFlow) {
   el('pH').value = designH.toFixed(0);
 }
 
+/* Picked up from the Pipework Sizer's "Send to Simulator", the same shared
+   store Pipe Trace uses to reach the sizer. The key is cleared on read so a
+   refresh cannot silently re-import a project the user has since changed. */
+var SIM_HANDOFF_KEY = 'adi-sizer-handoff';
+function showHandoffToast() {
+  const m = el('curveMsg');
+  const box = el('diagnostics');
+  if (box) box.insertAdjacentHTML('afterbegin',
+    '<div class="msg ok">Opened from the Pipework Sizer. The control valve allowance starts on '
+    + '<strong>none</strong>, which is the sizer\u2019s basis, so the head here should match the '
+    + 'index run it reported. Switch it on in Assumptions before taking a duty to a pump '
+    + 'selection.</div>');
+}
+
+function takeSizerHandoff() {
+  var raw = null;
+  try { raw = localStorage.getItem(SIM_HANDOFF_KEY); } catch (e) { return false; }
+  if (!raw) return false;
+  try { localStorage.removeItem(SIM_HANDOFF_KEY); } catch (e) {}
+  var pack;
+  try { pack = JSON.parse(raw); } catch (e) { return false; }
+  if (!pack || !pack.project) return false;
+  if (pack.at && (Date.now() - pack.at) > 10 * 60 * 1000) return false;
+  return loadProject(pack.project);
+}
+
 function loadProject(data) {
   if (!data || data.app !== 'adi-pipework-sizer' || !Array.isArray(data.circuits)) {
     alert('That is not a project file saved from the Pipework Sizer.');
@@ -2920,6 +2975,12 @@ document.addEventListener('wheel', e => {
 document.addEventListener('keydown', e => {
   if (e.target && e.target.type === 'number' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) e.preventDefault();
 });
+
+/* ---------- go ----------
+   A project handed over from the sizer opens straight into it. */
+if (takeSizerHandoff()) {
+  showHandoffToast();
+}
 </script>
 </body>
 </html>

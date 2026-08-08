@@ -869,13 +869,37 @@ const SOURCE_TYPES = {
 };
 
 /* ---------- terminal valve arrangements (carried through to the simulator) ---------- */
+/* How the terminal is controlled. The distinction that matters most is
+   modulating against on/off, and it is not cosmetic:
+
+   A **modulating** 2-port throttles to hold a temperature, so it has to take a
+   real share of the branch's pressure or it cannot control — that is valve
+   authority, and it is why the pump duty goes up.
+
+   An **on/off** 2-port is only ever fully open or fully shut. A plate heat
+   exchanger with the client modulating on the secondary side is the common
+   case: the primary flow is on or it is not. Authority is meaningless for it,
+   so it is selected line size and costs very little. Calling that one
+   "2-port" and sizing it for authority overstates the duty badly.
+
+   The set of valves that goes with each also differs — see setForValveType().
+   A PICV regulates itself, so it never gets a double regulating valve or a
+   commissioning set behind it; everything else does. */
 const VALVE_TYPES = {
-  twoPort:   '2-port only',
-  twoPortBp: '2-port + bypass (DRV)',
-  twoPortCS: '2-port + bypass (commissioning set)',
-  threePort: '3-port diverting',
-  picv:      'PICV',
+  twoPortMod:   '2-port modulating \u2014 temperature control',
+  twoPortOnOff: '2-port on/off \u2014 open or shut only',
+  twoPortBp:    '2-port + bypass (DRV)',
+  twoPortCS:    '2-port + bypass (commissioning set)',
+  threePort:    '3-port diverting',
+  picv:         'PICV',
 };
+/* Files written before the split called a modulating 2-port just "twoPort". */
+function migrateValveType(v) { return v === 'twoPort' ? 'twoPortMod' : (v || 'twoPortMod'); }
+/* Does this arrangement need a control valve with authority? */
+function valveNeedsAuthority(v) {
+  const t = migrateValveType(v);
+  return t !== 'twoPortOnOff' && t !== 'picv';
+}
 
 /* ==========================================================================
    VALVES AND IN-LINE ITEMS
@@ -927,7 +951,8 @@ const VALVE_LIB = {
   flowMeter:      { label: 'Flow measuring station',  tag: 'FM',   cat: 'reg',  fit: 'flowMeter',      sym: 'meter',     defLeg: 'return', typ: 8 },
 
   picv:           { label: 'PICV',                    tag: 'PICV', cat: 'ctrl', kpa: 25,               sym: 'picv',      defLeg: 'return' },
-  ctrl2Port:      { label: '2-port control valve',    tag: '2PV',  cat: 'ctrl', kpa: 20,               sym: 'ctrl2',     defLeg: 'flow' },
+  ctrl2Port:      { label: '2-port modulating valve', tag: '2PV',  cat: 'ctrl', kpa: 20,               sym: 'ctrl2',     defLeg: 'flow' },
+  ctrl2PortOnOff: { label: '2-port on/off valve',     tag: '2PV',  cat: 'ctrl', kpa: 8,                sym: 'ctrl2',     defLeg: 'flow' },
   ctrl3Port:      { label: '3-port control valve',    tag: '3PV',  cat: 'ctrl', kpa: 20,               sym: 'ctrl3',     defLeg: 'return' },
   dpcv:           { label: 'Differential pressure control valve',
                                                       tag: 'DPCV', cat: 'ctrl', kpa: 15,               sym: 'dpcv',      defLeg: 'return' },
@@ -972,7 +997,8 @@ const VALVE_SETS = {
              { type: 'ctrl2Port', leg: 'flow', atLoad: true },
              { type: 'iso', leg: 'return' }, { type: 'commSet', leg: 'return' } ] },
   termPicv: { label: 'Terminal set — PICV', anchor: 'down', forValve: 'picv',
-    note: 'No separate regulating valve: the PICV holds its own authority.',
+    note: 'No double regulating valve and no commissioning set — a PICV holds its own flow, '
+        + 'so a regulating valve behind it would be regulating something already regulated.',
     items: [ { type: 'iso', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
              { type: 'iso', leg: 'return' }, { type: 'picv', leg: 'return', atLoad: true } ] },
   term3p: { label: 'Terminal set — 3-port', anchor: 'down', forValve: 'threePort',
@@ -980,10 +1006,18 @@ const VALVE_SETS = {
     items: [ { type: 'iso', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
              { type: 'iso', leg: 'return' }, { type: 'dblRegVal', leg: 'return' },
              { type: 'ctrl3Port', leg: 'return', atLoad: true } ] },
-  term2p: { label: 'Terminal set — 2-port only', anchor: 'down', forValve: 'twoPort',
-    note: 'Isolate, strain and control, with no regulating valve on the return.',
+  term2p: { label: 'Terminal set — 2-port modulating', anchor: 'down', forValve: 'twoPortMod',
+    note: 'Isolate and strain on the flow, modulating valve at the coil, regulate on the return.',
     items: [ { type: 'iso', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
-             { type: 'ctrl2Port', leg: 'flow', atLoad: true }, { type: 'iso', leg: 'return' } ] },
+             { type: 'ctrl2Port', leg: 'flow', atLoad: true },
+             { type: 'iso', leg: 'return' }, { type: 'dblRegVal', leg: 'return' } ] },
+  term2pOnOff: { label: 'Terminal set — 2-port on/off', anchor: 'down', forValve: 'twoPortOnOff',
+    note: 'For a plate exchanger or anything where the primary flow is only ever on or off. '
+        + 'The valve is line size and takes almost no pressure, so the branch still needs a '
+        + 'regulating valve to set its flow.',
+    items: [ { type: 'iso', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
+             { type: 'ctrl2PortOnOff', leg: 'flow', atLoad: true },
+             { type: 'iso', leg: 'return' }, { type: 'dblRegVal', leg: 'return' } ] },
   isoPair: { label: 'Isolation pair', anchor: 'mid',
     note: 'One valve on each leg, for sectioning a main or a riser.',
     items: [ { type: 'iso', leg: 'flow' }, { type: 'iso', leg: 'return' } ] },
@@ -1005,7 +1039,8 @@ const VALVE_SETS = {
 };
 /* The set that suits a load's control arrangement, for the automatic fit. */
 function setForValveType(v) {
-  const k = Object.keys(VALVE_SETS).find(x => VALVE_SETS[x].forValve === v);
+  const t = migrateValveType(v);
+  const k = Object.keys(VALVE_SETS).find(x => VALVE_SETS[x].forValve === t);
   return k || 'term2p';
 }
 
@@ -2412,7 +2447,7 @@ function addConsumer(p, from) {
   const n = Object.assign({
     id: 0, type: 'consumer', x: 0, y: 0,
     name: '', basis: 'kw', kw: 0, lps: 0, dT: S.settings.dT,
-    coilKpa: 0, valve: 'twoPort', height: S.settings.loadHeight,
+    coilKpa: 0, valve: 'twoPortMod', height: S.settings.loadHeight,
   }, base ? {
     basis: base.basis, kw: base.kw, lps: base.lps, dT: base.dT,
     coilKpa: base.coilKpa, valve: base.valve, height: base.height,
@@ -2850,6 +2885,58 @@ function deleteItem(id) {
 
 function deleteSelected() {
   if (!sel) return;
+
+  /* Deleting a tee means "I put this tee in the wrong place" — it must take
+     the tee out and heal the pipework, not take the runs with it. Removing a
+     tee used to remove every run touching it, which threw away the trace
+     either side of a tee that was only meant to be moved.
+
+     Two runs meeting in line join back into one. Three or more cannot be
+     healed — something has to be disconnected — so it says so and lets the
+     branch be deleted instead. */
+  if (sel.kind === 'node') {
+    const n = nodeById(sel.id);
+    if (n && n.type === 'junction') {
+      const nb = neighbours(n.id);
+      if (nb.length === 2) {
+        pushUndo('remove a tee');
+        undoSuspended = true;
+        const ok = mergeAtJunction(n);
+        undoSuspended = false; refreshUndoBtn();
+        if (ok) {
+          if (S.settings.autoName !== false) autoNameRuns(true);
+          sel = null; closeInspector(); render();
+          toast('Tee removed — the two runs are one again');
+          return;
+        }
+      }
+      if (nb.length > 2) {
+        modal('That tee joins ' + nb.length + ' runs',
+            '<p style="margin-top:0">Taking it out would leave '
+          + (nb.length - 1) + ' of them going nowhere, so there is nothing to heal it back into.</p>'
+          + '<div class="note">Delete the branch you do not want first &mdash; click the run itself '
+          + 'and delete that &mdash; and once only two runs are left the tee can be removed on its '
+          + 'own and the pipework joins back up.</div>'
+          + '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'
+          + '<button class="btn ghost" style="color:var(--alarm)" id="delAnyway">Delete the tee and '
+          + 'all ' + nb.length + ' runs</button>'
+          + '<button class="btn" onclick="closeModal()">Cancel</button></div>');
+        const any = el('delAnyway');
+        if (any) any.addEventListener('click', () => {
+          closeModal(true);
+          pushUndo('delete a tee and its runs');
+          const ids = S.segs.filter(s => s.a === n.id || s.b === n.id).map(s => s.id);
+          S.items = S.items.filter(it => ids.indexOf(it.seg) < 0);
+          S.nodes = S.nodes.filter(x => x.id !== n.id);
+          S.segs = S.segs.filter(s => s.a !== n.id && s.b !== n.id);
+          S.nodes = S.nodes.filter(x => x.type !== 'junction' || neighbours(x.id).length > 0);
+          sel = null; closeInspector(); render();
+        });
+        return;
+      }
+    }
+  }
+
   pushUndo(sel.kind === 'item' ? 'delete a valve' : sel.kind === 'seg' ? 'delete a run' : 'delete a component');
   if (sel.kind === 'item') {
     S.items = S.items.filter(it => it.id !== sel.id);
@@ -2857,6 +2944,8 @@ function deleteSelected() {
     S.items = S.items.filter(it => it.seg !== sel.id);
     S.segs = S.segs.filter(s => s.id !== sel.id);
   } else {
+    const gone = S.segs.filter(s => s.a === sel.id || s.b === sel.id).map(s => s.id);
+    S.items = S.items.filter(it => gone.indexOf(it.seg) < 0);
     S.nodes = S.nodes.filter(n => n.id !== sel.id);
     S.segs = S.segs.filter(s => s.a !== sel.id && s.b !== sel.id);
   }
@@ -3902,8 +3991,14 @@ function buildSizerProject() {
         if (down.basis === 'lps') { c.mode = 'fromFlow'; c.lps = +consumerFlow(down).toFixed(3); c.kw = 0; }
         else { c.mode = 'fromKw'; c.kw = +consumerKw(down).toFixed(2); c.lps = 0; }
         // carry the valve arrangement through for the simulator
-        c.isBypass = (down.valve === 'threePort' || down.valve === 'twoPortBp' || down.valve === 'twoPortCS');
-        c.traceValve = down.valve;
+        const vt = migrateValveType(down.valve);
+        c.isBypass = (vt === 'threePort' || vt === 'twoPortBp' || vt === 'twoPortCS');
+        /* The control arrangement is a decision made on the drawing, so it
+           travels with the circuit all the way to the simulator rather than
+           being defaulted again at the far end. */
+        c.traceValve = vt;
+        c.controlValve = vt;
+        c.needsAuthority = valveNeedsAuthority(vt);
       } else {
         c.mode = 'fromChildren'; c.kw = 0; c.lps = 0;
       }
@@ -4253,6 +4348,7 @@ function loadProject(data) {
   S.nodes = data.nodes || []; S.segs = data.segs || [];
   /* Files written before valves could be placed simply have none. */
   S.items = (data.items || []).filter(it => it && VALVE_LIB[it.type]);
+  S.nodes.forEach(n => { if (n.type === 'consumer') n.valve = migrateValveType(n.valve); });
   S.nextId = data.nextId || (S.nodes.length + S.segs.length + S.items.length + 1);
   Object.assign(S.settings, data.settings || {});
   if (data.img) { S.img = data.img; showDrawing(); }
