@@ -753,8 +753,16 @@
           <div class="panel-hd"><h2>Assumptions</h2></div>
           <div class="panel-bd">
             <div class="grid g2">
+              <label class="fld" style="grid-column:1/-1"><span>Control valve allowance</span>
+                <select id="cvMode">
+                  <option value="none" selected>None &mdash; same basis as the Pipework Sizer</option>
+                  <option value="authority">Size it for authority (what a 2-port system needs)</option>
+                  <option value="fixed">A figure I have per consumer</option>
+                </select></label>
               <label class="fld"><span>Valve authority target</span>
                 <input type="number" id="aTarget" step="0.05" min="0.1" max="0.9" value="0.5"></label>
+              <label class="fld"><span>Control valve <span class="u">kPa each</span></span>
+                <input type="number" id="cvFixed" step="1" min="0" value="20"></label>
               <label class="fld"><span>PICV minimum <span class="u">kPa</span></span>
                 <input type="number" id="picvMin" step="5" min="0" value="25"></label>
               <label class="fld"><span>PICV maximum <span class="u">kPa</span></span>
@@ -953,8 +961,14 @@ function buildNetwork(data) {
       eomBypass: false,      // end-of-line bypass to hold minimum flow
       eomLps: '',            // blank = 10% of this line's design flow
       eomMode: 'onDemand',   // 'onDemand' opens only as consumers shut; 'always' is a fixed DRV
-      isolation: 'butterfly',
-      strainer: true,
+      /* Off by default. A circuit's pipe drop here already carries the sizer's
+         fittings figure — a percentage allowance or a counted schedule that
+         Pipe Trace filled in — and any isolating valve or strainer on the
+         drawing is inside it. Switching these on adds a *second* one, which
+         is why the simulator used to read higher than the sizer for the same
+         pipework. Tick them only for something the take-off does not have. */
+      isolation: '',
+      strainer: false,
       children: [],
     };
     byId[n.id] = n;
@@ -1009,15 +1023,38 @@ function buildNetwork(data) {
 
 /* Control valve Kvs from the authority target:
    N = dP_valve / (dP_valve + dP_variable), so dP_valve = N/(1-N) * dP_variable */
+/* ---------- the control valve allowance ----------
+   This is the single biggest reason the simulator and the sizer used to
+   disagree, and it was not a fault in either: the sizer's index run is pipe
+   plus the terminal's own drop, while a two-port system also needs a control
+   valve with enough authority to control — commonly a quarter to a half of
+   the whole duty.
+
+   Making it an automatic addition meant importing a 331 kPa index run and
+   being shown 558 with nothing to explain it. So it is now a choice:
+
+     none      the branch is pipe and coil, exactly the sizer's basis. The
+               default, so the two tools agree the moment a project crosses.
+     authority sized so the valve takes its share, dp = variable * N/(1-N).
+               What a real two-port system needs; switch to it deliberately.
+     fixed     a figure per consumer, for when the valve is already selected.
+
+   Whichever is in force, renderHeadOrigin() shows what it is costing. */
+function cvMode() { return (el('cvMode') || {}).value || 'none'; }
+
 function sizeControlValves() {
+  const mode = cvMode();
   const N = clamp(parseFloat(el('aTarget').value) || 0.5, 0.1, 0.9);
+  const fixedKpa = Math.max(0, parseFloat(el('cvFixed').value) || 0);
   NODES.forEach(n => {
     if (!n.isConsumer) return;
     const q = n.designLps;
     const variable = pipeDrop(n, q) + n.coilKpa;
-    const dpValve = variable * N / (1 - N);
+    let dpValve = 0;
+    if (mode === 'authority') dpValve = variable * N / (1 - N);
+    else if (mode === 'fixed') dpValve = fixedKpa;
     n.cvDp = dpValve;
-    n.cvKvs = kvsFor(q, dpValve);
+    n.cvKvs = dpValve > 0 ? kvsFor(q, dpValve) : 0;
     n.authority = dpValve > 0 ? dpValve / (dpValve + variable) : 0;
   });
 }
@@ -2619,6 +2656,12 @@ function renderHeadOrigin() {
   if (!b) { box.innerHTML = ''; return; }
   const sizerLike = b.pipe + b.coil;
   const pct = v => b.total > 0 ? fmt(v / b.total * 100, 0) + '%' : '—';
+  const mode = cvMode();
+  const extras = NODES.reduce((t, n) => t + fixedComponentsDrop(n, n.flow), 0);
+  const cvLabel = mode === 'authority' ? 'sized for authority ' + esc(el('aTarget').value)
+                : mode === 'fixed' ? 'a figure you have entered'
+                : 'none — the sizer’s basis';
+
   box.innerHTML =
       '<table class="data" style="margin-bottom:8px"><thead><tr>'
     + '<th>Index path &mdash; ' + esc(b.node.ref) + '</th><th class="n">kPa</th><th class="n">share</th>'
@@ -2627,24 +2670,45 @@ function renderHeadOrigin() {
     +   fmt(b.pipe, 1) + '</td><td class="n">' + pct(b.pipe) + '</td></tr>'
     + '<tr><td>Terminal coil</td><td class="n">' + fmt(b.coil, 1) + '</td><td class="n">'
     +   pct(b.coil) + '</td></tr>'
-    + '<tr><td><strong>Control valve</strong> <span class="note">sized for authority '
-    +   esc(el('aTarget').value) + '</span></td><td class="n"><strong>' + fmt(b.valve, 1)
-    +   '</strong></td><td class="n">' + pct(b.valve) + '</td></tr>'
+    + '<tr><td><strong>Control valve</strong> <span class="note">' + cvLabel + '</span></td>'
+    +   '<td class="n"><strong>' + fmt(b.valve, 1) + '</strong></td><td class="n">'
+    +   pct(b.valve) + '</td></tr>'
     + '</tbody><tfoot><tr><td>Pump head</td><td class="n">' + fmt(b.total, 1)
     +   '</td><td class="n">100%</td></tr></tfoot></table>'
-    + '<div class="msg info" style="font-size:11.5px;margin:0">'
-    + '<strong>Comparing this with the Pipework Sizer</strong><br>'
-    + 'The sizer&rsquo;s index run figure is the first two rows &mdash; about <strong>'
-    + fmt(sizerLike, 0) + ' kPa</strong> here. It does not include a control valve, because '
-    + 'sizing pipe does not need one. A two-port system does: to control at all, the valve has to '
-    + 'take a real share of the branch&rsquo;s pressure, and at authority '
-    + esc(el('aTarget').value) + ' that is <strong>' + fmt(b.valve, 0) + ' kPa</strong> on this path. '
-    + 'That is the difference, and it is why the head here is higher.'
-    + '<br><br>Lower the authority target in <em>Assumptions</em> and the valve — and the duty — '
-    + 'come down with it, but the valve controls less well as it does. 0.5 is the usual aim and '
-    + '0.3 is normally taken as the floor. If your sizer figure already had a control valve '
-    + 'allowance folded into the coil drop, take it out there or it is counted twice.'
-    + '</div>';
+    + (mode === 'none'
+        ? '<div class="msg ok" style="font-size:11.5px;margin:0">'
+          + '<strong>This is the same basis as the Pipework Sizer</strong><br>'
+          + 'Pipe plus the terminal&rsquo;s own drop, and nothing else &mdash; so <strong>'
+          + fmt(b.total, 0) + ' kPa</strong> here should match the index run figure the sizer '
+          + 'reported for the same project, give or take the sizer&rsquo;s own safety factor and '
+          + 'any plant or strainer allowance you entered there.'
+          + '<br><br><strong>A real two-port system needs more than this.</strong> The control '
+          + 'valve has to take a real share of the branch&rsquo;s pressure or it cannot control, '
+          + 'and that share is commonly a quarter to a half of the whole duty. Switch the '
+          + '<em>Control valve allowance</em> in Assumptions to <em>Size it for authority</em> to '
+          + 'see what the pump actually has to deliver &mdash; and take <em>that</em> figure to a '
+          + 'pump selection, not this one.</div>'
+        : '<div class="msg info" style="font-size:11.5px;margin:0">'
+          + '<strong>Comparing this with the Pipework Sizer</strong><br>'
+          + 'The sizer&rsquo;s index run figure is the first two rows &mdash; about <strong>'
+          + fmt(sizerLike, 0) + ' kPa</strong> here. The control valve is the difference: <strong>'
+          + fmt(b.valve, 0) + ' kPa</strong>, ' + pct(b.valve) + ' of the duty. That is not a '
+          + 'discrepancy, it is what a two-port system costs to control.'
+          + (mode === 'authority'
+              ? '<br><br>Lower the authority target and the valve &mdash; and the duty &mdash; come '
+                + 'down with it, but the valve controls less well as it does. 0.5 is the usual aim '
+                + 'and 0.3 is normally taken as the floor.'
+              : '')
+          + ' If the sizer figure already had a control valve allowance in it, either in the coil '
+          + 'drop or in <em>Additional System Resistances</em>, take it out there or it is counted '
+          + 'twice.</div>')
+    + (extras > 0.05
+        ? '<div class="msg warn" style="font-size:11.5px;margin:8px 0 0">'
+          + '<strong>' + fmt(extras, 1) + ' kPa of isolating valves and strainers</strong> is '
+          + 'switched on in the Circuit results table, on top of the fittings already inside each '
+          + 'circuit&rsquo;s pipe drop. If those items are on the drawing, Pipe Trace has already '
+          + 'counted them and this is counting them again.</div>'
+        : '');
 }
 
 function refresh() {
@@ -2660,6 +2724,29 @@ function refresh() {
 /* ==========================================================================
    IMPORT AND WIRING
    ========================================================================== */
+/* Seed the pump so its curve passes through the design point: reduce the
+   network with everything open, then take the head that resistance needs at
+   design flow. Anything else would start the model off-design.
+
+   It has to be re-run whenever something that changes the system resistance
+   changes — turning the control valve allowance on is the obvious one. Without
+   that, switching it on left the pump still sized for the old duty, so the
+   model showed it falling short rather than showing the duty now required. */
+function seedPumpDuty(alsoFlow) {
+  if (!NODES.length) return;
+  sizeControlValves();
+  const roots = NODES.filter(n => !n.parent);
+  const designQ = roots.reduce((s, r) => s + r.designLps, 0) || 1;
+  const Rs = roots.map(r => reduceNode(r, {}));
+  const sysR0 = parallelR(Rs);
+  const designH = isFinite(sysR0) ? Math.max(sysR0 * designQ * designQ, 20) : 100;
+  if (alsoFlow) {
+    el('pQ').value = designQ.toFixed(2);
+    if (el('sweepMin') && !el('sweepMin').value) el('sweepMin').value = (designQ * 0.25).toFixed(1);
+  }
+  el('pH').value = designH.toFixed(0);
+}
+
 function loadProject(data) {
   if (!data || data.app !== 'adi-pipework-sizer' || !Array.isArray(data.circuits)) {
     alert('That is not a project file saved from the Pipework Sizer.');
@@ -2669,20 +2756,7 @@ function loadProject(data) {
 
   buildNetwork(data);
 
-  // Seed the pump so its curve passes through the design point: reduce the
-  // network with everything open, then take the head that resistance needs
-  // at design flow. Anything else would start the model off-design.
-  const roots = NODES.filter(n => !n.parent);
-  const designQ = roots.reduce((s, r) => s + r.designLps, 0) || 1;
-  const Rs = roots.map(r => reduceNode(r, {}));
-  const sysR0 = parallelR(Rs);
-  const designH = isFinite(sysR0)
-    ? Math.max(sysR0 * designQ * designQ, 20)
-    : 100;
-
-  el('pQ').value = designQ.toFixed(2);
-  if (el('sweepMin') && !el('sweepMin').value) el('sweepMin').value = (designQ * 0.25).toFixed(1);
-  el('pH').value = designH.toFixed(0);
+  seedPumpDuty(true);
 
   const hasTopology = (data.circuits || []).some(c =>
     c.parentId !== null && c.parentId !== undefined) ||
@@ -2820,9 +2894,23 @@ el('consumerList').addEventListener('change', e => {
   }
 });
 
-['pQ', 'pH', 'pShut', 'pConfig', 'pCutIn', 'pCutOut', 'pMode', 'pSet', 'aTarget', 'picvMin', 'picvMax', 'bypassPct'].forEach(id => {
+['pQ', 'pH', 'pShut', 'pConfig', 'pCutIn', 'pCutOut', 'pMode', 'pSet',
+ 'picvMin', 'picvMax', 'bypassPct'].forEach(id => {
   const e = el(id);
   if (e) e.addEventListener('input', () => { if (NODES.length) refresh(); });
+});
+
+/* These three change how much resistance the system has, so the duty the pump
+   is sized against has to move with them — otherwise switching the control
+   valve allowance on shows the pump falling short rather than the duty now
+   being asked for. */
+['cvMode', 'cvFixed', 'aTarget'].forEach(id => {
+  const e = el(id);
+  if (e) e.addEventListener('input', () => {
+    if (!NODES.length) return;
+    seedPumpDuty(false);
+    refresh();
+  });
 });
 
 // number fields must not change on scroll — same safety rule as the sizer
