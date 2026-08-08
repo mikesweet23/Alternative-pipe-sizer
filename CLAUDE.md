@@ -449,16 +449,32 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   curve does not, so it bisects on the affinity laws — at ratio *s* the curve
   passes through `(s·q, s²·h)`, so the head at Q is `s²·h(Q/s)`. Change one and
   check the other.
-- **The simulator's head is not the sizer's index figure, and that is not a
-  fault.** The sizer's index run is pipe + the terminal's own drop. A two-port
-  system also needs a control valve with enough authority to control, and the
-  simulator sizes one on every consumer against `aTarget` (0.5 by default).
-  That valve is commonly **a quarter to a half of the whole duty**, so the two
-  tools differ by a lot and it looks like a bug. `renderHeadOrigin()` itemises
-  the index path — pipe, coil, control valve — and says in words which two rows
-  the sizer's number covers. Do not "fix" the difference by removing the valve;
-  a real system has one. If a sizer figure already had a valve allowance folded
-  into the coil drop, take it out there or it is counted twice.
+- **The simulator opens on the sizer's basis, and everything it adds is a
+  choice.** A project imported from the sizer must show the same head the sizer
+  reported, or the chain looks broken — that happened three times before it was
+  fixed. Three things used to be added silently:
+    - a **control valve** on every consumer, sized for authority. Now
+      `cvMode`, defaulting to `none`. `authority` and `fixed` are there to be
+      switched on deliberately.
+    - a **strainer** on every node (`strainer: true`). Now off. A circuit's
+      pipe drop already carries the sizer's fittings figure, so anything on the
+      drawing was counted twice.
+    - **two isolating valves** per node (`isolation: 'butterfly'`), which had
+      no UI at all. Now off, for the same reason.
+  `renderHeadOrigin()` itemises the index path — pipe, coil, control valve —
+  and states which rows the sizer's figure covers. **A real two-port system
+  does need the control valve**, and the panel says so and says to take that
+  figure to a pump selection; the default is about the two tools agreeing, not
+  about the valve being unnecessary.
+- **`seedPumpDuty()` has to re-run when the resistance changes.** The pump is
+  seeded so its curve passes through the design point at import. Turning the
+  control valve allowance on raises the system resistance, so without
+  re-seeding the model showed the pump falling short instead of the duty now
+  being asked for. `cvMode`, `cvFixed` and `aTarget` all re-seed.
+- **The sizer's Additional System Resistances all default to zero** — plant,
+  control valve, strainer, misc. The pump figure is then the index run and
+  nothing else, which is what makes it comparable with the simulator. The
+  safety factor stays at 10%.
 - **Bypass advice names the branches and the flow.** `bypassAdvice()` gives the
   shortfall in l/s, an end-of-main figure with 15% on top, and the smallest
   branches that would cover it if converted — smallest first, because a bypass

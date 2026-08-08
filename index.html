@@ -1621,18 +1621,23 @@
 
         <div class="card" style="padding:18px;background:var(--off-white);border:1px solid var(--line)">
           <div class="card-title" style="font-size:11px;margin-bottom:14px">Additional System Resistances</div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.6;margin:-4px 0 14px">
+            All zero by default, so the pump figure is the index run and nothing else.
+            Add plant, control valve or strainer drops here only where they are real and are
+            not already counted in a circuit&rsquo;s fittings.
+          </div>
 
           <div class="field">
             <label>Chiller / Boiler pressure drop <span class="unit">kPa</span></label>
-            <input type="number" id="plantPd" value="30" step="1" min="0" oninput="renderPumpPanel()">
+            <input type="number" id="plantPd" value="0" step="1" min="0" oninput="renderPumpPanel()">
           </div>
           <div class="field">
             <label>Control valve allowance <span class="unit">kPa</span></label>
-            <input type="number" id="valvePd" value="20" step="1" min="0" oninput="renderPumpPanel()">
+            <input type="number" id="valvePd" value="0" step="1" min="0" oninput="renderPumpPanel()">
           </div>
           <div class="field">
             <label>Strainer / filter <span class="unit">kPa</span></label>
-            <input type="number" id="strainerPd" value="10" step="1" min="0" oninput="renderPumpPanel()">
+            <input type="number" id="strainerPd" value="0" step="1" min="0" oninput="renderPumpPanel()">
           </div>
           <div class="field">
             <label>Other / miscellaneous <span class="unit">kPa</span></label>
