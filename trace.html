@@ -569,7 +569,7 @@
     <button class="tb" id="bCheck" disabled title="Look for connections that are not where they look">Check</button>
     <button class="tb" id="b3d" disabled title="Check the heights in three dimensions">3D check</button>
     <button class="tb" id="bSched" disabled>Schedule</button>
-    <button class="tb" id="bSave" disabled>Save</button>
+    <button class="tb" id="bSave" title="Save this trace as a file (Ctrl+S)">Save</button>
     <button class="tb" id="bLoad">Open</button>
     <button class="tb go" id="bExport" disabled>Send to Sizer</button>
     <input type="file" id="fDwg" accept="application/pdf,image/*" style="display:none">
@@ -963,44 +963,44 @@ const VALVE_LIB = {
 const VALVE_SETS = {
   termDrv: { label: 'Terminal set — 2-port + DRV', anchor: 'down', forValve: 'twoPortBp',
     note: 'Isolate, strain and control on the flow; regulate and isolate on the return.',
-    items: [ { type: 'ball', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
-             { type: 'ctrl2Port', leg: 'flow' },
-             { type: 'ball', leg: 'return' }, { type: 'dblRegVal', leg: 'return' } ] },
+    items: [ { type: 'iso', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
+             { type: 'ctrl2Port', leg: 'flow', atLoad: true },
+             { type: 'iso', leg: 'return' }, { type: 'dblRegVal', leg: 'return' } ] },
   termCs: { label: 'Terminal set — 2-port + commissioning set', anchor: 'down', forValve: 'twoPortCS',
     note: 'As the DRV set, with a commissioning set so the branch can be measured.',
-    items: [ { type: 'ball', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
-             { type: 'ctrl2Port', leg: 'flow' },
-             { type: 'ball', leg: 'return' }, { type: 'commSet', leg: 'return' } ] },
+    items: [ { type: 'iso', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
+             { type: 'ctrl2Port', leg: 'flow', atLoad: true },
+             { type: 'iso', leg: 'return' }, { type: 'commSet', leg: 'return' } ] },
   termPicv: { label: 'Terminal set — PICV', anchor: 'down', forValve: 'picv',
     note: 'No separate regulating valve: the PICV holds its own authority.',
-    items: [ { type: 'ball', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
-             { type: 'ball', leg: 'return' }, { type: 'picv', leg: 'return' } ] },
+    items: [ { type: 'iso', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
+             { type: 'iso', leg: 'return' }, { type: 'picv', leg: 'return', atLoad: true } ] },
   term3p: { label: 'Terminal set — 3-port', anchor: 'down', forValve: 'threePort',
     note: 'Three-port on the return with a regulating valve behind it.',
-    items: [ { type: 'ball', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
-             { type: 'ball', leg: 'return' }, { type: 'dblRegVal', leg: 'return' },
-             { type: 'ctrl3Port', leg: 'return' } ] },
+    items: [ { type: 'iso', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
+             { type: 'iso', leg: 'return' }, { type: 'dblRegVal', leg: 'return' },
+             { type: 'ctrl3Port', leg: 'return', atLoad: true } ] },
   term2p: { label: 'Terminal set — 2-port only', anchor: 'down', forValve: 'twoPort',
     note: 'Isolate, strain and control, with no regulating valve on the return.',
-    items: [ { type: 'ball', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
-             { type: 'ctrl2Port', leg: 'flow' }, { type: 'ball', leg: 'return' } ] },
+    items: [ { type: 'iso', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
+             { type: 'ctrl2Port', leg: 'flow', atLoad: true }, { type: 'iso', leg: 'return' } ] },
   isoPair: { label: 'Isolation pair', anchor: 'mid',
     note: 'One valve on each leg, for sectioning a main or a riser.',
-    items: [ { type: 'ball', leg: 'flow' }, { type: 'ball', leg: 'return' } ] },
+    items: [ { type: 'iso', leg: 'flow' }, { type: 'iso', leg: 'return' } ] },
   branchCs: { label: 'Branch commissioning set', anchor: 'up',
     note: 'At the foot of a branch or riser, so it can be regulated on its own.',
-    items: [ { type: 'ball', leg: 'flow' }, { type: 'ball', leg: 'return' },
+    items: [ { type: 'iso', leg: 'flow' }, { type: 'iso', leg: 'return' },
              { type: 'commSet', leg: 'return' } ] },
   pumpSet: { label: 'Pump set', anchor: 'mid',
     note: 'Suction: isolate, strain, flexible. Discharge: flexible, check, isolate.',
-    items: [ { type: 'ball', leg: 'return' }, { type: 'strainer', leg: 'return' },
+    items: [ { type: 'iso', leg: 'return' }, { type: 'strainer', leg: 'return' },
              { type: 'flexible', leg: 'return' },
              { type: 'flexible', leg: 'flow' }, { type: 'check', leg: 'flow' },
-             { type: 'ball', leg: 'flow' } ] },
+             { type: 'iso', leg: 'flow' } ] },
   plantSet: { label: 'Plant isolation & protection', anchor: 'up',
     note: 'Isolation and a non-return leaving the plant, dirt separation coming back.',
-    items: [ { type: 'ball', leg: 'flow' }, { type: 'check', leg: 'flow' },
-             { type: 'ball', leg: 'return' }, { type: 'strainer', leg: 'return' },
+    items: [ { type: 'iso', leg: 'flow' }, { type: 'check', leg: 'flow' },
+             { type: 'iso', leg: 'return' }, { type: 'strainer', leg: 'return' },
              { type: 'dirtSep', leg: 'return' } ] },
 };
 /* The set that suits a load's control arrangement, for the automatic fit. */
@@ -1008,6 +1008,22 @@ function setForValveType(v) {
   const k = Object.keys(VALVE_SETS).find(x => VALVE_SETS[x].forValve === v);
   return k || 'term2p';
 }
+
+/* ---------- the standard isolating valve ----------
+   adi standard: ball valves up to and including DN50, butterfly valves from
+   DN65 up. Sets place the pseudo-type `iso`, which resolves against the run's
+   size when it lands and again whenever that run is re-sized, so a branch that
+   grows from DN50 to DN65 turns its isolating valves into butterflies without
+   anyone remembering to. Picking a specific valve from the palette, or
+   changing one in the inspector, is an explicit choice and stays put. */
+const ISO_BALL_MAX_DN = 50;
+function isoTypeForDN(dn) { return (dn > 0 && dn <= ISO_BALL_MAX_DN) ? 'ball' : (dn > 0 ? 'butterfly' : 'ball'); }
+function isoTypeForSeg(sg) {
+  return isoTypeForDN(sg && sg.pipe ? nominalDN(sg.pipe.nom, sg.pipe.id) : 0);
+}
+/* Sets list `iso`; everything else is itself. */
+function resolveSlotType(type, sg) { return type === 'iso' ? isoTypeForSeg(sg) : type; }
+function isIsoType(type) { return type === 'ball' || type === 'butterfly' || type === 'gate'; }
 
 function valveDef(type) { return VALVE_LIB[type] || null; }
 
@@ -1426,10 +1442,14 @@ function segHasPlacedValves(segId) { return S.items.some(it => it.seg === segId)
 const ANGLE_TOL = 7.5;
 function cornerFitting(deflectDeg) {
   const a = Math.abs(deflectDeg);
+  const bend = S.settings.bendType || 'elbow90';
   if (a < 1) return null;                                   // not really a corner
-  if (Math.abs(a - 90) <= ANGLE_TOL) return { type: S.settings.bendType || 'elbow90', n: 1, kind: 'sq' };
+  if (Math.abs(a - 90) <= ANGLE_TOL) return { type: bend, n: 1, kind: 'sq' };
   if (Math.abs(a - 45) <= ANGLE_TOL) return { type: 'elbow45', n: 1, kind: 'deg45' };
-  return { type: 'elbow45', n: 2, kind: 'made' };           // a made set
+  /* Any other angle is fabricated on site, and it is made from two 90s cut to
+     suit rather than two 45s — two 90° elbows will make a set at any angle,
+     whereas a pair of 45s only makes the angles a 45 already gives you. */
+  return { type: bend, n: 2, kind: 'made' };
 }
 /* The deflection at each interior point of a polyline. */
 function cornerAngles(pts) {
@@ -1563,6 +1583,31 @@ function solve() {
   /* An item whose run has been deleted has nothing to sit on. Dropping it
      here keeps the schedule and the plan showing the same thing. */
   S.items = S.items.filter(it => !!segById(it.seg));
+
+  /* The standard isolating valve follows the size it ends up on: ball to
+     DN50, butterfly from DN65. A run that grows past the break turns its own
+     valves over without anyone having to remember. Only valves placed as part
+     of a set do this — one picked by hand is an explicit choice. */
+  let flipped = 0;
+  S.items.forEach(it => {
+    if (!it.autoIso) return;
+    const sg = segById(it.seg);
+    if (!sg || !sg.pipe) return;
+    const want = isoTypeForSeg(sg);
+    if (it.type !== want) { it.type = want; flipped++; }
+  });
+  if (flipped) {
+    // the sizes changed under them, so re-cost the runs they sit on
+    S.segs.forEach(sg => {
+      sg.fit = segFittings(sg);
+      sg.fitPa = fittingsPa(sg);
+      sg.nFit = fittingCount(sg);
+      sg.valveKpa = sg.fit.fixedKpa || 0;
+      sg.fitKpa = sg.fitPa / 1000;
+      sg.dropKpa = sg.straightKpa + sg.fitKpa + sg.valveKpa;
+      sg.totalKpa = sg.dropKpa + sg.coilKpa;
+    });
+  }
   S.nodes.forEach(n => {
     if (n.type === 'consumer') { n.lps = n.lps; n.flowLps = consumerFlow(n); n.dutyKw = consumerKw(n); }
   });
@@ -1756,9 +1801,53 @@ function pairOffsetDraw(sg, k) {
   if (!(S.pxPerM > 0)) return onScreen;
   return Math.max(onScreen, PAIR_REAL_M * S.pxPerM / 2);
 }
+/* ---------- the control valve stub at a load ----------
+   A 2-port, 3-port or PICV is part of the terminal, not part of the run, so it
+   is drawn on a short stub off the load rather than in the line with the
+   isolating valves. The stub comes out of whichever edge of the load box the
+   pipework actually arrives at, worked out from the direction of the run's
+   last leg, so the load never has to be rotated and its name and duty stay
+   square to the sheet. Flow and return take opposite ends of that edge. */
+const LOAD_BOX = { w: 62, h: 30 };
+const STUB_REAL_M = 0.9;
+function loadStubPos(sg, leg, k) {
+  const down = nodeById(sg.down !== null && sg.down !== undefined ? sg.down : sg.b);
+  if (!down || down.type !== 'consumer') return null;
+  const pts = sg.pts;
+  if (!pts || pts.length < 2) return null;
+  const kk = (k === undefined) ? 1 / zoom : k;
+
+  // which way the pipework comes in, from the last leg of the run
+  const a = pts[pts.length - 2], b = pts[pts.length - 1];
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const horiz = Math.abs(dx) >= Math.abs(dy);
+  // the edge it meets, and the outward normal of that edge
+  const hw = LOAD_BOX.w / 2 * kk, hh = LOAD_BOX.h / 2 * kk;
+  const nx = horiz ? (dx >= 0 ? -1 : 1) : 0;
+  const ny = horiz ? 0 : (dy >= 0 ? -1 : 1);
+
+  const stub = Math.max(28 * kk, S.pxPerM > 0 ? STUB_REAL_M * S.pxPerM : 0);
+  // flow and return sit either side of the centre of that edge
+  const spread = Math.max(11 * kk, S.pxPerM > 0 ? 0.35 * S.pxPerM : 0);
+  const side = leg === 'return' ? 1 : -1;
+  const tx = horiz ? 0 : side, ty = horiz ? side : 0;
+
+  return {
+    x: down.x + nx * (hw + stub) + tx * spread,
+    y: down.y + ny * (hh + stub) + ty * spread,
+    // the stub runs along the normal, so the symbol faces the way the pipe does
+    ang: Math.atan2(-ny, -nx),
+    anchor: { x: down.x + nx * hw + tx * spread, y: down.y + ny * hh + ty * spread },
+  };
+}
+
 function itemPos(it, k) {
   const sg = segById(it.seg);
   if (!sg) return null;
+  if (it.atLoad) {
+    const at = loadStubPos(sg, it.leg, k);
+    if (at) return { x: at.x, y: at.y, ang: at.ang, seg: sg, stub: at.anchor };
+  }
   const at = polyAt(sg.pts, it.t);
   let ox = 0, oy = 0;
   if (sg.mode !== 'single' && it.leg !== 'both') {
@@ -1879,6 +1968,13 @@ function render() {
     const q = itemPos(it, k);
     if (!q) return;
     const picked = sel && sel.kind === 'item' && sel.id === it.id;
+    /* A load-mounted valve gets the little pipe that carries it, or it reads
+       as floating next to the terminal rather than connected to it. */
+    if (q.stub) {
+      g.appendChild(mk('line', { x1: q.stub.x, y1: q.stub.y, x2: q.x, y2: q.y,
+        stroke: it.leg === 'return' ? 'var(--return)' : 'var(--flow)',
+        'stroke-width': 2.2 * k, 'stroke-linecap': 'round' }));
+    }
     const sym = mk('g', { transform: 'translate(' + q.x + ' ' + q.y + ') '
       + 'rotate(' + (q.ang * 180 / Math.PI) + ') scale(' + valveDrawScale(k) + ')' });
     drawValveSymbol(sym, valveDef(it.type), picked);
@@ -1973,6 +2069,7 @@ function render() {
   ov.innerHTML = '';
   ov.appendChild(g);
   renderStatus();
+  autosave();
 }
 
 /* ==========================================================================
@@ -2624,7 +2721,18 @@ function setLayout(sg, t, slots, k, anchor) {
   start = clamp(start, 0.02, Math.max(0.02, 1 - (most - 1) * dt - 0.02));
 
   const seen = {};
-  return slots.map(s => {
+  return slots.map(s0 => {
+    /* `iso` resolves to ball or butterfly against this run's size here, so the
+       ghost preview, the symbol and the placed item all agree. */
+    const s = { type: resolveSlotType(s0.type, sg), leg: s0.leg, autoIso: s0.type === 'iso' };
+    if (s0.atLoad) {
+      /* A control valve belongs to the terminal, not to the run: it is drawn
+         on a stub off the side of the load the pipework arrives at, clear of
+         the isolating valves and strainer that sit in the line. */
+      const at = loadStubPos(sg, s.leg, kk);
+      if (at) return { type: s.type, leg: s.leg, atLoad: true, t: 1,
+                       x: at.x, y: at.y, ang: at.ang };
+    }
     const leg = legOf(s);
     const i = (seen[leg] = (seen[leg] || 0) + 1) - 1;
     /* Both legs start at the same place and step together, so the isolating
@@ -2640,7 +2748,7 @@ function setLayout(sg, t, slots, k, anchor) {
       const sgn = leg === 'return' ? 1 : -1;
       ox = sgn * o; oy = sgn * o;
     }
-    return { type: s.type, leg, t: tt, x: at.x + ox, y: at.y + oy, ang: at.ang };
+    return { type: s.type, leg, autoIso: s.autoIso, t: tt, x: at.x + ox, y: at.y + oy, ang: at.ang };
   });
 }
 
@@ -2682,6 +2790,9 @@ function placeArmedAt(sn, opts) {
     if (!d) return;
     const it = { id: nid(), type: L.type, seg: sn.seg.id, t: L.t, leg: L.leg,
                  tag: nextValveTag(d.tag), note: '' };
+    // placed as "the standard isolating valve", so it keeps following the size
+    if (L.autoIso) it.autoIso = true;
+    if (L.atLoad) it.atLoad = true;
     S.items.push(it);
     made.push(it);
   });
@@ -3073,7 +3184,8 @@ function fittingsBox(sg) {
     + (sg.fit.rise > 0.01 ? ', a ' + fmt(sg.fit.rise, 2) + ' m riser' : '')
     + (sg.mode !== 'single' ? ', doubled for flow and return' : '') + '.'
     + (mix.made ? ' A corner that is neither square nor 45° cannot be bought as one '
-        + 'fitting, so it is counted as a set of two elbows.' : '')
+        + 'fitting, so it is counted as a set made from two 90° elbows &mdash; which '
+        + 'will make any angle, where a pair of 45s only makes the angles a 45 gives you.' : '')
     + '</div>';
 }
 
@@ -3973,7 +4085,10 @@ function doExport() {
 
   const dl = () => {
     const name = (S.ref || 'Traced').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_');
-    download(name + '_from_trace.json', JSON.stringify(proj, null, 1));
+    /* Named so it cannot be mistaken for the trace: this one opens in the
+       sizer, not here. */
+    download('Sizer — ' + (name || 'Untitled') + ' — ' + S.date + '.json',
+             JSON.stringify(proj, null, 1));
   };
   el('mDl').addEventListener('click', () => {
     dl(); closeModal(true);
@@ -3996,6 +4111,106 @@ function doExport() {
 /* ==========================================================================
    FILES
    ========================================================================== */
+/* ==========================================================================
+   AUTOSAVE
+   Saving to a file and finding it again is the step that goes wrong — the
+   wrong file gets picked, or a phone will not download at all. So the trace
+   is also kept in the browser, written a moment after every change, and
+   offered back on the next visit. The file save stays: it is what you send
+   to someone else or archive with the job.
+
+   The drawing is stored separately from the take-off, because it is by far
+   the biggest part and it does not change. If the store is too small for the
+   image, the take-off is still kept and the drawing is asked for again.
+   ========================================================================== */
+const AUTO_KEY = 'adi-trace-autosave';
+const AUTO_IMG_KEY = 'adi-trace-autosave-img';
+let autoTimer = null;
+
+function projectBundle(withImg) {
+  const out = JSON.parse(JSON.stringify({
+    app: 'adi-pipe-trace', schema: 1,
+    ref: S.ref, engineer: S.engineer, date: S.date,
+    img: withImg ? S.img : null, pxPerM: S.pxPerM, calib: S.calib,
+    nodes: S.nodes, segs: S.segs, items: S.items,
+    nextId: S.nextId, settings: S.settings,
+  }));
+  out.nodes.forEach(n => { delete n.feedSeg; delete n.reached; delete n.flowLps; delete n.dutyKw; });
+  out.segs.forEach(s => { ['up','down','parentSeg','depth','orphan','kw','lps','nCons','runM','lenM',
+    'pipe','hydM','fit','fitPa','nFit','straightKpa','fitKpa','valveKpa','nValves','dropKpa','equivPct',
+    'coilKpa','totalKpa','isIndex','spine']
+    .forEach(k => delete s[k]); });
+  return out;
+}
+
+function autosave() {
+  clearTimeout(autoTimer);
+  autoTimer = setTimeout(() => {
+    if (!S.img && !S.segs.length && !S.nodes.length) return;
+    try {
+      localStorage.setItem(AUTO_KEY, JSON.stringify({
+        at: Date.now(), ref: S.ref, project: projectBundle(false),
+      }));
+    } catch (e) { return; }                       // out of room: nothing to do
+    try {
+      if (S.img) localStorage.setItem(AUTO_IMG_KEY, JSON.stringify(S.img));
+    } catch (e) {
+      // the drawing alone is too big for the store; the take-off is still safe
+      try { localStorage.removeItem(AUTO_IMG_KEY); } catch (e2) {}
+    }
+  }, 900);
+}
+
+function readAutosave() {
+  try {
+    const raw = localStorage.getItem(AUTO_KEY);
+    if (!raw) return null;
+    const box = JSON.parse(raw);
+    if (!box || !box.project) return null;
+    try {
+      const img = localStorage.getItem(AUTO_IMG_KEY);
+      if (img) box.project.img = JSON.parse(img);
+    } catch (e) {}
+    return box;
+  } catch (e) { return null; }
+}
+function clearAutosave() {
+  try { localStorage.removeItem(AUTO_KEY); localStorage.removeItem(AUTO_IMG_KEY); } catch (e) {}
+}
+
+/* Offered on load rather than restored silently, because opening the tool to
+   find someone else's job already in it is worse than one extra click. */
+function offerAutosave() {
+  const box = readAutosave();
+  if (!box) return false;
+  const p = box.project;
+  const runs = (p.segs || []).length, valves = (p.items || []).length;
+  if (!runs && !(p.nodes || []).length) return false;
+  const when = new Date(box.at);
+  const ago = Math.round((Date.now() - box.at) / 60000);
+  const whenTxt = ago < 1 ? 'a moment ago'
+    : ago < 60 ? ago + ' minute' + (ago === 1 ? '' : 's') + ' ago'
+    : when.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+
+  modal('Pick up where you left off?',
+      '<p style="margin-top:0">There is a trace saved in this browser from <strong>' + whenTxt
+    + '</strong>' + (box.ref ? ' &mdash; <strong>' + esc(box.ref) + '</strong>' : '') + '.</p>'
+    + '<div class="note">' + runs + ' run' + (runs === 1 ? '' : 's') + ', '
+    + valves + ' valve' + (valves === 1 ? '' : 's')
+    + (p.img ? ', with the drawing' : ', but the drawing was too big to keep &mdash; you will be '
+        + 'asked for it again') + '.</div>'
+    + '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
+    + '<button class="btn go" id="asOpen">Open it</button>'
+    + '<button class="btn ghost" id="asDrop">Start fresh</button></div>', true);
+  el('asOpen').addEventListener('click', () => {
+    closeModal(true);
+    loadProject(p);
+    if (!p.img) toast('Take-off restored — load the drawing again to see it');
+  });
+  el('asDrop').addEventListener('click', () => { clearAutosave(); closeModal(true); });
+  return true;
+}
+
 function download(name, text) {
   const b = new Blob([text], { type: 'application/json' });
   const u = URL.createObjectURL(b);
@@ -4005,26 +4220,47 @@ function download(name, text) {
 }
 
 function saveProject() {
-  const out = JSON.parse(JSON.stringify({
-    app: 'adi-pipe-trace', schema: 1,
-    ref: S.ref, engineer: S.engineer, date: S.date,
-    img: S.img, pxPerM: S.pxPerM, calib: S.calib,
-    nodes: S.nodes, segs: S.segs, items: S.items,
-    nextId: S.nextId, settings: S.settings,
-  }));
-  // strip the solved values; they rebuild on load
-  out.nodes.forEach(n => { delete n.feedSeg; delete n.reached; delete n.flowLps; delete n.dutyKw; });
-  out.segs.forEach(s => { ['up','down','parentSeg','depth','orphan','kw','lps','nCons','runM','lenM',
-    'pipe','hydM','fit','fitPa','nFit','straightKpa','fitKpa','dropKpa','equivPct',
-    'coilKpa','totalKpa','isIndex','spine']
-    .forEach(k => delete s[k]); });
-  const name = (S.ref || 'Trace').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_');
-  download('Trace_' + name + '_' + S.date + '.json', JSON.stringify(out));
-  toast('Project saved');
+  // the same bundle the autosave writes, so the two can never drift apart
+  const out = projectBundle(true);
+  const name = (S.ref || 'Untitled').replace(/[^\w\- ]+/g, '').trim() || 'Untitled';
+  download('Trace — ' + name + ' — ' + S.date + '.json', JSON.stringify(out));
+  toast('Saved “Trace — ' + name + '” to your downloads');
 }
 
+/* Two different files come out of this tool and they are easy to mix up:
+   the trace itself, and the project Send to Sizer writes for the sizer. Saying
+   which one you have opened, and where it belongs, beats a toast that has gone
+   before it has been read. */
 function loadProject(data) {
-  if (!data || data.app !== 'adi-pipe-trace') { toast('That is not a Pipe Trace file'); return; }
+  if (!data || typeof data !== 'object') {
+    modal('That file could not be read',
+        '<p style="margin-top:0">It is not a JSON file this tool wrote.</p>'
+      + '<button class="btn" onclick="closeModal()">Close</button>');
+    return;
+  }
+  if (data.app === 'adi-pipework-sizer') {
+    modal('That is the sizer’s file, not the trace',
+        '<p style="margin-top:0">This is a <strong>Pipework Sizer project</strong> &mdash; the one '
+      + '<em>Send to Sizer</em> writes. It holds circuits and lengths, not the drawing or the '
+      + 'geometry, so Pipe Trace cannot open it.</p>'
+      + '<div class="note">Two files come out of this tool:<br>'
+      + '<strong>Trace &mdash; ….json</strong> is the take-off. That is the one to open here.<br>'
+      + '<strong>Sizer &mdash; ….json</strong> goes into the Pipework Sizer with '
+      + '<em>Open Project</em>.</div>'
+      + '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'
+      + '<button class="btn ghost" id="lpOther">Pick a different file</button>'
+      + '<button class="btn ghost" onclick="closeModal()">Close</button></div>');
+    const o = el('lpOther');
+    if (o) o.addEventListener('click', () => { closeModal(true); el('fProj').click(); });
+    return;
+  }
+  if (data.app !== 'adi-pipe-trace') {
+    modal('That is not a Pipe Trace file',
+        '<p style="margin-top:0">The file opened, but it is not a trace. Look for one whose name '
+      + 'starts <strong>Trace &mdash;</strong>.</p>'
+      + '<button class="btn" onclick="closeModal()">Close</button>');
+    return;
+  }
   S.ref = data.ref || ''; S.engineer = data.engineer || ''; S.date = data.date || S.date;
   S.pxPerM = data.pxPerM || 0; S.calib = data.calib || null;
   S.nodes = data.nodes || []; S.segs = data.segs || [];
@@ -4047,7 +4283,7 @@ function showDrawing(opts) {
   el('sheet').style.height = S.img.h + 'px';
   el('board').style.display = 'none';
   el('zoomer').style.display = 'flex';
-  ['bSched','bSave','bExport','bName','b3d','bCheck'].forEach(id => el(id).disabled = false);
+  ['bSched','bExport','bName','b3d','bCheck'].forEach(id => el(id).disabled = false);
   el('bOpenDwg').textContent = 'Change drawing';
   el('bOpenDwg').title = 'Load a different drawing — the scale has to be set again';
   buildRail();
@@ -4827,8 +5063,12 @@ sc.addEventListener('pointerdown', ev => {
        top of a run, and a click on one is nearly always meant for it. */
     const it = hitItem(p);
     if (it) {
-      drag = { item: it.id, moved: false };
-      sc.setPointerCapture(ev.pointerId);
+      // a load-mounted valve belongs to its terminal, so it does not slide
+      // along the run; everything else does
+      if (!it.atLoad) {
+        drag = { item: it.id, moved: false };
+        sc.setPointerCapture(ev.pointerId);
+      }
       select('item', it.id);
       return;
     }
@@ -5000,6 +5240,8 @@ document.addEventListener('keydown', ev => {
   }
 
   if ((ev.ctrlKey || ev.metaKey) && k === 'z') { ev.preventDefault(); undo(); return; }
+  if ((ev.ctrlKey || ev.metaKey) && k === 's') { ev.preventDefault(); saveProject(); return; }
+  if ((ev.ctrlKey || ev.metaKey) && k === 'o') { ev.preventDefault(); el('fProj').click(); return; }
 
   if (ev.key === 'Escape') {
     if (el('modal').classList.contains('on')) { closeModal(); return; }
@@ -5151,8 +5393,13 @@ window.addEventListener('resize', () => {
 buildRail();
 setTool('select');
 render();
-// the pipe basis decides every size, so ask for it before anything else
-setTimeout(() => { if (!S.setupDone && !S.img) stepsDialog(); }, 350);
+setTimeout(() => {
+  // anything left in the browser from last time comes first: opening the tool
+  // to an empty sheet when yesterday's trace is sitting there is the failure
+  if (offerAutosave()) return;
+  // otherwise the pipe basis decides every size, so ask for it before anything else
+  if (!S.setupDone && !S.img) stepsDialog();
+}, 350);
 </script>
 </body>
 </html>

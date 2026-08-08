@@ -65,12 +65,27 @@ Pipe Trace prices each corner on the angle it actually turns through, within
 |---|---|
 | ≈ 90° | 1 × the configured 90° fitting (`bendType`) |
 | ≈ 45° | 1 × `elbow45` |
-| anything else | **2 × `elbow45`** — a made set |
+| anything else | **2 × the 90° fitting** — a made set |
 
-An odd angle cannot be bought as one fitting, so it is fabricated from two.
-Counting every corner as a single elbow, which is what it did before,
-under-counted every angled run on the drawing. `cornerAngles()` and
+An odd angle cannot be bought as one fitting, so it is fabricated from two —
+and from two **90s**, not two 45s, because a pair of 90s cut to suit will make
+a set at any angle where a pair of 45s only makes the angles a 45 already
+gives you. Counting every corner as a single elbow, which is what it did
+before, under-counted every angled run on the drawing. `cornerAngles()` and
 `cornerFitting()` are the whole of it.
+
+### The standard isolating valve
+
+adi standard: **ball valves to DN50, butterfly valves from DN65 up.**
+
+`isoTypeForDN()` decides it. Valve sets list the pseudo-type `iso`, which
+resolves against the run's size when it lands *and again on every solve*, so a
+branch that grows past the break turns its own isolating valves into
+butterflies without anyone remembering to. Items placed that way carry
+`autoIso: true`.
+
+Picking a specific valve from the palette, or changing one in the inspector,
+is an explicit choice — it clears `autoIso` and stays put.
 
 ### Roughness (m) — identical tables in the sizer and Pipe Trace
 
@@ -212,7 +227,7 @@ Flagged in the tools as assumptions. Replace when the figures arrive.
 |---|---|---|
 | PIR conductivity | λ = 0.025 W/m·K | Declared supplier figure |
 | Flange / bag loss | 0.40 × valve jacket coefficient | Measured data |
-| Pump curves | Generic, shut-off at 125% of design | Real curves |
+| Pump curves | Generic parabola through shut-off (125% of design head) and the duty point | **Paste the real one.** Pump → *Use a real pump curve* takes flow/head pairs in l/s or m³/h and kPa or m; everything then solves against that machine |
 | Valve Kv and PICV range | Generic | Selected products |
 | PICV / control valve differential | PICV 25, 2-port 20, 3-port 20, DPCV 15 kPa | Selected products, per valve |
 | K for wafer check, basket strainer, dirt separator, flow station, flexible | See section 2, marked *assumed* | Supplier data |
@@ -304,6 +319,16 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   is what makes zoom work. `VALVE_SETS[].items` are listed **in the order they
   are met walking down the run**, away from plant; get that order wrong and
   the automatic fit comes out back to front.
+- **The control valve belongs to the terminal, not to the run.** A 2-port,
+  3-port or PICV carries `atLoad: true`: it is drawn on a short stub off the
+  load rather than in the line with the isolating valves, and it only appears
+  once a run reaches that load. `loadStubPos()` picks the edge from the
+  direction of the run's last leg, so the stub always comes out of the side
+  the pipework arrives at and **the load box never has to be rotated** — its
+  name and duty stay square to the sheet. Flow and return take opposite ends
+  of that edge. It is still an item on the feed run internally, so the
+  pressure, the schedule and the export all work unchanged, but it does not
+  slide along the run the way an in-line valve does.
 - **Valves go on a run, never near one.** A placed item stores the run it sits
   on and a **fraction of that run's length**, not a point, so it stays put when
   a node is dragged or a corner is added. Splitting, promoting a corner and
@@ -333,6 +358,21 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   tees in the same place, joins runs split by accident, removes tees left
   hanging and runs of no length. It never moves a component or changes a duty.
   Send to Sizer runs the check first.
+- **Two files come out of Pipe Trace and they must not be confusable.**
+  `Trace — <ref> — <date>.json` is the take-off (`app: 'adi-pipe-trace'`) and
+  is the one Open reads. `Sizer — <ref> — <date>.json` is the sizer project
+  (`app: 'adi-pipework-sizer'`) written by Send to Sizer. They used to be
+  `Trace_x.json` and `x_from_trace.json`, which is how the wrong one gets
+  opened. Opening a sizer file in Trace now explains what it is and where it
+  goes, in a modal — the old two-second toast was gone before it was read.
+- **The trace is also kept in the browser.** `autosave()` runs off the back of
+  `render()`, so every change is written a moment later, and the take-off is
+  offered back on the next visit rather than restored silently — opening the
+  tool to find someone else's job already in it is worse than one extra click.
+  The drawing is stored under its own key because it is by far the biggest
+  part; if it will not fit, the take-off is still kept and the drawing is asked
+  for again. The file Save is what you send to someone else or archive with
+  the job, and it writes the same bundle so the two cannot drift.
 - **Send to Sizer hands over directly.** The project goes into
   `localStorage['adi-pipework-handoff']` and the sizer picks it up on load,
   clearing the key so a refresh cannot re-import it. A copy of the file is
@@ -383,6 +423,31 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   lit step matches the page under it.
 - Flow is **red** `#c0392b`, return is **blue** `#2471a3`, per UK convention —
   the same two values in Pipe Trace and the simulator.
+- **The simulator's diagram is drawn tight on purpose.** `GEO` is sized so a
+  whole network fits at 100% rather than any one branch being large — the
+  point of that view is watching everything react at once, and zoom is there
+  for detail. **Fit never scales above 100%** and takes height into account as
+  well as width, or making the geometry denser just gets undone by the fit and
+  half the branches sit below the fold.
+- **Consumers and Bypasses sit directly under the diagram**, not in the side
+  column, because they are the two things you touch while watching it. Toggling
+  a load and having to scroll to see what it did is the thing that made the
+  page tiring to use.
+- **A pump setpoint of 100% of design head is wrong as a default.** It leaves
+  the machine flat out at design flow with nothing in hand, so constant-pressure
+  control cannot hold a setpoint when a branch opens. The default is 85%, and
+  the selection advice asks for a pump whose duty lands near `DUTY_AT_RUNOUT`
+  (75%) of its run-out flow.
+- **`speedRatio()` has two branches.** The parabola has a closed form; a pasted
+  curve does not, so it bisects on the affinity laws — at ratio *s* the curve
+  passes through `(s·q, s²·h)`, so the head at Q is `s²·h(Q/s)`. Change one and
+  check the other.
+- **Bypass advice names the branches and the flow.** `bypassAdvice()` gives the
+  shortfall in l/s, an end-of-main figure with 15% on top, and the smallest
+  branches that would cover it if converted — smallest first, because a bypass
+  only carries its own branch flow and the least is then short-circuited at
+  full load. Telling someone in red that it will not work leaves them to do
+  the arithmetic that the tool already has.
 
 ---
 
