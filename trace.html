@@ -1801,44 +1801,38 @@ function pairOffsetDraw(sg, k) {
   if (!(S.pxPerM > 0)) return onScreen;
   return Math.max(onScreen, PAIR_REAL_M * S.pxPerM / 2);
 }
-/* ---------- the control valve stub at a load ----------
-   A 2-port, 3-port or PICV is part of the terminal, not part of the run, so it
-   is drawn on a short stub off the load rather than in the line with the
-   isolating valves. The stub comes out of whichever edge of the load box the
-   pipework actually arrives at, worked out from the direction of the run's
-   last leg, so the load never has to be rotated and its name and duty stay
-   square to the sheet. Flow and return take opposite ends of that edge. */
+/* ---------- the control valve at a load ----------
+   A 2-port, 3-port or PICV belongs to the terminal rather than to the run, so
+   it sits at the load end of its own leg — immediately outside the load box,
+   on the pipe that actually feeds it, and well clear of the isolating valves
+   and strainer which stand `setOffsetM` further back.
+
+   It is placed *on the pipework*, not on a spur off it. Drawing it on a stub
+   pointing away from the load put a length of pipe on the plan that ran to
+   nothing, which reads as a mistake on the drawing. */
 const LOAD_BOX = { w: 62, h: 30 };
-const STUB_REAL_M = 0.9;
+function loadValveT(sg, k) {
+  const pts = sg.pts;
+  if (!pts || pts.length < 2) return 1;
+  const total = polyCum(pts).pop() || 1;
+  const kk = (k === undefined) ? 1 / zoom : k;
+  // clear of the box, plus room for the symbol itself
+  const clear = (LOAD_BOX.w / 2) * kk + valveDrawScale(kk) * 11;
+  return clamp(1 - clear / total, 0, 1);
+}
 function loadStubPos(sg, leg, k) {
   const down = nodeById(sg.down !== null && sg.down !== undefined ? sg.down : sg.b);
   if (!down || down.type !== 'consumer') return null;
-  const pts = sg.pts;
-  if (!pts || pts.length < 2) return null;
+  if (!sg.pts || sg.pts.length < 2) return null;
   const kk = (k === undefined) ? 1 / zoom : k;
-
-  // which way the pipework comes in, from the last leg of the run
-  const a = pts[pts.length - 2], b = pts[pts.length - 1];
-  const dx = b.x - a.x, dy = b.y - a.y;
-  const horiz = Math.abs(dx) >= Math.abs(dy);
-  // the edge it meets, and the outward normal of that edge
-  const hw = LOAD_BOX.w / 2 * kk, hh = LOAD_BOX.h / 2 * kk;
-  const nx = horiz ? (dx >= 0 ? -1 : 1) : 0;
-  const ny = horiz ? 0 : (dy >= 0 ? -1 : 1);
-
-  const stub = Math.max(28 * kk, S.pxPerM > 0 ? STUB_REAL_M * S.pxPerM : 0);
-  // flow and return sit either side of the centre of that edge
-  const spread = Math.max(11 * kk, S.pxPerM > 0 ? 0.35 * S.pxPerM : 0);
-  const side = leg === 'return' ? 1 : -1;
-  const tx = horiz ? 0 : side, ty = horiz ? side : 0;
-
-  return {
-    x: down.x + nx * (hw + stub) + tx * spread,
-    y: down.y + ny * (hh + stub) + ty * spread,
-    // the stub runs along the normal, so the symbol faces the way the pipe does
-    ang: Math.atan2(-ny, -nx),
-    anchor: { x: down.x + nx * hw + tx * spread, y: down.y + ny * hh + ty * spread },
-  };
+  const at = polyAt(sg.pts, loadValveT(sg, kk));
+  let ox = 0, oy = 0;
+  if (sg.mode !== 'single' && leg !== 'both') {
+    const off = pairOffsetDraw(sg, kk);
+    const sgn = leg === 'return' ? 1 : -1;
+    ox = sgn * off; oy = sgn * off;
+  }
+  return { x: at.x + ox, y: at.y + oy, ang: at.ang };
 }
 
 function itemPos(it, k) {
@@ -1846,7 +1840,7 @@ function itemPos(it, k) {
   if (!sg) return null;
   if (it.atLoad) {
     const at = loadStubPos(sg, it.leg, k);
-    if (at) return { x: at.x, y: at.y, ang: at.ang, seg: sg, stub: at.anchor };
+    if (at) return { x: at.x, y: at.y, ang: at.ang, seg: sg };
   }
   const at = polyAt(sg.pts, it.t);
   let ox = 0, oy = 0;
@@ -1968,13 +1962,6 @@ function render() {
     const q = itemPos(it, k);
     if (!q) return;
     const picked = sel && sel.kind === 'item' && sel.id === it.id;
-    /* A load-mounted valve gets the little pipe that carries it, or it reads
-       as floating next to the terminal rather than connected to it. */
-    if (q.stub) {
-      g.appendChild(mk('line', { x1: q.stub.x, y1: q.stub.y, x2: q.x, y2: q.y,
-        stroke: it.leg === 'return' ? 'var(--return)' : 'var(--flow)',
-        'stroke-width': 2.2 * k, 'stroke-linecap': 'round' }));
-    }
     const sym = mk('g', { transform: 'translate(' + q.x + ' ' + q.y + ') '
       + 'rotate(' + (q.ang * 180 / Math.PI) + ') scale(' + valveDrawScale(k) + ')' });
     drawValveSymbol(sym, valveDef(it.type), picked);
@@ -2730,7 +2717,7 @@ function setLayout(sg, t, slots, k, anchor) {
          on a stub off the side of the load the pipework arrives at, clear of
          the isolating valves and strainer that sit in the line. */
       const at = loadStubPos(sg, s.leg, kk);
-      if (at) return { type: s.type, leg: s.leg, atLoad: true, t: 1,
+      if (at) return { type: s.type, leg: s.leg, atLoad: true, t: loadValveT(sg, kk),
                        x: at.x, y: at.y, ang: at.ang };
     }
     const leg = legOf(s);

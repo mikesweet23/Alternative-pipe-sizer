@@ -419,10 +419,11 @@
     .under-diagram { display: contents; }
     .p-cons    { order: 2; }
     .p-pump    { order: 4; }
-    .p-select  { order: 5; }
-    .p-branch  { order: 6; }
-    .p-sweep  { order: 7; }
-    .p-diag  { order: 8; }
+    .p-head    { order: 5; }
+    .p-select  { order: 6; }
+    .p-branch  { order: 7; }
+    .p-sweep  { order: 8; }
+    .p-diag  { order: 9; }
     .p-mains  { order: 3; }
     .p-assum  { order: 9; }
     #emptyState { order: 0; }
@@ -647,7 +648,8 @@
               <label class="fld"><span>Design head <span class="u">kPa</span></span>
                 <input type="number" id="pH" step="1" min="1"></label>
               <label class="fld"><span>Shut-off head <span class="u">% of design</span></span>
-                <input type="number" id="pShut" step="5" min="105" max="200" value="125"></label>
+                <input type="number" id="pShut" step="5" min="105" max="200" value="125"
+                       title="Read it off the pump curve at zero flow, divided by the duty head. Typical inline and end-suction pumps land between 115% and 140%; 125% is a fair stand-in until you have the curve."></label>
               <label class="fld"><span>Configuration</span>
                 <select id="pConfig">
                   <option value="duty" selected>Duty (1 installed)</option>
@@ -699,13 +701,36 @@
               </div>
               <div id="curveMsg" style="margin-top:8px"></div>
             </details>
+            <div class="msg info" style="margin:12px 0 0;font-size:11.5px">
+              <strong>Where these three figures come from</strong>
+              <div style="margin-top:6px"><strong>Shut-off head</strong> is the head the pump makes at
+              zero flow &mdash; the left-hand end of its curve &mdash; as a percentage of the duty head.
+              Read it straight off a manufacturer&rsquo;s curve. Most inline and end-suction pumps sit
+              between <strong>115% and 140%</strong>; a flat curve is nearer 115 and a steep one nearer
+              140. <strong>125%</strong> is a fair stand-in. Paste a real curve below and this stops
+              being a guess.</div>
+              <div style="margin-top:6px"><strong>Assist cut-in and cut-out</strong> only matter with more
+              than one pump running, and they are a control setting rather than something you read off a
+              curve &mdash; you choose them. Bring the second pump in when one can no longer cover demand
+              comfortably: for an equally split pair that is around <strong>50%</strong> of design flow.
+              Drop back out lower, around <strong>35%</strong>, so the two thresholds cannot chase each
+              other. <strong>Keep 15 to 20 points between them</strong> &mdash; that gap is the whole
+              point, and too small a one makes the set hunt.</div>
+              <div style="margin-top:6px">A centrifugal pump runs best near <strong>80% of its rated
+              flow</strong> and should not sit below about <strong>25%</strong> for long.</div>
+            </div>
             <p style="font-size:11px;color:var(--muted);line-height:1.55;margin:10px 0 0">
-              Centrifugal pumps run best around <strong>80% of rated flow</strong> and should not sit below
-              roughly <strong>25%</strong>. For an equally split pair, stage the assist in near
-              <strong>50%</strong> of design flow and out near <strong>35%</strong> &mdash; a 15-point gap is
-              enough to stop it hunting.
+              These are starting points, not a selection.
             </p>
           </div>
+        </div>
+
+        <div class="panel p-head">
+          <div class="panel-hd">
+            <h2>Where the head comes from</h2>
+            <span class="note">and why it differs from the sizer</span>
+          </div>
+          <div class="panel-bd" id="headOrigin"></div>
         </div>
 
         <div class="panel p-select">
@@ -786,14 +811,24 @@ const ROUGH = { truboreMetric: 1.5e-5, truboreMetric316: 1.5e-5, trubore: 1.5e-5
 /* ---------- fluid ---------- */
 function waterRho(T) { return ((1.051865e-05*T - 5.171329e-03)*T - 6.179237e-03)*T + 1000.068; }
 function waterCp(T)  { return (((1.606849e-09*T - 4.736562e-07)*T + 5.721385e-05)*T - 2.586464e-03)*T + 4.215269; }
-function waterMu(T)  { return 1.78e-3 / (1 + 0.0337*T + 0.000221*T*T); }   // Pa.s, Poiseuille fit
+/* Viscosity is deliberately NOT temperature-corrected. The Pipework Sizer and
+   Pipe Trace both work at a fixed 0.00131 Pa.s, and section 2 of the handover
+   requires all the tools to share that basis — a run sized in the sizer has to
+   come out the same here. Correcting it at the mean temperature gives roughly
+   4.0e-4 Pa.s at 70 C, which is a third of the sizer's figure: a higher
+   Reynolds number, a lower friction factor, and pipe losses about 15% under
+   what the sizer reported for the same pipe. That is what was making the
+   simulator disagree with the sizer's index run. If this is ever corrected it
+   has to be corrected in every tool in the same commit. */
+const SIZER_MU = 0.00131;
+function waterMu()  { return SIZER_MU; }
 
 /* ---------- state ---------- */
 let PROJECT = null;      // imported settings
 let NODES = [];          // working circuits
 let SOLUTION = null;
 
-const FLUID = { rho: 977.9, cp: 4.19, mu: 4.0e-4, Tm: 70 };
+const FLUID = { rho: 977.9, cp: 4.19, mu: 0.00131, Tm: 70 };
 
 /* ---------- velocity-head factors for fixed components (CIBSE C / Crane TP-410) ---------- */
 const KFACTOR = { butterfly: 0.35, gate: 0.15, strainer: 2.5, drv: 3.0, check: 2.0, tee: 1.0 };
@@ -882,7 +917,7 @@ function buildNetwork(data) {
   FLUID.Tm = (supply + ret) / 2;
   FLUID.rho = parseFloat(s.rho) || waterRho(FLUID.Tm);
   FLUID.cp = parseFloat(s.cp) || waterCp(FLUID.Tm);
-  FLUID.mu = waterMu(FLUID.Tm);
+  FLUID.mu = waterMu();
 
   PROJECT = {
     ref: s.projectRef || 'Untitled',
@@ -2551,6 +2586,67 @@ function renderConsumers() {
     + '</div></div>').join('');
 }
 
+/* ==========================================================================
+   WHY THE HEAD IS NOT THE SIZER'S INDEX FIGURE
+   The two tools are answering different questions and the difference is large
+   enough to look like a fault, so it is itemised rather than left to be
+   discovered. The sizer's index run is pipe plus the terminal's own drop. A
+   two-port system also needs a control valve with enough authority to control,
+   and that valve is what this model adds — commonly a third to a half of the
+   whole duty. Everything below is the same index path, split by what it is.
+   ========================================================================== */
+function indexPathBreakdown() {
+  if (!SOLUTION) return null;
+  const cons = NODES.filter(n => n.isConsumer && n.open);
+  if (!cons.length) return null;
+  let best = null;
+  cons.forEach(c => {
+    let pipe = 0, p = c;
+    const seen = new Set();
+    while (p && !seen.has(p.id)) { seen.add(p.id); pipe += (p.dpPipe || 0); p = p.parent; }
+    const total = pipe + (c.dpCoil || 0) + (c.dpValve || 0);
+    if (!best || total > best.total) {
+      best = { node: c, pipe, coil: c.dpCoil || 0, valve: c.dpValve || 0, total };
+    }
+  });
+  return best;
+}
+
+function renderHeadOrigin() {
+  const box = el('headOrigin');
+  if (!box) return;
+  const b = indexPathBreakdown();
+  if (!b) { box.innerHTML = ''; return; }
+  const sizerLike = b.pipe + b.coil;
+  const pct = v => b.total > 0 ? fmt(v / b.total * 100, 0) + '%' : '—';
+  box.innerHTML =
+      '<table class="data" style="margin-bottom:8px"><thead><tr>'
+    + '<th>Index path &mdash; ' + esc(b.node.ref) + '</th><th class="n">kPa</th><th class="n">share</th>'
+    + '</tr></thead><tbody>'
+    + '<tr><td>Pipe and fittings, all the way back to plant</td><td class="n">'
+    +   fmt(b.pipe, 1) + '</td><td class="n">' + pct(b.pipe) + '</td></tr>'
+    + '<tr><td>Terminal coil</td><td class="n">' + fmt(b.coil, 1) + '</td><td class="n">'
+    +   pct(b.coil) + '</td></tr>'
+    + '<tr><td><strong>Control valve</strong> <span class="note">sized for authority '
+    +   esc(el('aTarget').value) + '</span></td><td class="n"><strong>' + fmt(b.valve, 1)
+    +   '</strong></td><td class="n">' + pct(b.valve) + '</td></tr>'
+    + '</tbody><tfoot><tr><td>Pump head</td><td class="n">' + fmt(b.total, 1)
+    +   '</td><td class="n">100%</td></tr></tfoot></table>'
+    + '<div class="msg info" style="font-size:11.5px;margin:0">'
+    + '<strong>Comparing this with the Pipework Sizer</strong><br>'
+    + 'The sizer&rsquo;s index run figure is the first two rows &mdash; about <strong>'
+    + fmt(sizerLike, 0) + ' kPa</strong> here. It does not include a control valve, because '
+    + 'sizing pipe does not need one. A two-port system does: to control at all, the valve has to '
+    + 'take a real share of the branch&rsquo;s pressure, and at authority '
+    + esc(el('aTarget').value) + ' that is <strong>' + fmt(b.valve, 0) + ' kPa</strong> on this path. '
+    + 'That is the difference, and it is why the head here is higher.'
+    + '<br><br>Lower the authority target in <em>Assumptions</em> and the valve — and the duty — '
+    + 'come down with it, but the valve controls less well as it does. 0.5 is the usual aim and '
+    + '0.3 is normally taken as the floor. If your sizer figure already had a control valve '
+    + 'allowance folded into the coil drop, take it out there or it is counted twice.'
+    + '</div>';
+}
+
 function refresh() {
   solve();
   renderReadout();
@@ -2559,6 +2655,7 @@ function refresh() {
   renderBranchTable();
   renderDiagnostics();
   renderMains();
+  renderHeadOrigin();
 }
 /* ==========================================================================
    IMPORT AND WIRING
