@@ -4767,13 +4767,25 @@ function buildSizerProject() {
       circuitType: 'main',
       parentId: parentCircuit,
       material: (n.material || S.settings.material),
-      length: +(parseFloat(n.lengthM) || (n.type === 'llh' ? 1.0 : 0.5)).toFixed(2),
+      /* A vessel is not a length of pipe, and giving it one puts friction in
+         the sizer that Pipe Trace has not counted — the two then disagree by
+         a tenth of a kPa for no reason anybody can find. All of its
+         resistance is the kPa figure below; the shell length is a dimension,
+         and it is used for the volume. The metre here is nominal so the
+         sizer still has something to size the shell against. */
+      length: 0.01,
+      shellLengthM: +(parseFloat(n.lengthM) || (n.type === 'llh' ? 1.0 : 0.5)).toFixed(2),
       lengthsPaired: false, lengthReturn: 0,
       fittingsMode: 'counted', fittingSchedule: {}, fittings: 0,
       dT: S.settings.dT,
       consumerLoad: 0,
       sizeOverride: n.step || 0,
-      isIndex: false,
+      /* Where the primary's index run ends at this header, the header is the
+         end of that path and has to arrive ticked with it — otherwise the
+         sizer's primary duty stops one circuit short and loses the shell. */
+      isIndex: (S.indexes || []).some(r =>
+        r.group === (n.hgroup === undefined || n.hgroup === null ? 0 : n.hgroup) &&
+        r.node && r.node.id === n.id),
       /* The one tick the sizer already had for this: size it on velocity
          alone, to the header limit, rather than to a gradient. */
       isLLH: n.type === 'llh',
@@ -4821,11 +4833,16 @@ function buildSizerProject() {
       customRoughCarbon: String(S.settings.customRough),
       customRoughStainless: String(S.settings.customRough),
       plantOutput: src && src.kw ? String(src.kw) : '',
+      /* The sizer sizes a circuit ticked LLH on velocity alone, but only
+         while its low loss header switch is on. A drawing with a header on it
+         is exactly when it should be, so it arrives on rather than leaving
+         the header to be sized like a main until somebody notices. */
+      llhEnabled: S.nodes.some(n => n.type === 'llh'),
+      llhVMax: String(S.settings.llhVMax),
+      llhMaterial: S.settings.material,
     },
     circuits,
     nextId: next,
-    plantItems: [],
-    nextPlantId: 1,
     dropped,
     /* The valve take-off as its own list. The sizer only needs the pressure,
        which is already in the circuits, but a P&ID export needs the items —

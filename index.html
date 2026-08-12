@@ -1602,6 +1602,13 @@
 
     <div id="pumpContent" style="display:none">
 
+      <!-- Hydraulic separation: one pump per circuit.
+           Only shown when the project has a low loss header or a separating
+           buffer in it. The panel below stays the plantroom pump; this says
+           what else has to be selected and makes it plain that the figures
+           are not to be added together. -->
+      <div id="pumpGroups" style="display:none;margin-bottom:20px"></div>
+
       <!-- Index run breakdown table -->
       <div style="overflow-x:auto;margin-bottom:20px">
         <table class="circuits-table" id="indexBreakdownTable" style="min-width:600px">
@@ -2738,11 +2745,63 @@ function rootCircuits()  { return circuits.filter(x => x.parentId === null || x.
 
 // Walk from a circuit up to the plant. Returns [circuit, parent, ... root].
 // Guards against a malformed tree looping back on itself.
-function pathToPlant(c) {
+/* ============================================================
+   HYDRAULIC GROUPS
+   A low loss header or a separating buffer breaks the system into more
+   than one circuit, each with its own pump. Pipe Trace works out which
+   run belongs to which and sends the group with every circuit, so the
+   grouping is read here rather than re-derived from a topology that no
+   longer shows the separation.
+
+   A project without a header has one group, numbered 0, and everything
+   below behaves exactly as it always did.
+   ============================================================ */
+function circuitGroup(c) {
+  const g = c && c.hydraulicGroup;
+  return (g === undefined || g === null) ? 0 : g;
+}
+/* The circuit that IS the header — the last one in its own group, and the
+   thing the group above it pumps to. */
+function isSeparatorCircuit(c) { return !!(c && c.isSeparator); }
+function separatorKpa(c) { return isSeparatorCircuit(c) ? (parseFloat(c.separatorKpa) || 0) : 0; }
+
+function hydraulicGroups() {
+  const seen = [];
+  circuits.forEach(c => {
+    const g = circuitGroup(c);
+    if (!seen.some(x => x.id === g)) {
+      seen.push({ id: g, label: c.groupLabel || (g === 0 ? 'Primary' : 'Secondary'),
+                  fedBy: '' });
+    }
+  });
+  // name each secondary after the header that feeds it
+  circuits.filter(isSeparatorCircuit).forEach(sep => {
+    const sub = seen.find(x => x.id === sep.opensGroup);
+    if (sub) { sub.fedBy = sep.ref; sub.label = 'Secondary off ' + sep.ref; }
+  });
+  seen.sort((a, b) => a.id - b.id);
+  return seen;
+}
+function hasSeparation() { return circuits.some(isSeparatorCircuit); }
+
+/* The path back to whatever pumps this circuit. In a plain system that is
+   the plant, and this is what it has always been. Past a header it is the
+   header: the walk stops there, because carrying on would add a secondary's
+   loss to the primary's pump, which is the one thing the header is installed
+   to prevent. The header itself is included — it is the end of the primary,
+   and its own resistance is part of that duty. */
+function pathToPlant(c, opts) {
   const path = [];
   const seen = new Set();
+  const stopAtHeader = !(opts && opts.wholeChain === true);
+  const group = circuitGroup(c);
   let node = c;
   while (node && !seen.has(node.id)) {
+    /* The header belongs to the circuit above it — that is where its own
+       resistance is counted, and where the primary's index run ends. So a
+       secondary's path stops short of it rather than including it, and Pipe
+       Trace draws the same line in the same place. */
+    if (stopAtHeader && circuitGroup(node) !== group) break;
     seen.add(node.id);
     path.push(node);
     node = (node.parentId === null || node.parentId === undefined) ? null : circuitById(node.parentId);
@@ -2845,8 +2904,13 @@ function rollupCheck() {
    Evaluate every terminal (consumer or future) by walking up to the plant
    and summing the pressure loss of each segment on the way. The highest is
    the index run. Replaces relying on the user to tick the right boxes. */
-function evaluatePaths() {
-  const terminals = circuits.filter(c => isConsumer(c) || isFuture(c) || childrenOf(c.id).length === 0);
+/* Every terminal's path to its own pump. A header counts as a terminal of the
+   circuit that feeds it: it is where the primary ends, and its resistance is
+   what the primary pump has to push through on top of the pipework. */
+function evaluatePaths(group) {
+  const terminals = circuits.filter(c =>
+    (group === undefined || circuitGroup(c) === group) &&
+    (isConsumer(c) || isFuture(c) || isSeparatorCircuit(c) || childrenOf(c.id).length === 0));
   const paths = [];
   terminals.forEach(t => {
     const chain = pathToPlant(t);
@@ -2857,22 +2921,36 @@ function evaluatePaths() {
       total += r.totalLoss_kPa;
     });
     if (!ok) return;
-    paths.push({ terminal: t.ref, id: t.id, kPa: total,
+    paths.push({ terminal: t.ref, id: t.id, kPa: total + separatorKpa(t),
+                 group: circuitGroup(t),
                  segments: chain.map(s => s.ref).reverse(), depth: chain.length });
   });
   paths.sort((a, b) => b.kPa - a.kPa);
   return paths;
 }
 
-// Tick the index boxes to match the automatically determined critical path
+/* Tick the index boxes to match the critical path — one in every hydraulic
+   circuit, because every hydraulic circuit has its own pump and its own most
+   onerous route. Ticking only the worst path in the job would leave every
+   secondary without an index run and its pump unsized. */
 function applyCriticalPath() {
-  const paths = evaluatePaths();
-  if (paths.length === 0) { showToast('No complete path found'); return; }
-  const best = circuitById(paths[0].id);
-  const chain = new Set(pathToPlant(best).map(s => s.id));
+  const groups = hydraulicGroups();
+  const picked = [];
+  const chain = new Set();
+  groups.forEach(g => {
+    const paths = evaluatePaths(g.id);
+    if (!paths.length) return;
+    const best = circuitById(paths[0].id);
+    pathToPlant(best).forEach(s => chain.add(s.id));
+    picked.push({ g, path: paths[0] });
+  });
+  if (!picked.length) { showToast('No complete path found'); return; }
   circuits.forEach(c => { c.isIndex = chain.has(c.id); });
   renderCircuits();
-  showToast('Index run set to ' + paths[0].terminal + ' (' + paths[0].kPa.toFixed(1) + ' kPa)');
+  showToast(picked.length === 1
+    ? 'Index run set to ' + picked[0].path.terminal + ' (' + picked[0].path.kPa.toFixed(1) + ' kPa)'
+    : 'Index run set in each of ' + picked.length + ' circuits: '
+      + picked.map(p => p.path.terminal + ' ' + p.path.kPa.toFixed(0) + ' kPa').join(' · '));
 }
 
 /* ---- Tree display: collapse, colour and connectors ----
@@ -2984,8 +3062,24 @@ function dismissLengthPrompt() {
 
    Both are flagged rather than silently absorbed.
    ============================================================ */
+/* Checked one hydraulic circuit at a time. With a low loss header the job
+   legitimately has several index runs — one per pump — so they are neither
+   one connected chain nor allowed only one consumer load between them. Run
+   over the lot together, this would report both as errors on a perfectly
+   correct project. */
 function indexRunIssues() {
-  const ticked = circuits.filter(c => c.isIndex);
+  if (hasSeparation()) {
+    const out = [];
+    hydraulicGroups().forEach(g => {
+      indexRunIssuesIn(circuits.filter(c => c.isIndex && circuitGroup(c) === g.id))
+        .forEach(iss => { iss.groupLabel = g.label; out.push(iss); });
+    });
+    return out;
+  }
+  return indexRunIssuesIn(circuits.filter(c => c.isIndex));
+}
+
+function indexRunIssuesIn(ticked) {
   const issues = [];
   if (ticked.length === 0) return issues;
 
@@ -3555,13 +3649,30 @@ function ownDutyKw(c) {
   return (lps / 1000) * rho * cp * dT;
 }
 
+/* A low loss header asks its primary for more than its secondaries take —
+   it has to, or the shortfall comes back up the header and the terminals
+   never see design temperature. So from above, a header is where the
+   roll-up stops: what it asks for is its own declared primary flow, not the
+   sum of what is behind it. Walking through it would drop the margin and
+   size every primary main for the secondary flow. */
+function separatorDutyKw(c) {
+  const cp = parseFloat(document.getElementById('cp').value) || 4.182;
+  const rho = parseFloat(document.getElementById('rho').value) || 999;
+  const dT = Math.abs(parseFloat(c.dT) || 0);
+  if (dT < 0.1) return 0;
+  const lps = parseFloat(c.lps) || 0;
+  return (lps / 1000) * rho * cp * dT;
+}
+
 // Own consumption plus everything downstream. Cycle-guarded.
 function rolledUpKw(c, seen) {
   seen = seen || new Set();
   if (!c || seen.has(c.id)) return 0;
   seen.add(c.id);
   let total = ownDutyKw(c);
-  childrenOf(c.id).forEach(k => { total += rolledUpKw(k, seen); });
+  childrenOf(c.id).forEach(k => {
+    total += isSeparatorCircuit(k) ? separatorDutyKw(k) : rolledUpKw(k, seen);
+  });
   return total;
 }
 
@@ -3571,7 +3682,10 @@ function downstreamConsumerCount(c, seen) {
   if (!c || seen.has(c.id)) return 0;
   seen.add(c.id);
   let n = (ownDutyKw(c) > 0) ? 1 : 0;
-  childrenOf(c.id).forEach(k => { n += downstreamConsumerCount(k, seen); });
+  childrenOf(c.id).forEach(k => {
+    // a header is one thing to feed, whatever is behind it
+    n += isSeparatorCircuit(k) ? 1 : downstreamConsumerCount(k, seen);
+  });
   return n;
 }
 
@@ -4674,16 +4788,20 @@ function renderCircuits() {
     tbody.appendChild(tr);
   });
 
-  // System (pump) figures: main-line flow = largest index circuit flow; head from index run
+  /* System (pump) figures: main-line flow = largest index circuit flow; head
+     from the index run. Where the job is separated this is the PRIMARY pump —
+     a secondary's index run belongs to its own machine and adding it here
+     would be sizing one pump to do the work of all of them. */
   let sysFlow = 0;
-  const idxCircuits = circuits.filter(c => c.isIndex);
+  const primaryGroup = hydraulicGroups().length ? hydraulicGroups()[0].id : 0;
+  const idxCircuits = circuits.filter(c => c.isIndex && circuitGroup(c) === primaryGroup);
   let idxPipe = 0, idxLoad = 0;
   idxCircuits.forEach(c => {
     const r = calculateCircuit(c);
     if (r.error) return;
     if (r.vflow_ls > sysFlow) sysFlow = r.vflow_ls;
     idxPipe += (r.recommended ? r.pipeLoss_kPa : 0);
-    idxLoad += (r.consumerLoad || 0);
+    idxLoad += (r.consumerLoad || 0) + separatorKpa(c);
   });
   let sysHeadBar = 0;
   if (idxCircuits.length > 0) {
@@ -4727,14 +4845,90 @@ function renderCircuits() {
   saveToLocalStorage();
 }
 
+/* ============ ONE PUMP PER HYDRAULIC CIRCUIT ============
+   A low loss header does not reduce the work; it divides it. The primary
+   pump takes the plant to the header and stops, and each secondary starts
+   again from it — so these figures sit side by side and are never added.
+   Said in as many words on the panel, because adding them is exactly the
+   mistake the arrangement invites. */
+function renderPumpGroups(primaryGroup) {
+  const box = document.getElementById('pumpGroups');
+  if (!box) return;
+  if (!hasSeparation()) { box.style.display = 'none'; box.innerHTML = ''; return; }
+
+  const rho = parseFloat(document.getElementById('rho').value) || 999;
+  const safetyPct = parseFloat(document.getElementById('safetyFactor').value) || 0;
+  const groups = hydraulicGroups();
+
+  const rows = groups.map(g => {
+    const idx = circuits.filter(c => c.isIndex && circuitGroup(c) === g.id);
+    let pipe = 0, load = 0, lps = 0, terminal = '';
+    idx.forEach(c => {
+      const r = calculateCircuit(c);
+      if (r.error) return;
+      pipe += (r.recommended ? r.pipeLoss_kPa : 0);
+      load += (r.consumerLoad || 0) + separatorKpa(c);
+      if (r.vflow_ls > lps) lps = r.vflow_ls;
+      if ((r.consumerLoad || 0) > 0 || isSeparatorCircuit(c)) terminal = c.ref;
+    });
+    if (!terminal && idx.length) terminal = idx[idx.length - 1].ref;
+    const total = pipe + load;
+    const duty = total * (1 + safetyPct / 100);
+    return { g, idx, pipe, load, total, duty, lps, terminal,
+             mH: (duty * 1000) / (rho * 9.81) };
+  }).filter(r => r.idx.length);
+
+  if (!rows.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+
+  box.style.display = '';
+  box.innerHTML =
+      '<div style="background:var(--off-white);border:1px solid var(--line);border-left:4px solid '
+    + 'var(--brand-blue);border-radius:4px;padding:18px 20px">'
+    + '<div class="card-title" style="font-size:11px;margin-bottom:10px">This system has '
+    + rows.length + ' hydraulic circuits &mdash; one pump each</div>'
+    + '<div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:14px">'
+    + 'A low loss header separates what is either side of it. The primary pump takes the plant to the '
+    + 'header and no further; each secondary pump starts again from it. <strong style="color:var(--ink)">'
+    + 'These duties are not added together</strong> &mdash; each is a machine to select on its own. '
+    + 'The panel below is the primary, and carries the plant-side resistances and the static head.'
+    + '</div>'
+    + '<div style="overflow-x:auto"><table class="circuits-table" style="min-width:640px"><thead><tr>'
+    + '<th>Circuit</th><th>Index run ends at</th><th class="derived">Flow (l/s)</th>'
+    + '<th class="derived">Pipe (kPa)</th><th class="derived">Terminal (kPa)</th>'
+    + '<th class="derived">Duty +' + safetyPct + '% (kPa)</th><th class="derived">m head</th>'
+    + '</tr></thead><tbody>'
+    + rows.map(r =>
+        '<tr' + (r.g.id === primaryGroup ? ' style="background:rgba(122,209,228,0.10)"' : '') + '>'
+      + '<td style="font-weight:700">' + escHtml(r.g.label)
+      + (r.g.id === primaryGroup ? ' <span class="badge badge-rec">plantroom</span>' : '') + '</td>'
+      + '<td>' + escHtml(r.terminal) + '</td>'
+      + '<td class="derived-cell">' + r.lps.toFixed(2) + '</td>'
+      + '<td class="derived-cell">' + r.pipe.toFixed(1) + '</td>'
+      + '<td class="derived-cell">' + r.load.toFixed(1) + '</td>'
+      + '<td class="derived-cell" style="font-weight:800;color:var(--brand-blue-deep)">'
+      + r.duty.toFixed(1) + '</td>'
+      + '<td class="derived-cell">' + r.mH.toFixed(2) + '</td></tr>').join('')
+    + '</tbody></table></div>'
+    + '<div style="font-size:12px;color:var(--muted);line-height:1.6;margin-top:12px">'
+    + 'Each secondary duty is its own index run plus the safety factor. Plant resistances and static '
+    + 'head are on the primary only: a secondary circulates inside the building and sees neither.'
+    + '</div></div>';
+}
+
 /* ============ PUMP PANEL ============ */
 function renderPumpPanel() {
-  const indexCircuits = circuits.filter(c => c.isIndex);
+  /* With a header on the job there is more than one pump, and the big panel
+     is the plantroom one. A secondary's index run must never be added into
+     it — the header is there so that it is not — so the panel takes the
+     primary group only and the secondaries are reported beside it. */
+  const primaryGroup = hydraulicGroups().length ? hydraulicGroups()[0].id : 0;
+  const indexCircuits = circuits.filter(c => c.isIndex && circuitGroup(c) === primaryGroup);
   const noIndex = document.getElementById('pumpNoIndex');
   const content  = document.getElementById('pumpContent');
   if (indexCircuits.length === 0) { noIndex.style.display=''; content.style.display='none'; return; }
   noIndex.style.display = 'none';
   content.style.display = '';
+  renderPumpGroups(primaryGroup);
 
   const rho = parseFloat(document.getElementById('rho').value) || 999;
   const breakBody = document.getElementById('indexBreakdownBody');
@@ -4744,7 +4938,10 @@ function renderPumpPanel() {
   indexCircuits.forEach(c => {
     const r = calculateCircuit(c);
     const pl = (r.recommended ? r.pipeLoss_kPa : 0);
-    const cl = (r.consumerLoad || 0);
+    /* A header is the terminal of the circuit that feeds it, so its own
+       resistance sits where a coil would — it is what the primary pump has to
+       push through on top of the pipework. */
+    const cl = (r.consumerLoad || 0) + separatorKpa(c);
     const ct = pl + cl;
     indexPipeLoss     += pl;
     indexConsumerLoad += cl;
@@ -5122,14 +5319,15 @@ function exportPDFReport() {
   // System (main-line) flow = largest index circuit flow, for the pump.
   // Its duty (kW) is the true consumer total, since the main carries every consumer.
   let sysFlow = 0, sysKw = 0;
-  circuits.filter(c => c.isIndex).forEach(c => {
+  const rptPrimaryGroup = hydraulicGroups().length ? hydraulicGroups()[0].id : 0;
+  circuits.filter(c => c.isIndex && circuitGroup(c) === rptPrimaryGroup).forEach(c => {
     const r = calculateCircuit(c);
     if (!r.error && r.vflow_ls > sysFlow) { sysFlow = r.vflow_ls; sysKw = r.kw; }
   });
 
 
-  // Pump
-  const indexCircuits = circuits.filter(c => c.isIndex);
+  // Pump — the primary one. Separated circuits are reported after it.
+  const indexCircuits = circuits.filter(c => c.isIndex && circuitGroup(c) === rptPrimaryGroup);
   // Index run validation \u2014 carried into the report so a bad tick is on the record
   const _idxIssues = indexRunIssues();
   let idxWarnHtml = '';
@@ -5159,7 +5357,7 @@ function exportPDFReport() {
     const idxRows = indexCircuits.map(c => {
       const r = calculateCircuit(c);
       const pl = r.recommended ? r.pipeLoss_kPa : 0;
-      const cl = r.consumerLoad || 0;
+      const cl = (r.consumerLoad || 0) + separatorKpa(c);
       idxPipe += pl; idxLoad += cl;
       if (!r.error && r.vflow_ls > idxLps) { idxLps = r.vflow_ls; idxM3h = r.vflow_m3h; }
       return '<tr><td>'+escHtml(c.ref)+'</td><td class="n">'+pl.toFixed(2)+'</td><td class="n">'+cl.toFixed(2)+'</td><td class="n">'+(pl+cl).toFixed(2)+'</td></tr>';
@@ -5177,7 +5375,39 @@ function exportPDFReport() {
     const finalBar = finalKpa/100;
     const finalMH = (finalKpa*1000)/(rho*9.81);
     const names = indexCircuits.map(c=>c.ref).join(', ');
-    pumpSection = '<h2>6. Pump Duty &amp; Index Run</h2>' + idxWarnHtml + ''
+    /* With a header on the job this section is the primary pump only, and
+       the secondaries are set out after it. Reporting one duty for a
+       separated system is how a secondary ends up unpumped. */
+    let sepSection = '';
+    if (hasSeparation()) {
+      const rows = hydraulicGroups().map(g => {
+        const idx = circuits.filter(c => c.isIndex && circuitGroup(c) === g.id);
+        if (!idx.length) return '';
+        let p = 0, l = 0, q = 0, term = '';
+        idx.forEach(c => {
+          const r = calculateCircuit(c);
+          if (r.error) return;
+          p += (r.recommended ? r.pipeLoss_kPa : 0);
+          l += (r.consumerLoad || 0) + separatorKpa(c);
+          if (r.vflow_ls > q) q = r.vflow_ls;
+          if ((r.consumerLoad || 0) > 0 || isSeparatorCircuit(c)) term = c.ref;
+        });
+        const duty = (p + l) * (1 + safetyPct / 100);
+        return '<tr><td>' + escHtml(g.label) + '</td><td>' + escHtml(term) + '</td>'
+          + '<td class="n">' + q.toFixed(2) + '</td><td class="n">' + p.toFixed(1) + '</td>'
+          + '<td class="n">' + l.toFixed(1) + '</td><td class="n">' + duty.toFixed(1) + '</td>'
+          + '<td class="n">' + ((duty * 1000) / (rho * 9.81)).toFixed(2) + '</td></tr>';
+      }).join('');
+      sepSection = '<p><strong>This system is hydraulically separated.</strong> A low loss header or '
+        + 'separating buffer divides it into circuits that each need their own pump. The duties below '
+        + 'are not additive &mdash; each is a machine selected on its own. Plant-side resistances and '
+        + 'static head apply to the primary only; a secondary circulates inside the building and sees '
+        + 'neither. The breakdown that follows is the primary.</p>'
+        + '<table class="rpt"><thead><tr><th>Circuit</th><th>Index ends at</th><th class="n">Flow l/s</th>'
+        + '<th class="n">Pipe kPa</th><th class="n">Terminal kPa</th><th class="n">Duty +' + safetyPct
+        + '% kPa</th><th class="n">m head</th></tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+    pumpSection = '<h2>6. Pump Duty &amp; Index Run</h2>' + idxWarnHtml + sepSection
       + '<p>The index run comprises: <strong>'+escHtml(names)+'</strong>. This is the hydraulically most onerous path and governs pump selection. The design flow is the flow carried by the <strong>main line</strong> ('+idxLps.toFixed(2)+' l/s) \u2014 the largest flow along the index path \u2014 not the sum of the branches, since downstream circuits are fed from the main. The design head sums the index pipe friction and equipment losses (including the index terminal\u2019s consumer load), additional plant-side resistances, static head and a safety allowance.</p>'
       + '<table class="rpt"><thead><tr><th>Index Circuit</th><th class="n">Pipe Loss kPa</th><th class="n">Consumer kPa</th><th class="n">Total kPa</th></tr></thead><tbody>'+idxRows
       + '<tr class="sub"><td>Index run sub-total</td><td class="n">'+idxPipe.toFixed(2)+'</td><td class="n">'+idxLoad.toFixed(2)+'</td><td class="n">'+idxTotal.toFixed(2)+'</td></tr></tbody></table>'
