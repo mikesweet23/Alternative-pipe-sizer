@@ -497,13 +497,40 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   a tee exactly where the cursor is rather than being pulled to the nearest
   corner. The hint bar turns amber while it is held. The Tee tool does the
   same cut without holding anything.
-- **Two things become real size when you zoom in**, and both have to, or a
-  valve set stays unreadable no matter how far you go in: the symbols
-  (`valveDrawScale()`, true size 0.30 m) and the gap between the flow and
-  return legs (`pairOffsetDraw()`, 0.35 m). Each is `max(constant-on-screen,
-  real)` — so a whole-floor view keeps them visible, and past roughly 2× they
-  lock to life size and spread with the drawing. Change one without the other
-  and the symbols grow into each other.
+- **Three things become real size when you zoom in**, and all three have to, or
+  a valve set stays unreadable no matter how far you go in: the symbols
+  (`valveDrawScale()`, true size 0.30 m), the gap between the flow and return
+  legs (`pairOffsetDraw()`, 0.35 m), and the width of the pipe itself
+  (`pipeWidthDraw()`, its real outside diameter). Each is
+  `max(constant-on-screen, real)` — so a whole-floor view keeps them visible,
+  and past roughly 2× they lock to life size and spread with the drawing.
+  Change one without the others and they grow into each other: a hairline pipe
+  under a life-size valve makes it impossible to see whether the valve is
+  actually on the pipe, and on a big main the bore is wider than the 0.35 m
+  leg centres, so `pairOffsetDraw()` also holds the legs clear of their own
+  width.
+- **Zoom goes to 60×.** It was 8×, which is not close enough to place a valve
+  against the fitting next to it — the symbols are life size long before that
+  and there was nowhere further to go.
+- **Valve tags are placed against the tags already down.** Each one starts
+  where it wants to be — flow leg above the pipe, return leg below — and steps
+  further out until it is clear of every tag already placed, anywhere on the
+  drawing. If it has had to travel it gets a leader line back to its valve.
+  The old rule stepped every other tag out by a fixed amount, which was enough
+  for two valves and not enough for a set, and it never saw the tags on the
+  run next to it at all — so tags landed on top of one another exactly where a
+  set is densest and there is most to read.
+- **A component can be turned and resized; its writing never turns.** Plant,
+  loads, headers and buffers each carry `rot` and `scale` (`nodeRot()`,
+  `nodeScale()`), set from the same block on all four panels —
+  `placementFields()` and `wirePlacementButtons()`. The symbol takes the
+  rotation and the name and duty are laid over it the right way up, because a
+  duty upside down on a drawing is worse than a box at the wrong angle. This
+  is what `loadStubPos()` protects at the terminal end, and it is the same
+  principle: **turn the symbol, never the text.** Neither changes anything
+  hydraulic — the connection point is the centre of the component either way —
+  and a component drawn bigger gets a hit area to match, or it becomes hard to
+  pick up.
 - **Both legs of a set start at the same chainage and step together**, so the
   isolating valves face each other across the pair and the strainer faces the
   regulating valve. Staggering the legs put one leg's symbols in the other's

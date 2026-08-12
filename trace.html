@@ -1284,6 +1284,17 @@ function vesselKpa(n) {
 }
 function vesselKpaAssumed(n) { return isVessel(n) && isNaN(parseFloat(n && n.kpa)); }
 
+/* ---------- how a component is drawn ----------
+   Turned to sit square with the pipework it is on, and sized to suit — a
+   plantroom drawn at 1:50 wants a bigger plant box than a whole floor at
+   1:200, and a header piped in on the horizontal wants turning. Both are per
+   component, so one oddity does not force a setting on everything else.
+
+   The symbol takes the rotation; the writing never does. A name and a duty
+   upside down is worse than a box at the wrong angle. */
+function nodeRot(n)   { const v = parseFloat(n && n.rot);   return isNaN(v) ? 0 : v; }
+function nodeScale(n) { const v = parseFloat(n && n.scale); return (isNaN(v) || v <= 0) ? 1 : clamp(v, 0.4, 6); }
+
 function isVessel(n)   { return !!n && (n.type === 'llh' || n.type === 'buffer'); }
 function isSeparator(n) {
   if (!n) return false;
@@ -2075,7 +2086,12 @@ function applyZoom() {
 function setZoom(z, anchor) {
   const sc = el('scroller');
   const old = zoom;
-  zoom = clamp(z, 0.08, 8);
+  /* The ceiling used to be 8x, which is not close enough to place a valve
+     against the fitting next to it — the symbols are life size long before
+     that and there was nowhere further to go. Past life size the whole
+     drawing keeps growing, so going in further is how a set gets read and
+     positioned rather than guessed at. */
+  zoom = clamp(z, 0.08, 60);
   const cx = anchor ? anchor.x : (sc.scrollLeft + sc.clientWidth / 2) / old;
   const cy = anchor ? anchor.y : (sc.scrollTop + sc.clientHeight / 2) / old;
   applyZoom();
@@ -2105,9 +2121,12 @@ function toDwg(ev) {
 
 /* ---------- what's under the cursor ---------- */
 function hitNode(p, tolPx) {
-  const tol = (tolPx || 15) / zoom;
+  const base = (tolPx || 15) / zoom;
   let best = null;
   S.nodes.forEach(n => {
+    // a component drawn bigger has to be catchable over the whole of it
+    const tol = base * (isVessel(n) || n.type === 'source' || n.type === 'consumer'
+      ? nodeScale(n) : 1);
     const d = dist(n, p);
     if (d < tol && (!best || d < best.d)) best = { d, node: n };
   });
@@ -2135,11 +2154,28 @@ function hitSeg(p, tolPx) {
    strainer is on the flow and the regulating valve on the return, instead of
    five glyphs on top of one another. */
 const PAIR_REAL_M = 0.35;
+/* ---------- how wide to draw the pipe ----------
+   The third thing that has to become real size when you zoom in, and for the
+   same reason as the symbols and the leg spacing: a hairline under a life-
+   size valve makes it impossible to see whether the valve is actually on the
+   pipe. Past the point where the bore is bigger than the line, the pipe is
+   drawn at its outside diameter and grows with everything else. */
+function pipeWidthDraw(sg, k) {
+  const kk = (k === undefined) ? 1 / zoom : k;
+  const onScreen = (sg && sg.pipe ? clamp(1.6 + sg.pipe.od / 90, 1.8, 7) : 2.2) * kk;
+  if (!(S.pxPerM > 0) || !sg || !sg.pipe) return onScreen;
+  return Math.max(onScreen, (sg.pipe.od / 1000) * S.pxPerM);
+}
+
 function pairOffsetDraw(sg, k) {
   const w = sg.pipe ? clamp(1.6 + sg.pipe.od / 90, 1.8, 7) : 2.2;
   const onScreen = (w * 0.85 + 1.1) * (k === undefined ? 1 / zoom : k);
   if (!(S.pxPerM > 0)) return onScreen;
-  return Math.max(onScreen, PAIR_REAL_M * S.pxPerM / 2);
+  /* Far enough apart that the two pipes do not touch once they are drawn at
+     their real width — on a big main the bore is wider than the standard
+     0.35 m centres, and the flow and return would run into one another. */
+  const clear = sg && sg.pipe ? (sg.pipe.od / 1000) * S.pxPerM * 0.8 : 0;
+  return Math.max(onScreen, PAIR_REAL_M * S.pxPerM / 2, clear);
 }
 /* ---------- the control valve at a load ----------
    A 2-port, 3-port or PICV belongs to the terminal rather than to the run, so
@@ -2244,25 +2280,25 @@ function render() {
     const picked = sel && sel.kind === 'seg' && sel.id === sg.id;
     const d = sg.pts.map((p, i) => (i ? 'L' : 'M') + p.x + ' ' + p.y).join(' ');
     const single = sg.mode === 'single';
-    const w = sg.pipe ? clamp(1.6 + sg.pipe.od / 90, 1.8, 7) : 2.2;
+    const pw = pipeWidthDraw(sg, k);
 
     if (picked) {
       g.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--measure)',
-        'stroke-width': (w + 7) * k, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: .5 }));
+        'stroke-width': pw + 7 * k, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: .5 }));
     }
     if (single) {
       // one pipe: drawn in the colour of the leg it is
       g.appendChild(mk('path', { d, fill: 'none',
         stroke: sg.leg === 'return' ? 'var(--return)' : 'var(--flow)',
-        'stroke-width': w * k, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
+        'stroke-width': pw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
     } else {
       // paired: flow and return drawn as an offset couple
       const off = pairOffsetDraw(sg, k);
       g.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--flow)',
-        'stroke-width': w * k, 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+        'stroke-width': pw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
         transform: 'translate(' + (-off) + ',' + (-off) + ')' }));
       g.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--return)',
-        'stroke-width': w * k, 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+        'stroke-width': pw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
         transform: 'translate(' + off + ',' + off + ')' }));
     }
 
@@ -2297,7 +2333,17 @@ function render() {
      exactly the point there is most to read. Return-leg tags go below the
      pipe and flow-leg tags above, which splits a set in two straight away,
      and consecutive tags on the same side step out a little further. */
-  const tagRow = {};
+  /* Stepping every other tag out by a fixed amount was enough for two valves
+     and not enough for a set, and it never saw the tags on the run next to it
+     at all — so tags landed on top of one another exactly where a set is
+     densest. Each one is now placed against the tags already down: it starts
+     where it wants to be and steps further out until it is clear of all of
+     them, and if it has had to travel it gets a leader back to its valve so
+     it is still obvious which one it belongs to. */
+  const placedTags = [];
+  const overlaps = (a, b) =>
+    a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
+
   S.items.slice().sort((a, b) => (a.seg - b.seg) || (a.t - b.t)).forEach(it => {
     const q = itemPos(it, k);
     if (!q) return;
@@ -2309,14 +2355,28 @@ function render() {
 
     if (S.settings.valveTags !== false && it.tag) {
       const below = it.leg === 'return';
-      const key = it.seg + '|' + (below ? 'b' : 'a');
-      const n = (tagRow[key] = (tagRow[key] || 0) + 1) - 1;
-      const step = (n % 2) * 11 * k;                   // every other one steps out
+      const dir = below ? 1 : -1;
       // clear of the symbol, which grows once the drawing is zoomed right in
       const clear = valveDrawScale(k) * 16 + 5 * k;
-      const ty = q.y + (below ? (clear + 9 * k + step) : -(clear + step));
       const wPx = it.tag.length * 5.4 + 8;
-      g.appendChild(mk('rect', { x: q.x - wPx / 2 * k, y: ty - 8 * k, width: wPx * k, height: 11 * k,
+      const hw = wPx / 2 * k, hh = 5.5 * k;
+      const step = 12 * k;
+      let ty = q.y + dir * (clear + (below ? 9 * k : 0));
+      let box = null;
+      for (let i = 0; i < 14; i++) {
+        box = { x1: q.x - hw, x2: q.x + hw, y1: ty - hh - 2.5 * k, y2: ty + hh };
+        if (!placedTags.some(p => overlaps(box, p))) break;
+        ty += dir * step;
+      }
+      placedTags.push(box);
+
+      // a leader only where the tag has been pushed off its own valve
+      const travelled = Math.abs(ty - (q.y + dir * (clear + (below ? 9 * k : 0))));
+      if (travelled > step * 0.5) {
+        g.appendChild(mk('line', { x1: q.x, y1: q.y + dir * clear * 0.9, x2: q.x, y2: ty - dir * hh,
+          stroke: 'var(--rule-2)', 'stroke-width': 0.9 * k }));
+      }
+      g.appendChild(mk('rect', { x: q.x - hw, y: ty - 8 * k, width: wPx * k, height: 11 * k,
         rx: 1.5 * k, fill: 'rgba(255,255,255,.92)' }));
       g.appendChild(mk('text', { x: q.x, y: ty, 'text-anchor': 'middle',
         'font-size': 8 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
@@ -2373,27 +2433,34 @@ function render() {
        as the loads. */
     if (isVessel(n)) { drawVessel(g, n, k, picked); return; }
     const src = n.type === 'source';
-    const w = src ? 74 : 62, h = src ? 34 : 30;
-    const x = n.x - w / 2 * k, y = n.y - h / 2 * k;
+    const s = nodeScale(n), rot = nodeRot(n);
+    const w = (src ? 74 : 62) * s, h = (src ? 34 : 30) * s;
+    /* The box turns; the writing does not. A plant or a load is turned to sit
+       square with the pipework it is on, but a name and a duty upside down on
+       a drawing is worse than a box at the wrong angle — so the symbol takes
+       the rotation and the text is laid over it the right way up. */
+    const box = mk('g', { transform: 'translate(' + n.x + ' ' + n.y + ') rotate(' + rot + ')' });
     if (picked) {
-      g.appendChild(mk('rect', { x: x - 4 * k, y: y - 4 * k, width: (w + 8) * k, height: (h + 8) * k,
+      box.appendChild(mk('rect', { x: -(w / 2 + 4) * k, y: -(h / 2 + 4) * k,
+        width: (w + 8) * k, height: (h + 8) * k,
         rx: 5 * k, fill: 'none', stroke: 'var(--measure)', 'stroke-width': 2.5 * k }));
     }
-    g.appendChild(mk('rect', { x, y, width: w * k, height: h * k, rx: 3 * k,
+    box.appendChild(mk('rect', { x: -w / 2 * k, y: -h / 2 * k, width: w * k, height: h * k, rx: 3 * k,
       fill: src ? 'var(--graphite)' : 'var(--white)',
       stroke: src ? 'var(--graphite)' : (n.reached ? 'var(--live)' : 'var(--alarm)'),
       'stroke-width': 1.8 * k }));
-    g.appendChild(mk('text', { x: n.x, y: n.y - 2 * k, 'text-anchor': 'middle',
-      'font-size': 10 * k, 'font-weight': 600, 'font-family': 'Archivo, sans-serif',
+    g.appendChild(box);
+    g.appendChild(mk('text', { x: n.x, y: n.y - 2 * k * s, 'text-anchor': 'middle',
+      'font-size': 10 * k * s, 'font-weight': 600, 'font-family': 'Archivo, sans-serif',
       fill: src ? 'var(--paper)' : 'var(--ink)' }, String(n.name || '').slice(0, 13)));
     const sub = src
       ? (fmt(n.kw, 0) + ' kW')
       : (fmt(consumerKw(n), 0) + ' kW  ' + fmt(consumerFlow(n), 2) + ' l/s');
-    g.appendChild(mk('text', { x: n.x, y: n.y + 9 * k, 'text-anchor': 'middle',
-      'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace',
+    g.appendChild(mk('text', { x: n.x, y: n.y + 9 * k * s, 'text-anchor': 'middle',
+      'font-size': 8.5 * k * s, 'font-family': 'Azeret Mono, monospace',
       fill: src ? '#9aa3b1' : 'var(--ink-soft)' }, sub));
     if (!src && !n.reached) {
-      g.appendChild(mk('text', { x: n.x, y: y - 5 * k, 'text-anchor': 'middle',
+      g.appendChild(mk('text', { x: n.x, y: n.y - (h / 2 + 5) * k, 'text-anchor': 'middle',
         'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
         fill: 'var(--alarm)' }, 'NOT CONNECTED'));
     }
@@ -2551,26 +2618,33 @@ function drawTeeSnap(g, k) {
    another pump. */
 function drawVessel(g, n, k, picked) {
   const llh = n.type === 'llh';
-  const w = llh ? 34 : 40, h = llh ? 62 : 52;
-  const x = n.x - w / 2 * k, y = n.y - h / 2 * k;
+  const s = nodeScale(n), rot = nodeRot(n);
+  const w = (llh ? 34 : 40) * s, h = (llh ? 62 : 52) * s;
+  const y = n.y - h / 2 * k;
   const sep = isSeparator(n);
+  /* A header is drawn standing up because that is how one is built, but it is
+     as often piped in on the horizontal — so it turns, and like the plant and
+     the loads its name stays square to the sheet. */
+  const box = mk('g', { transform: 'translate(' + n.x + ' ' + n.y + ') rotate(' + rot + ')' });
   if (picked) {
-    g.appendChild(mk('rect', { x: x - 4 * k, y: y - 4 * k, width: (w + 8) * k, height: (h + 8) * k,
+    box.appendChild(mk('rect', { x: -(w / 2 + 4) * k, y: -(h / 2 + 4) * k,
+      width: (w + 8) * k, height: (h + 8) * k,
       rx: 5 * k, fill: 'none', stroke: 'var(--measure)', 'stroke-width': 2.5 * k }));
   }
-  g.appendChild(mk('rect', { x, y, width: w * k, height: h * k, rx: (llh ? 3 : 14) * k,
-    fill: 'var(--white)',
+  box.appendChild(mk('rect', { x: -w / 2 * k, y: -h / 2 * k, width: w * k, height: h * k,
+    rx: (llh ? 3 : 14) * k * s, fill: 'var(--white)',
     stroke: n.reached ? 'var(--graphite)' : 'var(--alarm)', 'stroke-width': 2 * k }));
   if (sep) {
     // the hydraulic break, drawn across the shell
-    g.appendChild(mk('line', { x1: x + 3 * k, y1: n.y, x2: x + (w - 3) * k, y2: n.y,
+    box.appendChild(mk('line', { x1: (-w / 2 + 3) * k, y1: 0, x2: (w / 2 - 3) * k, y2: 0,
       stroke: 'var(--measure)', 'stroke-width': 2.4 * k, 'stroke-dasharray': (5 * k) + ' ' + (3 * k) }));
   }
   if (n.type === 'buffer' && n.ports === 2) {
     // an in-line vessel: one way through it, on the leg it was placed in
-    g.appendChild(mk('line', { x1: x, y1: n.y, x2: x + w * k, y2: n.y,
-      stroke: n.leg === 'flow' ? 'var(--flow)' : 'var(--ret)', 'stroke-width': 2 * k }));
+    box.appendChild(mk('line', { x1: -w / 2 * k, y1: 0, x2: w / 2 * k, y2: 0,
+      stroke: n.leg === 'flow' ? 'var(--flow)' : 'var(--return)', 'stroke-width': 2 * k }));
   }
+  g.appendChild(box);
   const label = String(n.name || '').slice(0, 12);
   g.appendChild(mk('text', { x: n.x, y: y - 6 * k, 'text-anchor': 'middle',
     'font-size': 10 * k, 'font-weight': 700, 'font-family': 'Archivo, sans-serif',
@@ -3461,6 +3535,7 @@ function sourceForm(n) {
                   ['Installed plant', fmt(totals().plantKw, 0) + ' kW'],
                   ['Flow at &Delta;T ' + (n.dT || S.settings.dT), fmt(flowFromKw(n.kw || 0, n.dT || S.settings.dT), 2) + ' l/s']])
     + '<div class="note">Plant is the root of the network. Everything you trace from here hangs off it.</div>'
+    + placementFields(n)
     + rowBtns();
 }
 
@@ -3500,6 +3575,7 @@ function consumerForm(n) {
           + ', in the usual order and standing off the load. Refitting replaces whatever '
           + 'is on that run now.</div>'
         : '')
+    + placementFields(n)
     + rowBtns(true);
 }
 
@@ -3599,6 +3675,7 @@ function llhForm(n) {
           + '<strong>' + fmt(idx.drop, 1) + ' kPa</strong>, on ' + fmt(s.secondaryLps, 2) + ' l/s. That is '
           + 'the duty for this header&rsquo;s pump.</div>'
         : '')
+    + placementFields(n)
     + rowBtns();
 }
 
@@ -3676,7 +3753,62 @@ function bufferForm(n) {
           + 'will be worked out here.</div>')
     + '<div class="note">The volume goes to the sizer as a plant item, so system volume, heat-up and '
     + 'expansion all see it.</div>'
+    + placementFields(n)
     + rowBtns();
+}
+
+/* ---------- turning and sizing a component ----------
+   The same block on the plant, the loads, the headers and the buffers,
+   because it is the same job on all four and it would be irritating to find
+   it in one place and not another. Quarter turns for the common case, a free
+   angle for the rest. */
+function placementFields(n) {
+  const rot = nodeRot(n), s = nodeScale(n);
+  return '<div class="sub-hd">On the sheet</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
+    + '<button class="btn ghost sm" data-turn="-90">&#8634; 90&deg;</button>'
+    + '<button class="btn ghost sm" data-turn="90">90&deg; &#8635;</button>'
+    + '<button class="btn ghost sm" data-turn="180">180&deg;</button>'
+    + '<button class="btn ghost sm" data-size="-1">Smaller</button>'
+    + '<button class="btn ghost sm" data-size="1">Bigger</button>'
+    + (rot || s !== 1 ? '<button class="btn ghost sm" data-reset="1">Reset</button>' : '')
+    + '</div>'
+    + '<div class="row2">'
+    + '<label class="fld"><span>Angle <em>degrees</em></span>'
+    +   '<input type="number" data-f="rot" step="5" value="' + fmt(rot, 0) + '"></label>'
+    + '<label class="fld"><span>Size <em>&times;</em></span>'
+    +   '<input type="number" data-f="scale" step="0.1" min="0.4" max="6" value="' + fmt(s, 2) + '"></label>'
+    + '</div>'
+    + '<div class="note">The symbol turns; the name and the duty stay square to the sheet so they '
+    + 'can still be read. Turning or resizing changes nothing hydraulic &mdash; the connection point '
+    + 'is the centre either way.</div>';
+}
+
+/* Wired once, for whichever component is open. */
+function wirePlacementButtons() {
+  const body = el('insBody');
+  if (!body) return;
+  const node = () => (sel && sel.kind === 'node') ? nodeById(sel.id) : null;
+  const after = () => { render(); openInspector(); };
+  body.querySelectorAll('[data-turn]').forEach(b => b.addEventListener('click', () => {
+    const n = node(); if (!n) return;
+    pushUndo('turn ' + (n.name || 'component'));
+    n.rot = (((nodeRot(n) + parseFloat(b.dataset.turn)) % 360) + 360) % 360;
+    after();
+  }));
+  body.querySelectorAll('[data-size]').forEach(b => b.addEventListener('click', () => {
+    const n = node(); if (!n) return;
+    pushUndo('resize ' + (n.name || 'component'));
+    n.scale = clamp(nodeScale(n) * (parseFloat(b.dataset.size) > 0 ? 1.25 : 0.8), 0.4, 6);
+    after();
+  }));
+  const rst = body.querySelector('[data-reset]');
+  if (rst) rst.addEventListener('click', () => {
+    const n = node(); if (!n) return;
+    pushUndo('reset ' + (n.name || 'component'));
+    delete n.rot; delete n.scale;
+    after();
+  });
 }
 
 function groupOf(gid) {
@@ -3968,6 +4100,7 @@ function wireInspector() {
       render(); openInspector();
     });
   });
+  wirePlacementButtons();
   const dupIt = el('insDupItem');
   if (dupIt) dupIt.addEventListener('click', () => {
     const it = itemById(sel.id);
