@@ -501,6 +501,13 @@
 
   <div id="main" style="display:none">
 
+    <!-- Which hydraulic circuit is on screen. Only appears when the project
+         has a low loss header or a separating buffer in it, because only then
+         is there more than one pump to look at. -->
+    <div class="panel" id="groupPanel" style="display:none">
+      <div class="panel-bd" id="groupBody"></div>
+    </div>
+
     <div class="panel steps" id="stepsPanel">
       <div class="panel-hd">
         <h2>How to use this</h2>
@@ -935,6 +942,67 @@ function kDrop(k, lps, id_mm) {
   return k * FLUID.rho * v * v / 2 / 1000;
 }
 
+/* ==========================================================================
+   HYDRAULICALLY SEPARATED SYSTEMS
+   A low loss header or a separating buffer divides a job into circuits that
+   each have their own pump. This page solves **one circuit at a time**, and
+   says which one it is showing.
+
+   That is a deliberate choice rather than a shortcut. Everything here — the
+   solve, the pump curve and its control, the balancing pass, the diagram, the
+   charts — is built around one machine on one network, which is exactly what
+   a separated circuit is. Slicing the project and switching between them
+   gives each circuit the whole of this page, and each is complete: the
+   secondary mains leaving a header are parallel roots off it, which the
+   solver already handles because a plant with two mains is the same shape.
+
+   The alternative, solving every circuit at once, would mean several pumps,
+   several setpoints and several balancing passes on one screen — and they do
+   not interact hydraulically, which is the entire purpose of the header. So
+   there would be nothing to see for the complexity.
+   ========================================================================== */
+let PROJECT_CIRCUITS = [];     // every circuit in the imported project
+let PROJECT_GROUPS = [];       // one per pump
+let ACTIVE_GROUP = 0;
+
+function circuitGroupOf(c) {
+  const g = c && c.hydraulicGroup;
+  return (g === undefined || g === null) ? 0 : g;
+}
+
+/* The circuits that make up one hydraulic circuit, as a network in their own
+   right. A header is a terminal of the circuit that feeds it — the primary
+   pump pushes through it and stops — and it is left out of the secondary,
+   whose mains then hang off nothing and become the roots the pump feeds. */
+function circuitsInGroup(gid) {
+  return PROJECT_CIRCUITS.filter(c => circuitGroupOf(c) === gid);
+}
+
+function readGroups(circuits) {
+  const seen = [];
+  circuits.forEach(c => {
+    const g = circuitGroupOf(c);
+    if (!seen.some(x => x.id === g)) {
+      seen.push({ id: g, label: c.groupLabel || (g === 0 ? 'Primary' : 'Secondary'), fedBy: '' });
+    }
+  });
+  circuits.filter(c => c.isSeparator).forEach(sep => {
+    const sub = seen.find(x => x.id === sep.opensGroup);
+    if (sub) { sub.fedBy = sep.ref; sub.label = 'Secondary off ' + sep.ref; }
+  });
+  seen.sort((a, b) => a.id - b.id);
+  return seen;
+}
+function separated() { return PROJECT_GROUPS.length > 1; }
+
+/* What is doing the pumping in the circuit on screen. */
+function pumpSourceLabel() {
+  if (!separated()) return 'PLANT';
+  const g = PROJECT_GROUPS.find(x => x.id === ACTIVE_GROUP);
+  if (!g || !g.fedBy) return 'PLANT';
+  return String(g.fedBy).toUpperCase().slice(0, 14);
+}
+
 /* ---------- build the network from an imported project ---------- */
 function buildNetwork(data) {
   const s = data.settings || {};
@@ -954,7 +1022,18 @@ function buildNetwork(data) {
     vMax: parseFloat(s.vMax) || 3.0,
   };
 
-  const raw = (data.circuits || []).filter(c => c && c.ref);
+  PROJECT_CIRCUITS = (data.circuits || []).filter(c => c && c.ref);
+  PROJECT_GROUPS = readGroups(PROJECT_CIRCUITS);
+  if (!PROJECT_GROUPS.some(g => g.id === ACTIVE_GROUP)) {
+    ACTIVE_GROUP = PROJECT_GROUPS.length ? PROJECT_GROUPS[0].id : 0;
+  }
+  return buildGroupNetwork(ACTIVE_GROUP);
+}
+
+/* One hydraulic circuit, as a network this page can solve. */
+function buildGroupNetwork(gid) {
+  ACTIVE_GROUP = gid;
+  const raw = circuitsInGroup(gid);
   const byId = {};
   NODES = raw.map(c => {
     const lenF = parseFloat(c.length) || 0;
@@ -968,7 +1047,13 @@ function buildNetwork(data) {
       lengthTotal: lenF + lenR,
       fittings: parseFloat(c.fittings) || 20,
       dT: Math.abs(parseFloat(c.dT)) || 20,
-      coilKpa: parseFloat(c.consumerLoad) || 0,
+      /* A header is the terminal of the circuit that feeds it: what the
+         primary pump pushes through, in place of a coil. In its own
+         secondary it is not here at all — the mains that leave it are the
+         roots, and the pump sits where the header is. */
+      coilKpa: (parseFloat(c.consumerLoad) || 0) + (c.isSeparator ? (parseFloat(c.separatorKpa) || 0) : 0),
+      isSeparator: !!c.isSeparator,
+      vesselType: c.vesselType || '',
       sizeOverride: c.sizeOverride || 0,
       mode: c.mode || 'fromFlow',
       kw: parseFloat(c.kw) || 0,
@@ -1823,7 +1908,10 @@ function renderDiagram() {
     rx: 5, fill: '#0d1720', stroke: '#33454f', 'stroke-width': 1.4 });
   plant += svgEl('text', { x: 16 + GEO.plantW / 2, y: GEO.top + 14, 'text-anchor': 'middle',
     'font-size': 11, 'font-weight': 700, 'font-family': 'IBM Plex Sans, sans-serif',
-    fill: pumpOn ? '#6ee7b7' : '#8fa6b5', 'letter-spacing': '0.08em' }, 'PLANT');
+    /* A secondary circuit is not pumped from the plantroom — it is pumped
+       from the header it hangs off, and calling that box PLANT is how
+       somebody reads this diagram as the whole system. */
+    fill: pumpOn ? '#6ee7b7' : '#8fa6b5', 'letter-spacing': '0.08em' }, pumpSourceLabel());
   plant += svgEl('circle', { cx: 16 + GEO.plantW / 2, cy: GEO.top + 40, r: 13,
     fill: 'none', stroke: pumpOn ? '#6ee7b7' : '#8fa6b5', 'stroke-width': 1.8 });
   plant += svgEl('path', { d: `M${16 + GEO.plantW/2 - 5} ${GEO.top + 35} L${16 + GEO.plantW/2 + 6} ${GEO.top + 40} L${16 + GEO.plantW/2 - 5} ${GEO.top + 45} Z`,
@@ -2749,6 +2837,54 @@ function refresh() {
   renderDiagnostics();
   renderMains();
   renderHeadOrigin();
+  renderGroupPicker();
+}
+
+/* ---------- which circuit is on screen ----------
+   Nothing at all on a plain system. On a separated one it has to be the first
+   thing seen, because every figure below it — pump duty, balancing, the
+   diagram — belongs to one circuit and means nothing applied to another. */
+function renderGroupPicker() {
+  const panel = el('groupPanel'), body = el('groupBody');
+  if (!panel || !body) return;
+  if (!separated()) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  const active = PROJECT_GROUPS.find(g => g.id === ACTIVE_GROUP) || PROJECT_GROUPS[0];
+  body.innerHTML =
+      '<div style="display:flex;gap:14px;align-items:baseline;flex-wrap:wrap">'
+    + '<strong style="font-size:14px">This system has ' + PROJECT_GROUPS.length
+    + ' hydraulic circuits</strong>'
+    + '<span class="note" style="flex:1;min-width:260px">A low loss header separates them, so each has '
+    + 'its own pump and its own balancing. They do not interact &mdash; that is what the header is for '
+    + '&mdash; so one is solved at a time. Everything below is <strong>' + esc(active.label)
+    + '</strong>.</span></div>'
+    + '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'
+    + PROJECT_GROUPS.map(g => {
+        const n = circuitsInGroup(g.id).length;
+        return '<button data-group="' + g.id + '"'
+          + (g.id === ACTIVE_GROUP ? ' class="primary"' : '') + '>'
+          + esc(g.label) + ' <span style="opacity:.7">' + n + ' circuit' + (n === 1 ? '' : 's')
+          + '</span></button>';
+      }).join('')
+    + '</div>';
+  body.querySelectorAll('[data-group]').forEach(b =>
+    b.addEventListener('click', () => switchGroup(parseInt(b.dataset.group))));
+}
+
+/* Each circuit is a network in its own right, so switching means rebuilding
+   and re-seeding the pump against the resistance of the one now on screen —
+   carrying the old machine's duty across would size a secondary for the
+   primary's work, or the other way about. */
+function switchGroup(gid) {
+  if (gid === ACTIVE_GROUP || !PROJECT_CIRCUITS.length) return;
+  buildGroupNetwork(gid);
+  balanced = false;
+  PUMP_CURVE = null;
+  seedPumpDuty(true);
+  refresh();
+  zoomToFit();
+  const g = PROJECT_GROUPS.find(x => x.id === gid);
+  showToast('Now showing ' + (g ? g.label : 'circuit ' + gid) + ' — its own pump, its own balancing');
 }
 /* ==========================================================================
    IMPORT AND WIRING

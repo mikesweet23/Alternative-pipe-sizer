@@ -101,6 +101,104 @@ the worked example it is the difference between a **66 kPa** valve and an
 `valveNeedsAuthority()` in Pipe Trace and `ARRANGEMENTS[].authority` in the
 simulator are the same rule and must agree.
 
+### Hydraulic separation — the rule that runs through all three tools
+
+A job with a low loss header is **not one system**. The primary from the plant
+to the header is one circuit with its own pump; each secondary main leaving it
+is another with its own. Adding a secondary's loss to the primary's — which is
+what a single index run back to the plant does — invents pump head that the
+header exists precisely to avoid.
+
+So a separating device is **a break in the pressure path but not in the flow
+path**. Duty still rolls all the way up, because the plant still has to make
+the heat. Pressure stops dead at the header.
+
+What separates:
+
+| | Separates | Why |
+|---|---|---|
+| Low loss header | **always** | That is what it is |
+| Four-port buffer | **asked** | Usually piped to separate, but it can be a common-flow vessel, and the two are different systems. Asked once on placement, never assumed |
+| Two-port buffer | no | It sits in the flow or the return as a piece of the main |
+
+Where it lives in each tool:
+
+- **Pipe Trace** — `isSeparator()`, and `assignGroups()` marks every node and
+  run with its `hgroup`. `indexRunFor(gid)` stops the walk the moment the run
+  above belongs to another group, so each group gets its own index run;
+  `S.indexes` is the list, primary first, and `S.index` stays the primary so
+  everything that read it still works.
+- **Sizer** — `circuitGroup()` reads the group off the imported circuit rather
+  than re-deriving it, `pathToPlant()` stops at the header, `applyCriticalPath()`
+  ticks an index run *in every group*, and `renderPumpGroups()` sets the duties
+  side by side. The main pump panel, the CSV figures and the report are the
+  **primary** only.
+- **Simulator** — one circuit at a time, chosen in a picker that only appears
+  when the project is separated. Deliberate: the solve, the pump curve, the
+  balancing pass and the diagram are all built around one machine on one
+  network, which is exactly what a separated circuit is. The mains leaving a
+  header become parallel roots, which the solver already handles because a
+  plant with two mains is the same shape. Solving all of them at once would
+  mean several pumps and several balancing passes on one screen for circuits
+  that by definition do not interact.
+
+### The flow rule: primary above secondary, always
+
+**The primary has to carry more than the secondaries take.** If it carries
+less, the shortfall can only come back up the header — secondary return mixing
+into secondary flow — and no terminal sees design temperature.
+
+So the primary is the secondary roll-up **plus a margin**, held on the header
+itself (`marginPct`, default 10%, or an explicit `primaryLps`), and every run
+above the header is sized for that flow rather than the roll-up. The heat is
+untouched: it is the flow that is deliberately higher, which is the same as
+saying the primary runs at a smaller ΔT. Both figures are shown.
+
+Three bands, all flagged on the drawing, in the header panel and in Check:
+
+| Margin | Verdict |
+|---|---|
+| below 0% | **Fault.** The header mixes the wrong way |
+| 0–5% (`LLH_MARGIN_MIN`) | Thin — one secondary pump running fast reverses it |
+| 5–25% | Fine |
+| above 25% (`LLH_MARGIN_MAX`) | Over-pumped — wasted pump energy, flattened plant ΔT |
+
+The bands are an assumption until set per job.
+
+> **This is where the margin gets lost if you are not careful.** The sizer's
+> `rolledUpKw()` walked straight through the header, so every primary main was
+> sized for the secondary flow. It now stops at a separator and takes its
+> declared primary flow — `separatorDutyKw()`. If Trace and the sizer ever
+> disagree on a main above a header again, look there first.
+
+### Sizing the header shell
+
+Sized on the **primary** flow — the larger of the two by the rule above — at no
+more than **0.4 m/s**. Slow water is the whole mechanism: it is what stops the
+primary and secondary dragging each other about. The same limit the sizer
+already held for a circuit ticked LLH, so the two agree by construction, and an
+export from Trace switches the sizer's LLH option on rather than leaving the
+header to be sized like a main until somebody notices.
+
+`llhShell()` in Trace picks the shell with `sizeAtVelocity()` — velocity only,
+no gradient limit and no minimum velocity, because a header is meant to be
+slow.
+
+**A vessel carries no pipe length across the join.** Its whole resistance is
+its own kPa figure (`separatorKpa`, assumed 2 kPa for a header and 3 for a
+buffer until a product is selected). Giving it a length put friction in the
+sizer that Pipe Trace had not counted, and the two then disagreed by a tenth of
+a kPa for no reason anybody could find. The shell length is a dimension, and it
+is what the volume is worked out from.
+
+### Buffer volume
+
+Taken, not invented. The litres are yours; what the tool does is say what that
+volume buys — usable heat over the cycling ΔT against the duty on the drawing,
+as a run time in minutes, and the litres that would give the run time asked
+for. Volumes cross to the sizer as `plantItems`, so system volume, heat-up and
+expansion all see them.
+
 ### Which valves go with which arrangement
 
 A **PICV holds its own flow**, so it never gets a double regulating valve or a
@@ -272,6 +370,8 @@ Flagged in the tools as assumptions. Replace when the figures arrive.
 | Flange / bag loss | 0.40 × valve jacket coefficient | Measured data |
 | Pump curves | Generic parabola through shut-off (125% of design head) and the duty point | **Paste the real one.** Pump → *Use a real pump curve* takes flow/head pairs in l/s or m³/h and kPa or m; everything then solves against that machine |
 | Valve Kv and PICV range | Generic | Selected products |
+| Resistance through a vessel | Low loss header 2 kPa, buffer 3 kPa | Selected products, per vessel |
+| Primary flow margin over secondary | 10%, with a 5–25% band | The plant's own flow rate, per job |
 | PICV / control valve differential | PICV 25, 2-port 20, 3-port 20, DPCV 15 kPa | Selected products, per valve |
 | K for wafer check, basket strainer, dirt separator, flow station, flexible | See section 2, marked *assumed* | Supplier data |
 | Typical valve resistances (`VALVE_LIB[].typ`) | Ball/gate 0.5 · butterfly 3 · globe 15 · DRV 12 · comm set 15 · flow station 8 · Y-strainer 8 · basket 10 · swing check 5 · wafer check 4 · dirt separator 12 · flexible 1 kPa | Quoted figures at design flow. These are the **default** basis, so they set the numbers on every schedule until replaced |
@@ -298,6 +398,22 @@ Circuit fields that carry meaning across tools:
 | `isIndex` | On the critical path. Pipe Trace works this out and ticks it |
 | `traceValves` | The valves placed on this run — tag, type, leg, qty |
 | `traceCoilKpa`, `traceValveKpa` | How `consumerLoad` splits between coil and control valve |
+| `hydraulicGroup` | Which pump this run belongs to. 0 is the primary; every header opens another |
+| `isSeparator` | This circuit **is** a header or separating buffer. It opens `opensGroup` and carries `separatorKpa` |
+| `isLLH` | Size on velocity alone, to the header limit. Already existed in the sizer; Pipe Trace now sets it |
+| `vesselType`, `vesselLitres`, `ports`, `marginPct`, `primaryLps`, `secondaryLps` | What the vessel is and what is either side of it |
+
+A header crosses as **a circuit of its own**, sitting between the run that
+feeds it and the runs that leave it, with its primary flow given explicitly
+(`mode: 'fromFlow'`) rather than rolled up. That is what makes the margin
+propagate up through the sizer's own roll-up, and it means the secondary mains
+hang off the header rather than off the primary main that fed it, so the two
+sides can never be added together by accident.
+
+`traceMeta.hydraulicGroups` is one entry per pump, and `traceMeta.separators`
+carries each header's two flows, its margin, its shell and whether it is
+reversed. A tool reading only `indexKpa` still gets the primary, which is what
+it always got.
 
 The project also carries a top-level **`valveSchedule`**: the whole take-off as
 a flat list — tag, type, symbol key, run, size, DN, leg, quantity, kPa, and
@@ -327,11 +443,18 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   carrying nothing. A tee takes the height of the run it lands on, not the
   default main height. Turn the rule off in Pipe & basis if a genuine mid-span
   tee is needed.
-- **Run naming.** `M1, M2` mains from the plant; `SM1, SM2` sub-mains that
-  branch off a main and still feed more than one load; `B1, B2` branches into a
-  load; `X1` anything not connected. A main or sub-main cut by a tee is
-  numbered in sections from the plant — `M1.1, M1.2`. A run in one piece keeps
-  its plain number.
+- **Run naming.** `PM1, PM2` primary mains from the plant; `SM1, SM2` secondary
+  mains from a low loss header or a separating buffer; `SB1, SB2` sub-mains
+  that branch off a main and still feed more than one load; `B1, B2` branches
+  into a load; `X1` anything not connected. A main cut by a tee is numbered in
+  sections from its own pump — `PM1.1, PM1.2`. A run in one piece keeps its
+  plain number.
+  Past a header the numbering starts again: what leaves a header is a main in
+  its own right, not the continuation of the primary that fed it. A buffer that
+  does not separate is just a vessel in the line, so the run carries straight
+  on through it.
+  (`SM` used to mean sub-main. It was moved to secondary main because that is
+  what an engineer says out loud, and sub-mains took `SB`.)
 - **Undo is snapshots of the take-off only** — nodes, runs and placed valves.
   Not the drawing, the scale or the settings: a snapshot carrying the image
   would be megabytes, and undo is for what you drew, not the sheet behind it.
@@ -618,6 +741,22 @@ viscosity note in section 2.
 11. **Trace a run with an odd-angle corner** and confirm the run inspector
     says "counted as a set of two elbows" and the fitting list shows 2 ×
     45° elbow for it.
+
+### If you touched headers, buffers or separation
+
+12. Put a **low loss header** between the plant and the loads and check all
+    three tools tell the same story: Pipe Trace's status strip shows a primary
+    index and a separate header index that **do not add up**; the sizer opens
+    with an index run ticked in each circuit and a duty table saying the same;
+    the simulator offers a circuit picker and solves either one on its own.
+13. **Reconcile across the header.** A main above it must agree between Trace
+    and the sizer on the *primary* flow, margin included — on the worked
+    example, PM1 at 1.007 l/s and 8.86 kPa against the sizer's 8.87. If the
+    sizer shows the secondary flow on a primary main, `rolledUpKw()` is
+    walking through the separator again.
+14. **Break the flow rule on purpose.** Set the header's primary flow below the
+    secondary and confirm it is called out in three places: on the drawing
+    under the header, in the header panel, and in Check.
 
 ### If you touched the sheet rotation
 
