@@ -621,6 +621,7 @@
       <div class="status" id="status" style="display:none"></div>
 
       <div class="zoomer" id="zoomer" style="display:none">
+        <button id="zRot" title="Rotate the drawing &mdash; R, or [ and ] for 90&deg; steps">&#8635;</button>
         <button id="zOut" title="Zoom out">&minus;</button>
         <div class="lvl" id="zLvl">100%</div>
         <button id="zIn" title="Zoom in">+</button>
@@ -1160,9 +1161,16 @@ const UNDO_MAX = 60;
 const undoStack = [];
 let undoSuspended = false;
 
+/* The angle the sheet was at goes in with the take-off, because a rotation
+   moves every traced point: stepping the geometry back without putting the
+   sheet back would leave the trace off the pipework. It is a number, not the
+   image — the drawing itself is still deliberately left out. The token says
+   which sheet it was, so a snapshot taken before a different drawing was
+   loaded cannot turn the new one. */
 function undoSnapshot() {
   return JSON.stringify({
     nodes: S.nodes, segs: S.segs, items: S.items, nextId: S.nextId,
+    imgRot: imgRot(), imgTok: S.img ? S.img.tok : null,
   });
 }
 /* Call before the change, with a few words for the button's tooltip. */
@@ -1189,6 +1197,11 @@ function undo() {
   refreshUndoBtn();
   render();
   toast('Undone: ' + step.label);
+  // the take-off just restored is in the coordinates of the angle it was
+  // taken at, so the sheet goes back to that angle and nothing else moves
+  if (S.img && d.imgTok === S.img.tok && Math.abs(imgRot() - (d.imgRot || 0)) > 0.0005) {
+    rotateDrawing(d.imgRot || 0, { geometry: false, quiet: true });
+  }
 }
 function refreshUndoBtn() {
   const b = el('bUndo');
@@ -1785,10 +1798,18 @@ function setZoom(z, anchor) {
   sc.scrollLeft = cx * zoom - (anchor ? anchor.sx : sc.clientWidth / 2);
   sc.scrollTop  = cy * zoom - (anchor ? anchor.sy : sc.clientHeight / 2);
 }
+/* The zoom that would put a sheet of this size on screen whole. Separate from
+   zoomFit because rotating asks the question without wanting the answer
+   applied — a sheet that was fitted is refitted, one that was zoomed into is
+   left where it was. */
+function fitZoom(w, h) {
+  const sc = el('scroller');
+  return Math.min((sc.clientWidth - 20) / w, (sc.clientHeight - 20) / h);
+}
 function zoomFit() {
   if (!S.img) return;
   const sc = el('scroller');
-  setZoom(Math.min((sc.clientWidth - 20) / S.img.w, (sc.clientHeight - 20) / S.img.h));
+  setZoom(fitZoom(S.img.w, S.img.h));
   sc.scrollLeft = 0; sc.scrollTop = 0;
 }
 
@@ -2278,7 +2299,9 @@ function renderStatus() {
     + cell('Flow', fmt(t.lps, 2) + ' l/s')
     + cell('Route on plan', fmt(t.routeM, 0) + ' m')
     + cell('Pipe installed', fmt(t.pipeM, 0) + ' m')
-    + (worst ? cell('Index run', fmt(worst.drop, 0) + ' kPa') : '');
+    + (worst ? cell('Index run', fmt(worst.drop, 0) + ' kPa') : '')
+    // said out loud, because a sheet turned an hour ago is not obvious later
+    + (imgRot() ? cell('Sheet turned', fmt(imgRot(), 1) + '°') : '');
 }
 
 /* ==========================================================================
@@ -4209,11 +4232,20 @@ const AUTO_KEY = 'adi-trace-autosave';
 const AUTO_IMG_KEY = 'adi-trace-autosave-img';
 let autoTimer = null;
 
+/* What goes in a file or the autosave: the sheet as it is now and nothing
+   else. The image as it was loaded is held in memory only for rotating from,
+   and writing it out as well would double the size of every save for no gain
+   — a rotated drawing is a drawing in its own right, and opening it again
+   simply starts from there. */
+function imgForSave() {
+  return S.img ? { src: S.img.src, w: S.img.w, h: S.img.h, label: S.img.label } : null;
+}
+
 function projectBundle(withImg) {
   const out = JSON.parse(JSON.stringify({
     app: 'adi-pipe-trace', schema: 1,
     ref: S.ref, engineer: S.engineer, date: S.date,
-    img: withImg ? S.img : null, pxPerM: S.pxPerM, calib: S.calib,
+    img: withImg ? imgForSave() : null, pxPerM: S.pxPerM, calib: S.calib,
     nodes: S.nodes, segs: S.segs, items: S.items,
     nextId: S.nextId, settings: S.settings,
   }));
@@ -4235,7 +4267,7 @@ function autosave() {
       }));
     } catch (e) { return; }                       // out of room: nothing to do
     try {
-      if (S.img) localStorage.setItem(AUTO_IMG_KEY, JSON.stringify(S.img));
+      if (S.img) localStorage.setItem(AUTO_IMG_KEY, JSON.stringify(imgForSave()));
     } catch (e) {
       // the drawing alone is too big for the store; the take-off is still safe
       try { localStorage.removeItem(AUTO_IMG_KEY); } catch (e2) {}
@@ -4357,13 +4389,23 @@ function loadProject(data) {
   toast('Opened ' + (S.ref || 'project'));
 }
 
-function showDrawing(opts) {
+/* The sheet on screen. Called on every load and after every rotation, so the
+   image, the stage it sits on and the overlay above it can never disagree
+   about how big the drawing is. */
+function paintDrawing() {
   const img = el('dwg');
   img.src = S.img.src;
   img.style.display = 'block';
   img.width = S.img.w; img.height = S.img.h;
   el('sheet').style.width = S.img.w + 'px';
   el('sheet').style.height = S.img.h + 'px';
+}
+
+let imgTokSeq = 0;
+
+function showDrawing(opts) {
+  S.img.tok = ++imgTokSeq;      // a new sheet: rotations recorded against the last one no longer apply
+  paintDrawing();
   el('board').style.display = 'none';
   el('zoomer').style.display = 'flex';
   ['bSched','bExport','bName','b3d','bCheck'].forEach(id => el(id).disabled = false);
@@ -4388,6 +4430,191 @@ function scaleRecheck() {
     + '<button class="btn ghost" id="srKeep">Same scale, carry on</button></div>');
   el('srNew').addEventListener('click', () => { closeModal(true); setTool('calib'); });
   el('srKeep').addEventListener('click', () => { closeModal(true); toast('Scale kept'); });
+}
+
+/* ==========================================================================
+   ROTATING THE SHEET
+   A layout arrives sideways more often than not — a landscape sheet exported
+   from a portrait PDF, a photograph of a drawing, a scan a degree or two off
+   square. Turning it is the first thing wanted and it has to be safe to do
+   at any point, not only before anything has been traced.
+
+   So the rotation is **baked into the image and the take-off is turned with
+   it**, rather than the sheet being spun on screen. Everything downstream —
+   hit testing, snapping, the labels that have to stay square to the sheet,
+   the 3D check, the schedule, the export — carries on working in drawing
+   coordinates without knowing anything happened. Rotation preserves distance,
+   so the scale is untouched; the calibration line is turned with the rest so
+   it still lies on the dimension it was taken from.
+
+   Every rotation is re-rendered **from the image as it was loaded**, never
+   from the last rotated copy. Nudging a scan straight a degree at a time
+   would otherwise soften it a little more each time and grow its corners with
+   every pass. The original is held in memory only — see imgForSave().
+
+   Placed valves hold a run and a fraction along it rather than a point, so
+   they need nothing doing to them: they turn with the pipe they are on.
+   ========================================================================== */
+let rotBusy = false;
+
+/* The image as it was loaded, kept the first time it is needed. */
+function imgBase() {
+  if (!S.img) return;
+  if (!S.img.src0) {
+    S.img.src0 = S.img.src; S.img.w0 = S.img.w; S.img.h0 = S.img.h; S.img.rot = 0;
+  }
+}
+function imgRot() { return S.img ? (S.img.rot || 0) : 0; }
+
+/* What the source image measures once turned through an angle. */
+function rotatedBox(w, h, deg) {
+  const r = deg * Math.PI / 180, c = Math.abs(Math.cos(r)), s = Math.abs(Math.sin(r));
+  return { w: Math.max(1, Math.round(w * c + h * s)), h: Math.max(1, Math.round(w * s + h * c)) };
+}
+
+/* The canvas turns the image about its own centre, so turning a point about
+   the old and new centres in the same way is what keeps the trace exactly
+   where it was on the pipework. */
+function turnAbout(deg, cOld, cNew) {
+  const r = deg * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+  return p => ({
+    x: cNew.x + (p.x - cOld.x) * cs - (p.y - cOld.y) * sn,
+    y: cNew.y + (p.x - cOld.x) * sn + (p.y - cOld.y) * cs,
+  });
+}
+
+/* Turn everything that holds a point on the plan. */
+function turnTakeoff(deg, cOld, cNew) {
+  const T = turnAbout(deg, cOld, cNew);
+  S.nodes.forEach(n => { const q = T(n); n.x = q.x; n.y = q.y; });
+  S.segs.forEach(sg => { if (sg.pts) sg.pts = sg.pts.map(T); });
+  if (S.calib && S.calib.a && S.calib.b) { S.calib.a = T(S.calib.a); S.calib.b = T(S.calib.b); }
+  if (draft && draft.pts) draft.pts = draft.pts.map(T);   // mid-trace survives a rotation
+}
+
+/* Rotate to an absolute angle, measured clockwise from the sheet as loaded.
+   opts.geometry === false turns the image alone, which is how undo puts a
+   rotation back: the take-off it restores is already in that angle's
+   coordinates. */
+function rotateDrawing(target, opts) {
+  opts = opts || {};
+  if (!S.img) { toast('Load a drawing first'); return; }
+  if (rotBusy) return;
+  imgBase();
+  target = ((target % 360) + 360) % 360;
+  const cur = imgRot();
+  const delta = target - cur;
+  if (Math.abs(delta) < 0.0005) { if (!opts.quiet) toast('Already at that angle'); return; }
+
+  rotBusy = true;
+  const im = new Image();
+  im.onerror = () => { rotBusy = false; toast('The drawing could not be rotated'); };
+  im.onload = () => {
+    try {
+      const box = rotatedBox(S.img.w0, S.img.h0, target);
+      const cv = document.createElement('canvas');
+      cv.width = box.w; cv.height = box.h;
+      const cx = cv.getContext('2d');
+      // an angle off square opens up corners that were never on the sheet
+      cx.fillStyle = '#ffffff';
+      cx.fillRect(0, 0, box.w, box.h);
+      cx.translate(box.w / 2, box.h / 2);
+      cx.rotate(target * Math.PI / 180);
+      cx.drawImage(im, -S.img.w0 / 2, -S.img.h0 / 2, S.img.w0, S.img.h0);
+      // a photographed or scanned sheet stays a JPEG; re-encoding one as PNG
+      // multiplies the file the autosave has to find room for
+      const src = /^data:image\/jpe?g/i.test(S.img.src0)
+        ? cv.toDataURL('image/jpeg', 0.92) : cv.toDataURL('image/png');
+
+      const cOld = { x: S.img.w / 2, y: S.img.h / 2 }, cNew = { x: box.w / 2, y: box.h / 2 };
+      /* A sheet that was on screen whole is put back on screen whole, because
+         a quarter turn changes its shape. A sheet that was zoomed into is
+         held where it was, on the same point of the drawing: straightening a
+         scan half a degree at a time means watching one corner of it, and
+         being thrown back to the whole sheet after every nudge makes that
+         impossible to judge. */
+      const sc = el('scroller');
+      const wasFitted = Math.abs(zoom - clamp(fitZoom(S.img.w, S.img.h), 0.08, 8)) < zoom * 0.02;
+      const mid = turnAbout(delta, cOld, cNew)({
+        x: (sc.scrollLeft + sc.clientWidth / 2) / zoom,
+        y: (sc.scrollTop + sc.clientHeight / 2) / zoom,
+      });
+
+      if (opts.geometry !== false) {
+        pushUndo('rotate the drawing');
+        turnTakeoff(delta, cOld, cNew);
+      }
+      S.img.src = src; S.img.w = box.w; S.img.h = box.h; S.img.rot = target;
+      paintDrawing();
+      if (wasFitted) zoomFit();
+      else {
+        sc.scrollLeft = mid.x * zoom - sc.clientWidth / 2;
+        sc.scrollTop = mid.y * zoom - sc.clientHeight / 2;
+      }
+      render();
+      if (!opts.quiet) {
+        const traced = S.segs.length || S.nodes.length;
+        toast(target
+          ? 'Drawing rotated ' + fmt(target, 1) + '°' + (traced ? ' — the trace turned with it' : '')
+          : 'Drawing back as it was loaded');
+      }
+      if (el('rotNow')) rotateDialog();          // the panel is open: show where it is now
+    } finally { rotBusy = false; }
+  };
+  im.src = S.img.src0;
+}
+
+/* Quarter turns and nudges, both relative to where it is now. */
+function rotateBy(deg) { rotateDrawing(imgRot() + deg); }
+
+/* The nudge a scan was last straightened by, kept so the panel comes back
+   with it rather than a fresh half a degree after every turn. */
+let rotFineDeg = 0.5;
+
+function rotateDialog() {
+  if (!S.img) { toast('Load a drawing first'); return; }
+  imgBase();
+  const cur = imgRot();
+  const square = Math.abs(cur % 90) < 0.0005;
+  modal('Rotate the drawing',
+      '<p style="margin-top:0">Turning the sheet turns everything traced on it with it, so nothing '
+    + 'comes off the pipework. Rotating does not change a distance, so the <strong>scale is '
+    + 'unaffected</strong> and the calibration line stays on the dimension it was taken from.</p>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">'
+    + '<button class="btn ghost" id="rotL">&#8634;&nbsp; 90&deg; left</button>'
+    + '<button class="btn ghost" id="rotR">&#8635;&nbsp; 90&deg; right</button>'
+    + '<button class="btn ghost" id="rot180">180&deg;</button></div>'
+    + '<label class="fld"><span>Straighten a scan <em>degrees</em></span>'
+    + '<input type="number" id="rotFine" step="0.1" min="0" max="45" value="' + fmt(rotFineDeg, 1) + '"></label>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
+    + '<button class="btn ghost sm" id="rotNudgeL">&#8634; anticlockwise</button>'
+    + '<button class="btn ghost sm" id="rotNudgeR">clockwise &#8635;</button></div>'
+    + '<div class="note" id="rotNow">Turned <strong class="mono">' + fmt(cur, 1) + '&deg;</strong> '
+    + 'from the sheet as it was loaded.'
+    + (square ? '' : ' An angle off square opens up corners that were never on the drawing; they are '
+        + 'filled white.')
+    + '<br>Each turn is worked from the original image, so straightening a degree at a time cannot '
+    + 'soften it. <kbd>Ctrl</kbd>+<kbd>Z</kbd> steps a rotation back like anything else, and '
+    + '<kbd>[</kbd> <kbd>]</kbd> are the quarter turns without opening this.</div>'
+    + '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
+    + (cur ? '<button class="btn ghost" id="rotZero">Back as loaded</button>' : '')
+    + '<button class="btn go" id="rotDone">Done</button></div>',
+    scaleNeeded());        // straightened or not, an uncalibrated sheet goes back to the gate
+  const fine = () => {
+    const v = Math.abs(parseFloat(el('rotFine').value));
+    rotFineDeg = isNaN(v) ? 0 : clamp(v, 0, 45);
+    return rotFineDeg;
+  };
+  el('rotL').addEventListener('click', () => rotateBy(-90));
+  el('rotR').addEventListener('click', () => rotateBy(90));
+  el('rot180').addEventListener('click', () => rotateBy(180));
+  el('rotNudgeL').addEventListener('click', () => rotateBy(-fine()));
+  el('rotNudgeR').addEventListener('click', () => rotateBy(fine()));
+  const z = el('rotZero');
+  if (z) z.addEventListener('click', () => rotateDrawing(0));
+  // straightening the sheet first is reasonable, but the scale gate still has
+  // to be the last thing standing between a drawing and anything traced on it
+  el('rotDone').addEventListener('click', () => { closeModal(true); scaleGate(); });
 }
 
 async function loadDrawingFile(file) {
@@ -4473,8 +4700,11 @@ function scaleGate() {
     + 'The longer the reference, the smaller the error in everything that follows.</div>'
     + '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
     + '<button class="btn go" id="sgGo">Set the scale</button>'
+    + '<button class="btn ghost" id="sgRot">Rotate the drawing</button>'
     + '<button class="btn ghost" id="sgOther">Load a different drawing</button></div>', true);
   el('sgGo').addEventListener('click', () => { closeModal(true); setTool('calib'); });
+  // a sheet that arrived sideways is straightened before it is measured
+  el('sgRot').addEventListener('click', () => { closeModal(true); rotateDialog(); });
   el('sgOther').addEventListener('click', () => { closeModal(true); el('fDwg').click(); });
   return true;
 }
@@ -4526,8 +4756,12 @@ function stepsDialog() {
     ['Set the pipe and design basis', tick(done.pipe),
      'Material, condition and jointing come first, because they set the roughness every size is worked out from. '
      + 'The same tables as the Pipework Sizer, so nothing changes when the project moves across.'],
-    ['Load the drawing', tick(done.dwg),
-     'A PDF or an image of the layout. Only the first page of a PDF is used.'],
+    ['Load the drawing, and turn it the right way up', tick(done.dwg),
+     'A PDF or an image of the layout. Only the first page of a PDF is used.<br>'
+     + 'If it comes in sideways, or a scan is a degree or two off square, use <strong>Rotate</strong> '
+     + 'by the zoom controls &mdash; <kbd>R</kbd>, or <kbd>[</kbd> and <kbd>]</kbd> for quarter turns. '
+     + 'Anything already traced turns with the sheet, and the scale is unaffected, so it is safe to '
+     + 'straighten a drawing at any point rather than only before you start.'],
     ['Set the scale \u2014 before anything else', tick(done.scale),
      'Pick two points a known distance apart \u2014 a grid line, a bay, a dimension already on the drawing \u2014 '
      + 'and type the real figure. Every length after that comes off the drawing, so nothing can be placed '
@@ -5372,6 +5606,9 @@ document.addEventListener('keydown', ev => {
   if (k === '=' || k === '+') { setZoom(zoom * 1.2); return; }
   if (k === '-') { setZoom(zoom / 1.2); return; }
   if (k === '0') { zoomFit(); return; }
+  if (k === 'r') { rotateDialog(); return; }
+  if (k === '[') { rotateBy(-90); return; }
+  if (k === ']') { rotateBy(90); return; }
 });
 
 /* ==========================================================================
@@ -5437,6 +5674,7 @@ el('bSchedClose').addEventListener('click', () => el('drawer').classList.remove(
 el('insClose').addEventListener('click', closeInspector);
 el('hintX').addEventListener('click', () => setTool('select'));
 
+el('zRot').addEventListener('click', rotateDialog);
 el('zIn').addEventListener('click', () => setZoom(zoom * 1.2));
 el('zOut').addEventListener('click', () => setZoom(zoom / 1.2));
 el('zFit').addEventListener('click', zoomFit);

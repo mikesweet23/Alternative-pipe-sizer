@@ -337,7 +337,36 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   would be megabytes, and undo is for what you drew, not the sheet behind it.
   `pushUndo(label)` goes *before* the change; `asOneUndo()` and the
   `undoSuspended` flag group several edits that are really one action, so
-  tracing a run and the terminal set it fits are a single step back.
+  tracing a run and the terminal set it fits are a single step back. The one
+  thing about the sheet a snapshot does carry is the **angle it was turned
+  to** — a number, not the image — because a rotation moves every traced
+  point, and stepping the geometry back without putting the sheet back would
+  leave the trace off the pipework. A token beside it says which sheet that
+  was, so a snapshot taken before a different drawing was loaded cannot turn
+  the new one.
+- **Rotating the drawing turns the take-off with it.** A sheet arrives
+  sideways more often than not, and a scan is rarely square, so Rotate sits
+  with the zoom controls — quarter turns and a fine nudge for straightening,
+  `R` for the panel, `[` and `]` for the quarter turns. The rotation is
+  **baked into the image and every traced point is turned with it**, rather
+  than the sheet being spun on screen: hit testing, snapping, the labels that
+  have to stay square to the sheet, the 3D check and the export then carry on
+  in drawing coordinates knowing nothing about it. Rotation preserves
+  distance, so `pxPerM` is untouched and the calibration line is turned with
+  the rest, still lying on the dimension it was taken from. Placed valves hold
+  a run and a fraction along it rather than a point, so they need nothing
+  doing to them.
+  Every turn is re-rendered from **the image as it was loaded**, never from
+  the last rotated copy — nudging a scan straight a degree at a time would
+  otherwise soften it a little more each pass and grow its corners every time.
+  That original is held in memory only; `imgForSave()` writes the sheet as it
+  is now and nothing else, so a save is not twice the size and a rotated
+  drawing opens again as a drawing in its own right. An angle off square opens
+  up corners that were never on the sheet, and those are filled white.
+  A sheet that was on screen whole is refitted after a turn because its shape
+  has changed; one that was zoomed into is held on the same point of the
+  drawing, or straightening half a degree at a time would be impossible to
+  judge.
 - **Alt is the override key, and it means one thing: ignore the constraint in
   the way.** Over open paper it flips the corner lock, so a square job takes
   one free angle and a free-form job one square corner without changing a
@@ -589,6 +618,14 @@ viscosity note in section 2.
 11. **Trace a run with an odd-angle corner** and confirm the run inspector
     says "counted as a set of two elbows" and the fitting list shows 2 ×
     45° elbow for it.
+
+### If you touched the sheet rotation
+
+12. Trace something, then **rotate the drawing** a quarter turn: the trace has
+    to still sit on the pipework it was traced from, and Route on plan, Pipe
+    installed and Scale in the status strip must not move by a millimetre —
+    rotation cannot change a distance. `Ctrl`+`Z` puts both the sheet and the
+    trace back together.
 
 ---
 
