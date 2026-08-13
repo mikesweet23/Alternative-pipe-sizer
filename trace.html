@@ -1295,6 +1295,130 @@ function vesselKpaAssumed(n) { return isVessel(n) && isNaN(parseFloat(n && n.kpa
 function nodeRot(n)   { const v = parseFloat(n && n.rot);   return isNaN(v) ? 0 : v; }
 function nodeScale(n) { const v = parseFloat(n && n.scale); return (isNaN(v) || v <= 0) ? 1 : clamp(v, 0.4, 6); }
 
+/* ---------- a component has a real size on the plan ----------
+   Width and height in metres, separately, because a plate exchanger is not
+   the same shape as an AHU and a header is not the same shape as either.
+   Stretching one to sit over the plant it represents is what makes the
+   drawing read as the job rather than as a diagram.
+
+   Real size is also what makes a **connection point** possible at all. A
+   pipe joining the edge of a box has to join it at a fixed place on the
+   drawing, and a box drawn at a constant size on screen has no fixed edge —
+   it would move every time the drawing was zoomed, and with it the length of
+   every run into it. Zoom can never change a length, so the box had to
+   become real before anything could be connected to anywhere but its
+   centre. */
+const NODE_SIZE_M = {
+  source:   { x: 3.0, y: 2.0 },
+  consumer: { x: 1.6, y: 1.0 },
+  llh:      { x: 0.5, y: 2.0 },
+  buffer:   { x: 1.0, y: 1.8 },
+};
+/* Never smaller than this on screen, or a whole-floor view loses them and
+   they become impossible to pick up. The same max(on-screen, real) rule the
+   symbols, the leg spacing and the pipe width all follow. */
+const NODE_MIN_PX = {
+  source:   { x: 74, y: 34 },
+  consumer: { x: 62, y: 30 },
+  llh:      { x: 34, y: 62 },
+  buffer:   { x: 40, y: 52 },
+};
+
+function nodeSizeM(n) {
+  const d = NODE_SIZE_M[n && n.type] || NODE_SIZE_M.consumer;
+  const s = nodeScale(n);                       // the old uniform multiplier
+  const x = parseFloat(n && n.sizeXm), y = parseFloat(n && n.sizeYm);
+  return { x: (isNaN(x) || x <= 0) ? d.x * s : clamp(x, 0.1, 60),
+           y: (isNaN(y) || y <= 0) ? d.y * s : clamp(y, 0.1, 60) };
+}
+/* Half the real size, in drawing units. Null until the drawing has a scale —
+   without one there is no such thing as a real size, so connections stay at
+   the centre and everything behaves as it did. */
+function nodeHalfPx(n) {
+  if (!(S.pxPerM > 0) || !n) return null;
+  const m = nodeSizeM(n);
+  return { hw: m.x * S.pxPerM / 2, hh: m.y * S.pxPerM / 2 };
+}
+/* Half the size to draw it at. */
+function nodeDrawHalf(n, k) {
+  const mn = NODE_MIN_PX[n && n.type] || NODE_MIN_PX.consumer;
+  const kk = (k === undefined) ? 1 / zoom : k;
+  const min = { hw: mn.x * kk / 2, hh: mn.y * kk / 2 };
+  const real = nodeHalfPx(n);
+  return real ? { hw: Math.max(min.hw, real.hw), hh: Math.max(min.hh, real.hh) } : min;
+}
+
+/* ==========================================================================
+   CONNECTION POINTS
+   A run used to land on the centre of whatever it was joined to, so two runs
+   into the same load arrived at the same spot and the pipework disappeared
+   under the box. On site they land where they land — opposite corners of an
+   AHU, both ends of a header, one either side of a plate exchanger — and the
+   drawing should say so.
+
+   A connection is held as a place on the component rather than a point on
+   the sheet: `u` and `v` from -1 to 1 across its own width and height, before
+   any rotation. So it stays where it was put when the component is dragged,
+   turned or stretched, exactly the way a placed valve stays put on its run.
+   A run with no port recorded — anything traced before this, or anything on
+   a drawing with no scale yet — is still joined at the centre.
+   ========================================================================== */
+function portPoint(n, port) {
+  if (!n) return null;
+  const h = nodeHalfPx(n);
+  if (!port || !h) return { x: n.x, y: n.y };
+  const lx = clamp(parseFloat(port.u) || 0, -1, 1) * h.hw;
+  const ly = clamp(parseFloat(port.v) || 0, -1, 1) * h.hh;
+  const r = nodeRot(n) * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+  return { x: n.x + lx * cs - ly * sn, y: n.y + lx * sn + ly * cs };
+}
+
+/* Where a point on the sheet lands on a component: pulled to the nearest
+   place on its outline, so a pipe stops at the edge rather than running in
+   under the name. */
+function portAt(n, p) {
+  const h = nodeHalfPx(n);
+  if (!h) return null;
+  const r = -nodeRot(n) * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+  const dx = p.x - n.x, dy = p.y - n.y;
+  const lx = dx * cs - dy * sn, ly = dx * sn + dy * cs;
+  let u = clamp(lx / h.hw, -1, 1), v = clamp(ly / h.hh, -1, 1);
+  // whichever edge it is closest to is the one it goes on
+  if ((1 - Math.abs(u)) <= (1 - Math.abs(v))) u = u < 0 ? -1 : 1;
+  else v = v < 0 ? -1 : 1;
+  return { u: +u.toFixed(4), v: +v.toFixed(4) };
+}
+
+/* How far p is from the component itself — nothing if it is inside it. Used
+   for snapping, so clicking anywhere on a stretched box connects to it. */
+function distToNode(n, p) {
+  const h = nodeHalfPx(n);
+  if (!h) return dist(n, p);
+  const r = -nodeRot(n) * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+  const dx = p.x - n.x, dy = p.y - n.y;
+  const lx = Math.abs(dx * cs - dy * sn), ly = Math.abs(dx * sn + dy * cs);
+  const ox = Math.max(0, lx - h.hw), oy = Math.max(0, ly - h.hh);
+  return Math.hypot(ox, oy);
+}
+
+/* The port a run uses at each of its ends. */
+function segPort(sg, end) { return (end === 'a' ? sg.aPort : sg.bPort) || null; }
+function segEndPoint(sg, end) {
+  const n = nodeById(end === 'a' ? sg.a : sg.b);
+  return n ? portPoint(n, segPort(sg, end)) : null;
+}
+/* Put both ends of a run back on their connection points. Called whenever a
+   component moves, turns or changes size under them. */
+function reseatSeg(sg) {
+  const a = segEndPoint(sg, 'a'), b = segEndPoint(sg, 'b');
+  if (a && sg.pts.length) sg.pts[0] = { x: a.x, y: a.y };
+  if (b && sg.pts.length > 1) sg.pts[sg.pts.length - 1] = { x: b.x, y: b.y };
+}
+function reseatNode(n) {
+  if (!n) return;
+  S.segs.forEach(sg => { if (sg.a === n.id || sg.b === n.id) reseatSeg(sg); });
+}
+
 function isVessel(n)   { return !!n && (n.type === 'llh' || n.type === 'buffer'); }
 function isSeparator(n) {
   if (!n) return false;
@@ -1671,6 +1795,11 @@ function itemById(id) { return S.items.find(it => it.id === id) || null; }
 /* How many of this item there are. A run drawn as a flow and return pair has
    two pipes, so an item set to sit on both legs is two valves; on one leg it
    is one. A single-pipe run only ever has one. */
+/* A valve's own angle, on top of the run's. Kept as an offset rather than an
+   absolute bearing so a valve still swings round with its pipework when a
+   node is dragged. */
+function itemRot(it) { const v = parseFloat(it && it.rot); return isNaN(v) ? 0 : v; }
+
 function itemQty(it, sg) {
   if (!sg) sg = segById(it.seg);
   if (!sg || sg.mode === 'single') return 1;
@@ -2120,6 +2249,24 @@ function toDwg(ev) {
 }
 
 /* ---------- what's under the cursor ---------- */
+/* A connection ring under the cursor. Small, so it gets a generous tolerance
+   and is tested before the component it sits on. */
+function hitPort(p, tolPx) {
+  const tol = (tolPx || 11) / zoom;
+  let best = null;
+  S.segs.forEach(sg => {
+    ['a', 'b'].forEach(end => {
+      const port = segPort(sg, end);
+      if (!port) return;
+      const n = nodeById(end === 'a' ? sg.a : sg.b);
+      if (!n || !nodeHalfPx(n)) return;
+      const d = dist(portPoint(n, port), p);
+      if (d < tol && (!best || d < best.d)) best = { d, seg: sg, end, nodeId: n.id };
+    });
+  });
+  return best;
+}
+
 function hitNode(p, tolPx) {
   const base = (tolPx || 15) / zoom;
   let best = null;
@@ -2348,8 +2495,16 @@ function render() {
     const q = itemPos(it, k);
     if (!q) return;
     const picked = sel && sel.kind === 'item' && sel.id === it.id;
+    /* A valve lies along the pipe it is on, which is nearly always right and
+       follows the run if a node is dragged. The offset is for the cases it is
+       not — a valve on a tee, or one that reads better turned — and the flip
+       turns a strainer or a check valve that is facing the wrong way without
+       having to work out an angle. Both are relative to the run, so they
+       survive the pipework moving underneath them. */
+    const vs = valveDrawScale(k);
     const sym = mk('g', { transform: 'translate(' + q.x + ' ' + q.y + ') '
-      + 'rotate(' + (q.ang * 180 / Math.PI) + ') scale(' + valveDrawScale(k) + ')' });
+      + 'rotate(' + (q.ang * 180 / Math.PI + itemRot(it)) + ') '
+      + 'scale(' + (it.flip ? -vs : vs) + ' ' + vs + ')' });
     drawValveSymbol(sym, valveDef(it.type), picked);
     g.appendChild(sym);
 
@@ -2433,37 +2588,38 @@ function render() {
        as the loads. */
     if (isVessel(n)) { drawVessel(g, n, k, picked); return; }
     const src = n.type === 'source';
-    const s = nodeScale(n), rot = nodeRot(n);
-    const w = (src ? 74 : 62) * s, h = (src ? 34 : 30) * s;
+    const rot = nodeRot(n);
+    const hf = nodeDrawHalf(n, k);
     /* The box turns; the writing does not. A plant or a load is turned to sit
        square with the pipework it is on, but a name and a duty upside down on
        a drawing is worse than a box at the wrong angle — so the symbol takes
        the rotation and the text is laid over it the right way up. */
     const box = mk('g', { transform: 'translate(' + n.x + ' ' + n.y + ') rotate(' + rot + ')' });
     if (picked) {
-      box.appendChild(mk('rect', { x: -(w / 2 + 4) * k, y: -(h / 2 + 4) * k,
-        width: (w + 8) * k, height: (h + 8) * k,
+      box.appendChild(mk('rect', { x: -(hf.hw + 4 * k), y: -(hf.hh + 4 * k),
+        width: 2 * hf.hw + 8 * k, height: 2 * hf.hh + 8 * k,
         rx: 5 * k, fill: 'none', stroke: 'var(--measure)', 'stroke-width': 2.5 * k }));
     }
-    box.appendChild(mk('rect', { x: -w / 2 * k, y: -h / 2 * k, width: w * k, height: h * k, rx: 3 * k,
+    box.appendChild(mk('rect', { x: -hf.hw, y: -hf.hh, width: 2 * hf.hw, height: 2 * hf.hh, rx: 3 * k,
       fill: src ? 'var(--graphite)' : 'var(--white)',
       stroke: src ? 'var(--graphite)' : (n.reached ? 'var(--live)' : 'var(--alarm)'),
-      'stroke-width': 1.8 * k }));
+      'stroke-width': 1.8 * k, 'fill-opacity': src ? 1 : 0.94 }));
     g.appendChild(box);
-    g.appendChild(mk('text', { x: n.x, y: n.y - 2 * k * s, 'text-anchor': 'middle',
-      'font-size': 10 * k * s, 'font-weight': 600, 'font-family': 'Archivo, sans-serif',
+    g.appendChild(mk('text', { x: n.x, y: n.y - 2 * k, 'text-anchor': 'middle',
+      'font-size': 10 * k, 'font-weight': 600, 'font-family': 'Archivo, sans-serif',
       fill: src ? 'var(--paper)' : 'var(--ink)' }, String(n.name || '').slice(0, 13)));
     const sub = src
       ? (fmt(n.kw, 0) + ' kW')
       : (fmt(consumerKw(n), 0) + ' kW  ' + fmt(consumerFlow(n), 2) + ' l/s');
-    g.appendChild(mk('text', { x: n.x, y: n.y + 9 * k * s, 'text-anchor': 'middle',
-      'font-size': 8.5 * k * s, 'font-family': 'Azeret Mono, monospace',
+    g.appendChild(mk('text', { x: n.x, y: n.y + 9 * k, 'text-anchor': 'middle',
+      'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace',
       fill: src ? '#9aa3b1' : 'var(--ink-soft)' }, sub));
     if (!src && !n.reached) {
-      g.appendChild(mk('text', { x: n.x, y: n.y - (h / 2 + 5) * k, 'text-anchor': 'middle',
+      g.appendChild(mk('text', { x: n.x, y: n.y - (hf.hh + 5 * k), 'text-anchor': 'middle',
         'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
         fill: 'var(--alarm)' }, 'NOT CONNECTED'));
     }
+    drawPorts(g, n, k, picked);
   });
 
   ov.innerHTML = '';
@@ -2616,35 +2772,56 @@ function drawTeeSnap(g, k) {
    A separating vessel carries a break line across it — the one thing that
    has to be visible at a glance is whether the pipework past it is on
    another pump. */
+/* Every run's connection to this component, drawn as a small ring on it. It
+   is a handle as well as a marker: with the Select tool it can be dragged
+   round the component to move where the pipe lands, which is how two runs
+   into one AHU end up on opposite corners rather than both in the middle. */
+function drawPorts(g, n, k, picked) {
+  if (!nodeHalfPx(n)) return;                 // no scale yet: everything is at the centre
+  S.segs.forEach(sg => {
+    ['a', 'b'].forEach(end => {
+      if ((end === 'a' ? sg.a : sg.b) !== n.id) return;
+      const port = segPort(sg, end);
+      if (!port) return;
+      const q = portPoint(n, port);
+      g.appendChild(mk('circle', { cx: q.x, cy: q.y, r: 3.4 * k,
+        fill: 'var(--white)', stroke: picked ? 'var(--measure)' : 'var(--graphite)',
+        'stroke-width': 1.6 * k }));
+    });
+  });
+}
+
 function drawVessel(g, n, k, picked) {
   const llh = n.type === 'llh';
-  const s = nodeScale(n), rot = nodeRot(n);
-  const w = (llh ? 34 : 40) * s, h = (llh ? 62 : 52) * s;
-  const y = n.y - h / 2 * k;
+  const rot = nodeRot(n);
+  const hf = nodeDrawHalf(n, k);
+  const w = 2 * hf.hw / k, h = 2 * hf.hh / k;      // in on-screen units, for the text below
+  const y = n.y - hf.hh;
   const sep = isSeparator(n);
   /* A header is drawn standing up because that is how one is built, but it is
      as often piped in on the horizontal — so it turns, and like the plant and
      the loads its name stays square to the sheet. */
   const box = mk('g', { transform: 'translate(' + n.x + ' ' + n.y + ') rotate(' + rot + ')' });
   if (picked) {
-    box.appendChild(mk('rect', { x: -(w / 2 + 4) * k, y: -(h / 2 + 4) * k,
-      width: (w + 8) * k, height: (h + 8) * k,
+    box.appendChild(mk('rect', { x: -(hf.hw + 4 * k), y: -(hf.hh + 4 * k),
+      width: 2 * hf.hw + 8 * k, height: 2 * hf.hh + 8 * k,
       rx: 5 * k, fill: 'none', stroke: 'var(--measure)', 'stroke-width': 2.5 * k }));
   }
-  box.appendChild(mk('rect', { x: -w / 2 * k, y: -h / 2 * k, width: w * k, height: h * k,
-    rx: (llh ? 3 : 14) * k * s, fill: 'var(--white)',
+  box.appendChild(mk('rect', { x: -hf.hw, y: -hf.hh, width: 2 * hf.hw, height: 2 * hf.hh,
+    rx: Math.min((llh ? 3 : 14) * k, hf.hw * 0.5), fill: 'var(--white)', 'fill-opacity': 0.94,
     stroke: n.reached ? 'var(--graphite)' : 'var(--alarm)', 'stroke-width': 2 * k }));
   if (sep) {
     // the hydraulic break, drawn across the shell
-    box.appendChild(mk('line', { x1: (-w / 2 + 3) * k, y1: 0, x2: (w / 2 - 3) * k, y2: 0,
+    box.appendChild(mk('line', { x1: -hf.hw + 3 * k, y1: 0, x2: hf.hw - 3 * k, y2: 0,
       stroke: 'var(--measure)', 'stroke-width': 2.4 * k, 'stroke-dasharray': (5 * k) + ' ' + (3 * k) }));
   }
   if (n.type === 'buffer' && n.ports === 2) {
     // an in-line vessel: one way through it, on the leg it was placed in
-    box.appendChild(mk('line', { x1: -w / 2 * k, y1: 0, x2: w / 2 * k, y2: 0,
+    box.appendChild(mk('line', { x1: -hf.hw, y1: 0, x2: hf.hw, y2: 0,
       stroke: n.leg === 'flow' ? 'var(--flow)' : 'var(--return)', 'stroke-width': 2 * k }));
   }
   g.appendChild(box);
+  drawPorts(g, n, k, picked);
   const label = String(n.name || '').slice(0, 12);
   g.appendChild(mk('text', { x: n.x, y: y - 6 * k, 'text-anchor': 'middle',
     'font-size': 10 * k, 'font-weight': 700, 'font-family': 'Archivo, sans-serif',
@@ -3044,10 +3221,13 @@ function splitSegment(sg, hit) {
     const j = addJunction({ x: hit.q.x, y: hit.q.y }, sg);
     const before = sg.pts.slice(0, hit.i).concat([{ x: hit.q.x, y: hit.q.y }]);
     const after = [{ x: hit.q.x, y: hit.q.y }].concat(sg.pts.slice(hit.i));
+    /* The far end's connection point goes with the piece that still reaches
+        it; this piece now ends at the new tee and has none. */
     const tail = { id: nid(), a: j.id, b: sg.b, pts: after,
       mode: sg.mode, leg: sg.leg, material: sg.material, step: sg.step,
+      bPort: sg.bPort || null,
       ref: sg.ref || 'Run', extraRise: 0 };
-    sg.pts = before; sg.b = j.id;
+    sg.pts = before; sg.b = j.id; delete sg.bPort;
     S.segs.push(tail);
     return j;
   });
@@ -3064,9 +3244,10 @@ function promoteVertex(sg, i) {
     const j = addJunction({ x: v.x, y: v.y }, sg);
     const tail = { id: nid(), a: j.id, b: sg.b, pts: sg.pts.slice(i),
       mode: sg.mode, leg: sg.leg, material: sg.material, step: sg.step,
+      bPort: sg.bPort || null,
       ref: sg.ref || 'Run', extraRise: 0 };
     sg.pts = sg.pts.slice(0, i + 1);
-    sg.b = j.id;
+    sg.b = j.id; delete sg.bPort;
     S.segs.push(tail);
     return j;
   });
@@ -3087,8 +3268,14 @@ function nodeWord(n) {
   return n.type === 'source' ? 'plant' : n.type === 'consumer' ? 'load'
        : n.type === 'llh' ? 'header' : n.type === 'buffer' ? 'buffer' : 'tee';
 }
-function snapNode(n) {
-  return { kind: 'node', node: n, at: { x: n.x, y: n.y }, what: nodeWord(n), name: n.name || '' };
+/* A component snaps at the place on it nearest the cursor, not at its
+   middle — that is what lets two runs into the same load arrive at two
+   different places on it. */
+function snapNode(n, p) {
+  const port = p ? portAt(n, p) : null;
+  const at = portPoint(n, port);
+  return { kind: 'node', node: n, at, port, d0: p ? distToNode(n, p) : null,
+           what: nodeWord(n), name: n.name || '' };
 }
 function snapVertex(sg, i) {
   return { kind: 'vertex', seg: sg, i, at: { x: sg.pts[i].x, y: sg.pts[i].y },
@@ -3096,9 +3283,9 @@ function snapVertex(sg, i) {
 }
 
 /* Everything that can legitimately be connected to. */
-function snapCandidates() {
+function snapCandidates(p) {
   const list = [];
-  S.nodes.forEach(n => list.push(snapNode(n)));
+  S.nodes.forEach(n => list.push(snapNode(n, p)));
   // ends of a run are already nodes, so only the corners in between
   S.segs.forEach(sg => {
     for (let i = 1; i < sg.pts.length - 1; i++) list.push(snapVertex(sg, i));
@@ -3111,10 +3298,12 @@ function snapCandidates() {
 function snapAt(p, skipId) {
   const tol = SNAP_PX / zoom;
   let best = null;
-  snapCandidates().forEach(c => {
+  snapCandidates(p).forEach(c => {
     if (skipId && c.kind === 'node' && c.node.id === skipId) return;
-    const d = dist(c.at, p);
-    if (d <= tol && (!best || d < best.d)) best = Object.assign({ d }, c);
+    /* For a component it is the distance to the box, not to the connection
+       point, so anywhere on a stretched load picks that load up. */
+    const d = (c.d0 === null || c.d0 === undefined) ? dist(c.at, p) : c.d0;
+    if (d <= tol && (!best || d < best.d)) best = Object.assign({}, c, { d });
   });
   if (best) return best;
 
@@ -3133,8 +3322,8 @@ function snapAt(p, skipId) {
   let bp = null;
   const consider = c => { const d = dist(c.at, p); if (!bp || d < bp.d) bp = Object.assign({ d }, c); };
   const na = nodeById(h.seg.a), nb = nodeById(h.seg.b);
-  if (na && na.id !== skipId) consider(snapNode(na));
-  if (nb && nb.id !== skipId) consider(snapNode(nb));
+  if (na && na.id !== skipId) consider(snapNode(na, p));
+  if (nb && nb.id !== skipId) consider(snapNode(nb, p));
   for (let i = 1; i < h.seg.pts.length - 1; i++) consider(snapVertex(h.seg, i));
   if (bp) bp.pulled = true;
   return bp;
@@ -3180,7 +3369,7 @@ function dedupePts(pts) {
   return out;
 }
 
-function finishTrace(endNode) {
+function finishTrace(endNode, endPort) {
   if (!draft || draft.pts.length < 2) { draft = null; render(); return; }
   pushUndo('trace a run');
   const pts = dedupePts(draft.pts);
@@ -3189,6 +3378,7 @@ function finishTrace(endNode) {
   }
   const sg = {
     id: nid(), a: draft.startNode, b: endNode,
+    aPort: draft.startPort || null, bPort: endPort || null,
     pts,
     mode: draft.mode || 'pair', leg: draft.leg || 'flow',
     material: S.settings.material, step: 0,
@@ -3763,7 +3953,7 @@ function bufferForm(n) {
    it in one place and not another. Quarter turns for the common case, a free
    angle for the rest. */
 function placementFields(n) {
-  const rot = nodeRot(n), s = nodeScale(n);
+  const rot = nodeRot(n), s = nodeScale(n), m = nodeSizeM(n);
   return '<div class="sub-hd">On the sheet</div>'
     + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
     + '<button class="btn ghost sm" data-turn="-90">&#8634; 90&deg;</button>'
@@ -3771,17 +3961,30 @@ function placementFields(n) {
     + '<button class="btn ghost sm" data-turn="180">180&deg;</button>'
     + '<button class="btn ghost sm" data-size="-1">Smaller</button>'
     + '<button class="btn ghost sm" data-size="1">Bigger</button>'
-    + (rot || s !== 1 ? '<button class="btn ghost sm" data-reset="1">Reset</button>' : '')
+    + (rot || s !== 1 || n.sizeXm || n.sizeYm
+        ? '<button class="btn ghost sm" data-reset="1">Reset</button>' : '')
     + '</div>'
     + '<div class="row2">'
     + '<label class="fld"><span>Angle <em>degrees</em></span>'
     +   '<input type="number" data-f="rot" step="5" value="' + fmt(rot, 0) + '"></label>'
-    + '<label class="fld"><span>Size <em>&times;</em></span>'
-    +   '<input type="number" data-f="scale" step="0.1" min="0.4" max="6" value="' + fmt(s, 2) + '"></label>'
+    + '<label class="fld"><span>Across <em>m</em></span>'
+    +   '<input type="number" data-f="sizeXm" step="0.1" min="0.1" value="' + fmt(m.x, 2) + '"></label>'
     + '</div>'
-    + '<div class="note">The symbol turns; the name and the duty stay square to the sheet so they '
-    + 'can still be read. Turning or resizing changes nothing hydraulic &mdash; the connection point '
-    + 'is the centre either way.</div>';
+    + '<div class="row2">'
+    + '<label class="fld"><span>Along <em>m</em></span>'
+    +   '<input type="number" data-f="sizeYm" step="0.1" min="0.1" value="' + fmt(m.y, 2) + '"></label>'
+    + '<label class="fld"><span>&nbsp;</span>'
+    +   '<button class="btn ghost sm" data-square="1" style="width:100%">Make it square</button></label>'
+    + '</div>'
+    + '<div class="note">Width and depth are <strong>real metres on the plan</strong>, so a component '
+    + 'can be stretched to sit over the plant it stands for. It is never drawn smaller than a legible '
+    + 'size on screen, so zooming out does not lose it.<br>'
+    + 'The symbol turns; the name and the duty stay square to the sheet so they can still be read. '
+    + 'Nothing here is hydraulic &mdash; but pipes join it <strong>where you land them</strong>, and '
+    + 'those connections move with it when it is turned or stretched. Drag a connection ring to slide '
+    + 'it round.</div>'
+    + (S.pxPerM > 0 ? '' : '<div class="note warn">No scale set yet, so there is no real size to draw '
+        + 'and every pipe joins at the centre. Set the scale and this comes to life.</div>');
 }
 
 /* Wired once, for whichever component is open. */
@@ -3794,19 +3997,54 @@ function wirePlacementButtons() {
     const n = node(); if (!n) return;
     pushUndo('turn ' + (n.name || 'component'));
     n.rot = (((nodeRot(n) + parseFloat(b.dataset.turn)) % 360) + 360) % 360;
+    reseatNode(n);          // the connections turn with it
     after();
   }));
   body.querySelectorAll('[data-size]').forEach(b => b.addEventListener('click', () => {
     const n = node(); if (!n) return;
     pushUndo('resize ' + (n.name || 'component'));
-    n.scale = clamp(nodeScale(n) * (parseFloat(b.dataset.size) > 0 ? 1.25 : 0.8), 0.4, 6);
+    const m = nodeSizeM(n), f = parseFloat(b.dataset.size) > 0 ? 1.25 : 0.8;
+    n.sizeXm = +clamp(m.x * f, 0.1, 60).toFixed(3);
+    n.sizeYm = +clamp(m.y * f, 0.1, 60).toFixed(3);
+    reseatNode(n);
     after();
   }));
+  const sq = body.querySelector('[data-square]');
+  if (sq) sq.addEventListener('click', () => {
+    const n = node(); if (!n) return;
+    pushUndo('resize ' + (n.name || 'component'));
+    const m = nodeSizeM(n), side = +((m.x + m.y) / 2).toFixed(3);
+    n.sizeXm = side; n.sizeYm = side;
+    reseatNode(n);
+    after();
+  });
+  const item = () => (sel && sel.kind === 'item') ? itemById(sel.id) : null;
+  body.querySelectorAll('[data-vturn]').forEach(b => b.addEventListener('click', () => {
+    const it = item(); if (!it) return;
+    pushUndo('turn ' + (it.tag || 'valve'));
+    it.rot = (((itemRot(it) + parseFloat(b.dataset.vturn)) % 360) + 360) % 360;
+    after();
+  }));
+  const flip = body.querySelector('[data-vflip]');
+  if (flip) flip.addEventListener('click', () => {
+    const it = item(); if (!it) return;
+    pushUndo('flip ' + (it.tag || 'valve'));
+    it.flip = !it.flip;
+    after();
+  });
+  const vrst = body.querySelector('[data-vreset]');
+  if (vrst) vrst.addEventListener('click', () => {
+    const it = item(); if (!it) return;
+    pushUndo('straighten ' + (it.tag || 'valve'));
+    delete it.rot; delete it.flip;
+    after();
+  });
   const rst = body.querySelector('[data-reset]');
   if (rst) rst.addEventListener('click', () => {
     const n = node(); if (!n) return;
     pushUndo('reset ' + (n.name || 'component'));
-    delete n.rot; delete n.scale;
+    delete n.rot; delete n.scale; delete n.sizeXm; delete n.sizeYm;
+    reseatNode(n);
     after();
   });
 }
@@ -3936,6 +4174,18 @@ function itemForm(it) {
     + '<label class="fld"><span>Tag</span><input data-f="tag" value="' + esc(it.tag || '') + '"></label>'
     + '<label class="fld"><span>Type <em>' + esc(VALVE_CATS[d.cat]) + '</em></span>'
     +   '<select data-f="type">' + typeOpts + '</select></label>'
+    + '<div class="sub-hd">On the drawing</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
+    + '<button class="btn ghost sm" data-vturn="-90">&#8634; 90&deg;</button>'
+    + '<button class="btn ghost sm" data-vturn="90">90&deg; &#8635;</button>'
+    + '<button class="btn ghost sm" data-vflip="1">Flip</button>'
+    + (itemRot(it) || it.flip ? '<button class="btn ghost sm" data-vreset="1">Straight</button>' : '')
+    + '</div>'
+    + '<label class="fld"><span>Turn, relative to the pipe <em>degrees</em></span>'
+    +   '<input type="number" data-f="rot" step="15" value="' + fmt(itemRot(it), 0) + '"></label>'
+    + '<div class="note">A valve lies along its run and swings with it if the pipework moves. This is '
+    + 'on top of that &mdash; for a valve on a tee, or one that reads better turned. <strong>Flip</strong> '
+    + 'reverses it, which is what a strainer or a check valve facing the wrong way needs.</div>'
     + (single
         ? '<div class="note">This run is a single pipe, so there is one of these.</div>'
         : '<label class="fld"><span>Which leg</span><select data-f="leg">'
@@ -4090,6 +4340,9 @@ function wireInspector() {
       /* Changing what a vessel is changes the whole panel and, if it is a
          separator, the numbering of everything below it. */
       if (f === 'ports' || f === 'sep' || f === 'primaryBasis') { autoNameRuns(true); openInspector(); }
+      /* Turning or stretching a component moves its connection points, and
+         every pipe joined to one has to come with it. */
+      if (f === 'rot' || f === 'sizeXm' || f === 'sizeYm' || f === 'scale') reseatNode(obj);
       /* Swapping one valve for another drops any differential typed against
          the old one, which no longer means anything. */
       /* Swapping one valve for another, or the basis it is worked on, drops
@@ -4306,8 +4559,8 @@ function rewireNode(fromId, toId) {
   const to = nodeById(toId);
   if (!to) return;
   S.segs.forEach(s => {
-    if (s.a === fromId) { s.a = toId; s.pts[0] = { x: to.x, y: to.y }; }
-    if (s.b === fromId) { s.b = toId; s.pts[s.pts.length - 1] = { x: to.x, y: to.y }; }
+    if (s.a === fromId) { s.a = toId; delete s.aPort; s.pts[0] = { x: to.x, y: to.y }; }
+    if (s.b === fromId) { s.b = toId; delete s.bPort; s.pts[s.pts.length - 1] = { x: to.x, y: to.y }; }
   });
   S.nodes = S.nodes.filter(n => n.id !== fromId);
 }
@@ -4323,11 +4576,15 @@ function mergeAtJunctionInner(j, nb) {
   // put both polylines the same way round: a runs into j, b runs out of it
   const aPts = a.b === j.id ? a.pts.slice() : a.pts.slice().reverse();
   const aFar = a.b === j.id ? a.a : a.b;
+  const aFarPort = a.b === j.id ? a.aPort : a.bPort;
   const bPts = b.a === j.id ? b.pts.slice() : b.pts.slice().reverse();
   const bFar = b.a === j.id ? b.b : b.a;
+  const bFarPort = b.a === j.id ? b.bPort : b.aPort;
   if (aFar === bFar) return false;                 // would close a loop on itself
   a.pts = aPts.concat(bPts.slice(1));
   a.a = aFar; a.b = bFar;
+  // the two outer ends keep the places on their components that they were on
+  a.aPort = aFarPort || null; a.bPort = bFarPort || null;
   a.extraRise = (parseFloat(a.extraRise) || 0) + (parseFloat(b.extraRise) || 0);
   S.segs = S.segs.filter(s => s.id !== b.id);
   S.nodes = S.nodes.filter(n => n.id !== j.id);
@@ -5229,7 +5486,9 @@ function projectBundle(withImg) {
     nodes: S.nodes, segs: S.segs, items: S.items,
     nextId: S.nextId, settings: S.settings,
   }));
-  out.nodes.forEach(n => { delete n.feedSeg; delete n.reached; delete n.flowLps; delete n.dutyKw; });
+  out.nodes.forEach(n => {
+    ['feedSeg','reached','flowLps','dutyKw','shell','hgroup','subGroup'].forEach(kk => delete n[kk]);
+  });
   out.segs.forEach(s => { ['up','down','parentSeg','depth','orphan','kw','lps','nCons','runM','lenM',
     'pipe','hydM','fit','fitPa','nFit','straightKpa','fitKpa','valveKpa','nValves','dropKpa','equivPct',
     'coilKpa','totalKpa','isIndex','spine']
@@ -6396,6 +6655,16 @@ sc.addEventListener('pointerdown', ev => {
       select('item', it.id);
       return;
     }
+    /* A connection point is tested before the component it sits on, so
+       grabbing the ring moves where the pipe lands rather than dragging the
+       whole load across the drawing. */
+    const pt = hitPort(p);
+    if (pt) {
+      drag = { port: pt, moved: false };
+      sc.setPointerCapture(ev.pointerId);
+      select('seg', pt.seg.id);
+      return;
+    }
     const n = hitNode(p);
     if (n) {
       drag = { id: n.id, dx: p.x - n.x, dy: p.y - n.y, moved: false };
@@ -6449,7 +6718,11 @@ sc.addEventListener('pointerdown', ev => {
       const sn = snapAt(p);
       const node = connectAt(sn);
       if (!node) { toast('Start on a component, a tee or a corner'); return; }
-      draft = { kind: 'trace', startNode: node.id, pts: [{ x: node.x, y: node.y }],
+      /* Where on the component it was started from, so a second run out of
+         the same load can leave from somewhere else on it. */
+      const startPort = (sn.kind === 'node' && sn.node.id === node.id) ? sn.port : null;
+      const at0 = portPoint(node, startPort);
+      draft = { kind: 'trace', startNode: node.id, startPort, pts: [{ x: at0.x, y: at0.y }],
                 mode: 'pair', leg: 'flow' };
       render();
       return;
@@ -6463,8 +6736,10 @@ sc.addEventListener('pointerdown', ev => {
       const node = connectAt(sn);
       if (node) {
         if (node.id === draft.startNode) { toast('That is where this run started'); return; }
-        draft.pts.push({ x: node.x, y: node.y });
-        finishTrace(node.id);
+        const endPort = (sn.kind === 'node' && sn.node.id === node.id) ? sn.port : null;
+        const at = portPoint(node, endPort);
+        draft.pts.push({ x: at.x, y: at.y });
+        finishTrace(node.id, endPort);
         return;
       }
     }
@@ -6477,6 +6752,22 @@ sc.addEventListener('pointermove', ev => {
   if (panning) {
     sc.scrollLeft = panning.l - (ev.clientX - panning.sx);
     sc.scrollTop  = panning.t - (ev.clientY - panning.sy);
+    return;
+  }
+  if (drag && drag.port) {
+    // stays on the component, sliding round its outline to wherever it is led
+    const p = toDwg(ev);
+    const d = drag.port;
+    const n = nodeById(d.nodeId);
+    if (n) {
+      const port = portAt(n, p);
+      if (port) {
+        if (d.end === 'a') d.seg.aPort = port; else d.seg.bPort = port;
+        reseatSeg(d.seg);
+        drag.moved = true;
+        render();
+      }
+    }
     return;
   }
   if (drag && drag.item) {
@@ -6497,11 +6788,8 @@ sc.addEventListener('pointermove', ev => {
     if (n) {
       n.x = p.x - drag.dx; n.y = p.y - drag.dy;
       drag.moved = true;
-      // keep the ends of every run stuck to the node
-      S.segs.forEach(s => {
-        if (s.a === n.id) s.pts[0] = { x: n.x, y: n.y };
-        if (s.b === n.id) s.pts[s.pts.length - 1] = { x: n.x, y: n.y };
-      });
+      // every run into it stays on the point of it that it was joined to
+      reseatNode(n);
       render();
     }
     return;

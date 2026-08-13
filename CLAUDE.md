@@ -520,17 +520,38 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   for two valves and not enough for a set, and it never saw the tags on the
   run next to it at all — so tags landed on top of one another exactly where a
   set is densest and there is most to read.
-- **A component can be turned and resized; its writing never turns.** Plant,
-  loads, headers and buffers each carry `rot` and `scale` (`nodeRot()`,
-  `nodeScale()`), set from the same block on all four panels —
-  `placementFields()` and `wirePlacementButtons()`. The symbol takes the
-  rotation and the name and duty are laid over it the right way up, because a
-  duty upside down on a drawing is worse than a box at the wrong angle. This
-  is what `loadStubPos()` protects at the terminal end, and it is the same
-  principle: **turn the symbol, never the text.** Neither changes anything
-  hydraulic — the connection point is the centre of the component either way —
-  and a component drawn bigger gets a hit area to match, or it becomes hard to
-  pick up.
+- **A component can be turned, and it has a real size on the plan.** Plant,
+  loads, headers and buffers each carry `rot` and a width and depth in metres
+  (`nodeRot()`, `nodeSizeM()`), set from the same block on all four panels —
+  `placementFields()` and `wirePlacementButtons()`. Width and depth are
+  separate because a plate exchanger is not the shape of an AHU. It is drawn
+  at `max(real, legible-on-screen)` (`nodeDrawHalf()`), the same rule as the
+  symbols and the pipe, so zooming out cannot lose it.
+  The symbol takes the rotation and the name and duty are laid over it the
+  right way up, because a duty upside down on a drawing is worse than a box at
+  the wrong angle. **Turn the symbol, never the text** — the same principle
+  `loadStubPos()` protects at the terminal end.
+  `scale` is the old uniform multiplier, kept only to derive the default
+  metres for anything drawn before sizes were real.
+- **A pipe joins a component where you land it, not at its middle.** A run
+  holds `aPort` / `bPort`: `u` and `v` from −1 to 1 across the component's own
+  width and depth, *before* rotation (`portPoint()`, `portAt()`). So two runs
+  into one AHU can arrive at opposite corners, the connections turn and
+  stretch with the component, and dragging the ring slides one round the
+  outline. A run with no port — anything traced before this — still joins at
+  the centre, so old drawings are unchanged.
+  **This is why a component had to get a real size first.** A box drawn at a
+  constant size on screen has no fixed edge in drawing coordinates: connecting
+  to one would have moved every endpoint on every zoom, and with it the length
+  of every run into it. Zoom can never change a length. Verified at 1×, 6× and
+  25× — identical to four decimal places.
+  Splitting, merging and re-wiring all carry the outer ports with the piece
+  that still reaches the component (`reseatSeg()`, `reseatNode()` put the
+  polyline ends back on their ports whenever anything moves).
+- **A placed valve lies along its run, and can be turned off it.** `rot` on
+  the item is an offset *relative to the run*, not a bearing, so a valve still
+  swings round with its pipework when a node is dragged; `flip` mirrors it,
+  which is what a strainer or a check valve facing the wrong way needs.
 - **Both legs of a set start at the same chainage and step together**, so the
   isolating valves face each other across the pair and the strainer faces the
   regulating valve. Staggering the legs put one leg's symbols in the other's
