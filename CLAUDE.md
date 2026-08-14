@@ -490,13 +490,26 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   has changed; one that was zoomed into is held on the same point of the
   drawing, or straightening half a degree at a time would be impossible to
   judge.
+- **Corners lock to 90° and 45°, and Alt is what frees them.** Pipework on a
+  plan runs square far more often than it does not, so `settings.ortho`
+  defaults **on** and the free angle is the deliberate act — the same way round
+  as the AC trace. Held down, Alt puts the corner exactly where the cursor is,
+  and that corner is costed as a made set of two 90s, which is what it would be
+  fabricated from. `O`, or the switch in the hint bar, turns the lock off for a
+  job traced free-form; Alt then gives one square corner. `orthoNow()` is the
+  whole rule and it is symmetrical, so nothing else has to know which way round
+  the default is.
+  It was the other way round until this change, so a file or autosave written
+  before it carries `ortho: false` as the *old default* rather than as anyone's
+  decision. `settings.angleLockRev` marks a project saved under the new rule:
+  `loadProject()` drops `ortho` from anything without it and honours it in
+  anything with it, so an old take-off opens locked and a deliberate free-form
+  project stays free.
 - **Alt is the override key, and it means one thing: ignore the constraint in
-  the way.** Over open paper it flips the corner lock, so a square job takes
-  one free angle and a free-form job one square corner without changing a
-  setting — that is what makes the two mix. Over a run already traced it cuts
-  a tee exactly where the cursor is rather than being pulled to the nearest
-  corner. The hint bar turns amber while it is held. The Tee tool does the
-  same cut without holding anything.
+  the way.** Corners are one of the two constraints it lifts. Over a run
+  already traced it cuts a tee exactly where the cursor is rather than being
+  pulled to the nearest corner. The hint bar turns amber while it is held. The
+  Tee tool does the same cut without holding anything.
 - **Three things become real size when you zoom in**, and all three have to, or
   a valve set stays unreadable no matter how far you go in: the symbols
   (`valveDrawScale()`, true size 0.30 m), the gap between the flow and return
@@ -786,9 +799,11 @@ viscosity note in section 2.
     `pipeLoss_kPa` by exactly `traceMeta.valveKpaOnMains`, and the export
     dialog quotes that figure. Set `valveBasis` to `k`, re-export, and the two
     should then match to the penny with nothing stranded.
-11. **Trace a run with an odd-angle corner** and confirm the run inspector
-    says "counted as a set of two elbows" and the fitting list shows 2 ×
-    45° elbow for it.
+11. **Trace a run with an odd-angle corner** — hold `Alt`, since corners lock
+    to 90° and 45° on their own — and confirm the run inspector says it is
+    counted as a set made from two 90° elbows, and that the fitting list shows
+    2 × the configured 90° fitting for it. Let go of `Alt` and the next corner
+    should pull square or to 45° again.
 
 ### If you touched headers, buffers or separation
 
