@@ -619,7 +619,8 @@
 
       <div class="hint" id="hint">
         <span id="hintTxt"></span>
-        <label class="hopt"><input type="checkbox" id="orthoChk"> Square up <kbd>O</kbd></label>
+        <label class="hopt" title="Corners pull to 90° and 45°. Hold Alt for a free angle.">
+          <input type="checkbox" id="orthoChk" checked> Square up <kbd>O</kbd></label>
         <button class="x" id="hintX" title="Cancel">&times;</button>
       </div>
 
@@ -1151,7 +1152,15 @@ const S = {
     bendType: 'elbow90',         // what a change of direction is made from
     autoName: true,
     snapPoints: true,            // branch only at components, tees and corners
-    ortho: false,                // lock corners to square and 45 degrees
+    /* Corners lock to square and 45 degrees, and Alt frees them for one
+       click. Pipework on a plan is square far more often than it is not, so
+       the lock is the default and the free angle is the deliberate act — the
+       way round the AC trace has always worked. */
+    ortho: true,
+    /* Which generation of that rule the project's `ortho` was set under. A
+       file or autosave without it was written when free corners were the
+       default, so its `false` is the old default rather than a choice. */
+    angleLockRev: 2,
     termValves: true,            // isolation + strainer + regulating at each load,
                                  // assumed only on runs with no valves placed on them
     valveTags: true,             // draw the tag beside each placed valve
@@ -2952,8 +2961,9 @@ const HINTS = {
   consumer: 'Click where the load sits. Double-click any component to edit it.',
   trace: 'Start on the ringed point. Click to add corners &mdash; every corner becomes a '
        + 'point you can branch from later. Finish on another component, tee or corner. '
-       + 'Hold <kbd>Alt</kbd> to flip the corner lock for one click, or to tee into the '
-       + 'middle of a run you have already traced.',
+       + 'Corners pull to 90&deg; and 45&deg;; hold <kbd>Alt</kbd> for a free angle, '
+       + 'counted as a made set of two elbows &mdash; or to tee into the middle of a run '
+       + 'you have already traced.',
   pan: 'Drag to move around the drawing.',
   tee: 'Click anywhere along a run to cut a tee into it. The run splits at that point, '
      + 'and you can trace a branch off it straight away.',
@@ -2963,10 +2973,13 @@ const HINTS = {
 
 /* ---------- the override key ----------
    One key, one meaning: ignore the constraint that is in the way. While
-   tracing, that means squaring up is inverted — a square job gets one free
-   corner without turning the lock off, and a free-form job gets one square
-   corner without turning it on — and a click along a run cuts a tee exactly
-   where the cursor is instead of being pulled to the nearest corner. */
+   tracing, that means the corner lock is inverted. The lock is on by default,
+   so Alt is what draws a free angle — held down, the corner goes exactly where
+   the cursor is and is costed as a made set of two 90s, which is what it would
+   be fabricated from on site. On the rare job traced free-form the switch in
+   the hint bar turns the lock off, and Alt then gives one square corner. Over a
+   run already traced the same key cuts a tee exactly where the cursor is
+   instead of being pulled to the nearest corner. */
 let overrideKey = false;
 function orthoNow() {
   return overrideKey ? !S.settings.ortho : !!S.settings.ortho;
@@ -3339,8 +3352,9 @@ function connectAt(sn) {
   return null;
 }
 
-/* Pipework on a plan is nearly always square to the building, so corners can
-   be locked to horizontal, vertical or 45 degrees from the last point. */
+/* Pipework on a plan is nearly always square to the building, so corners are
+   locked to horizontal, vertical or 45 degrees from the last point unless the
+   lock is turned off or Alt is held for a free angle. */
 function orthoPoint(prev, p) {
   if (!prev || !orthoNow()) return { x: p.x, y: p.y };
   const dx = p.x - prev.x, dy = p.y - prev.y;
@@ -5621,9 +5635,16 @@ function loadProject(data) {
   S.items = (data.items || []).filter(it => it && VALVE_LIB[it.type]);
   S.nodes.forEach(n => { if (n.type === 'consumer') n.valve = migrateValveType(n.valve); });
   S.nextId = data.nextId || (S.nodes.length + S.segs.length + S.items.length + 1);
-  Object.assign(S.settings, data.settings || {});
+  /* Corners lock by default now. A file written before that carries the old
+     default of `ortho: false`, which is not a decision anybody made — so it is
+     dropped and the current default stands. Anything saved since says so with
+     `angleLockRev`, and its choice either way is honoured. */
+  const st = Object.assign({}, data.settings || {});
+  if (!(st.angleLockRev >= 2)) delete st.ortho;
+  Object.assign(S.settings, st);
   if (data.img) { S.img = data.img; showDrawing(); }
   sel = null; closeInspector();
+  el('orthoChk').checked = !!S.settings.ortho;   // the file may hold its own answer
   buildRail(); render();
   toast('Opened ' + (S.ref || 'project'));
 }
@@ -6028,8 +6049,10 @@ function stepsDialog() {
      + 'centimetres away from where it looks joined. A square corner is one 90&deg; elbow, a 45 is '
      + 'one 45&deg; elbow, and any other angle is counted as a made set of two. Every height '
      + 'difference becomes a riser with an elbow at each end.<br>'
-     + 'Hold <kbd>Alt</kbd> to flip the corner lock for a single click, so a square job can take '
-     + 'one free angle and a free-form job one square corner without changing any setting. '
+     + 'Corners <strong>pull to 90&deg; and 45&deg;</strong> as you go, because that is how pipework '
+     + 'nearly always runs. Hold <kbd>Alt</kbd> for a free angle: the corner lands exactly where the '
+     + 'cursor is and is counted as a made set of two elbows. <kbd>O</kbd>, or the switch in the hint '
+     + 'bar, turns the lock off for a job traced free-form &mdash; Alt then gives one square corner. '
      + 'Alt over a run you have already traced tees into it exactly where the cursor is &mdash; '
      + 'or use the Tee tool to do the same thing without holding anything. '
      + '<kbd>Ctrl</kbd>+<kbd>Z</kbd>, or Undo in the bar, steps back.'],
@@ -6100,6 +6123,12 @@ function projectDialog() {
     +   '<input type="checkbox" id="pTerm" ' + (s.termValves ? 'checked' : '')
     +   ' style="width:17px;height:17px;min-height:0"><span style="margin:0;text-transform:none;letter-spacing:0;font-size:12.5px;color:var(--ink)">'
     +   'Count isolation, strainer and regulating valves at each load</span></label>'
+    + '<label class="fld" style="display:flex;align-items:center;gap:9px">'
+    +   '<input type="checkbox" id="pOrtho" ' + (s.ortho !== false ? 'checked' : '')
+    +   ' style="width:17px;height:17px;min-height:0"><span style="margin:0;text-transform:none;letter-spacing:0;font-size:12.5px;color:var(--ink)">'
+    +   'Pull corners to 90&deg; and 45&deg; while tracing. Hold <kbd>Alt</kbd> for a free angle, '
+    +   'which is counted as a made set of two 90&deg; elbows. Turn it off for a job traced '
+    +   'free-form and <kbd>Alt</kbd> gives one square corner instead.</span></label>'
     + '<label class="fld" style="display:flex;align-items:center;gap:9px">'
     +   '<input type="checkbox" id="pSnap" ' + (s.snapPoints !== false ? 'checked' : '')
     +   ' style="width:17px;height:17px;min-height:0"><span style="margin:0;text-transform:none;letter-spacing:0;font-size:12.5px;color:var(--ink)">'
@@ -6192,6 +6221,8 @@ function projectDialog() {
     s.flangeSpacing = parseFloat(el('pFlSp').value) || 4;
     s.bendType = el('pBend').value;
     s.termValves = el('pTerm').checked;
+    s.ortho = el('pOrtho').checked;
+    el('orthoChk').checked = s.ortho;            // the hint bar says the same thing
     s.snapPoints = el('pSnap').checked;
     s.autoTermSet = el('pAutoSet').checked;
     s.valveBasis = el('pVBasis').value;
@@ -6894,7 +6925,8 @@ document.addEventListener('keydown', ev => {
   if (k === 'o') {
     S.settings.ortho = !S.settings.ortho;
     el('orthoChk').checked = S.settings.ortho;
-    toast(S.settings.ortho ? 'Corners squared up' : 'Corners free');
+    toast(S.settings.ortho ? 'Corners squared up — hold Alt for a free angle'
+                           : 'Corners free — hold Alt for a square one');
     render();
     return;
   }
