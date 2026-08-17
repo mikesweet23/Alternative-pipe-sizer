@@ -2065,17 +2065,31 @@ function getRoughness(material) {
 }
 const MAT_LABEL = { carbon: 'Carbon Steel', copper: 'Copper', stainless: 'Stainless 316', stainless304: 'Stainless 304', trubore: 'TruBore ISO 304L', trubore316: 'TruBore ISO 316L', truboreMetric: 'TruBore Metric 304L', truboreMetric316: 'TruBore Metric 316L', mlcp: 'MLCP' };
 
-// Capacity solver: max flow (l/s) through a given bore before Pa/m exceeds the limit.
-// Bisection on flow; calcPD is monotonic in flow.
-function maxFlowAtLimit(id_mm, material, limit) {
+/* Capacity solver: the most a given bore can actually carry.
+   Bisection on flow against the Pa/m limit, since calcPD is monotonic in flow
+   — then held to the velocity ceiling, because a pipe the sizer would refuse
+   on velocity has no headroom left whatever the gradient says. Returns which
+   of the two bound it, so the caller can say so rather than quoting a figure
+   the tool would never select.
+   The velocity cap used to be left out here. Nothing in the common range hit
+   3 m/s before 300 Pa/m while viscosity was pinned at 0.00131 Pa.s, so it
+   never showed; correcting viscosity pushed DN200 TruBore to 3.11 m/s at the
+   limit and the headroom line started promising 97.8 l/s on a pipe that would
+   be rejected above 94.2. */
+function maxFlowAtLimit(id_mm, material, limit, vMax) {
   const id_m = id_mm / 1000;
+  const A = Math.PI * (id_m / 2) ** 2;
   let lo = 1e-6, hi = 20;               // m3/s bounds
-  if (calcPD(hi, id_m, material).pd < limit) return hi * 1000;
-  for (let i = 0; i < 60; i++) {
+  if (calcPD(hi, id_m, material).pd < limit) lo = hi;
+  else for (let i = 0; i < 60; i++) {
     const mid = (lo + hi) / 2;
     if (calcPD(mid, id_m, material).pd <= limit) lo = mid; else hi = mid;
   }
-  return lo * 1000;                     // l/s
+  const vCap = parseFloat(vMax);
+  if (vCap > 0 && lo / A > vCap) {
+    return { lps: A * vCap * 1000, v: vCap, bound: 'vel' };
+  }
+  return { lps: lo * 1000, v: lo / A, bound: 'pd' };
 }
 
 // Lagging/cladding/bracketry uplift, clamped to the permitted 5–40% band
@@ -3978,17 +3992,35 @@ function renderFittingEditor() {
 
 function openFittingEditor_end() {}
 
+/* The band and material a circuit is actually sized against. A circuit ticked
+   LLH is sized on velocity alone, slowly, and in the header's own material.
+   Anything that reports what a size can carry has to ask this same question or
+   it answers about a different pipe than the one that was selected — which is
+   how the headroom line came to quote 300 Pa/m capacities for headers held to
+   0.4 m/s. One rule, read from here by both. */
+function sizingBasisFor(c) {
+  const llhOn = document.getElementById('llhEnabled');
+  const llhActive = !!(c.isLLH && llhOn && llhOn.checked);
+  return {
+    llh: llhActive,
+    material: llhActive ? (document.getElementById('llhMaterial').value || 'carbon') : c.material,
+    vMin: llhActive ? 0.05 : (parseFloat(document.getElementById('vMin').value) || 0.3),
+    vMax: llhActive ? (parseFloat(document.getElementById('llhVMax').value) || 0.4)
+                    : (parseFloat(document.getElementById('vMax').value) || 3.0),
+  };
+}
+
 function calculateCircuit(c) {
   const rho = parseFloat(document.getElementById('rho').value) || 999;
   const cp  = parseFloat(document.getElementById('cp').value)  || 4.182;
   const LIMIT = parseFloat(document.getElementById('limitPd').value) || 300;
 
   // LLH overrides — if this circuit is a low loss header, use LLH velocity and material
-  const llhActive = c.isLLH && document.getElementById('llhEnabled') && document.getElementById('llhEnabled').checked;
-  const V_MIN = llhActive ? 0.05 : (parseFloat(document.getElementById('vMin').value) || 0.3);
-  const V_MAX = llhActive ? (parseFloat(document.getElementById('llhVMax').value) || 0.4)
-                           : (parseFloat(document.getElementById('vMax').value) || 3.0);
-  const material = llhActive ? (document.getElementById('llhMaterial').value || 'carbon') : c.material;
+  const basis = sizingBasisFor(c);
+  const llhActive = basis.llh;
+  const V_MIN = basis.vMin;
+  const V_MAX = basis.vMax;
+  const material = basis.material;
 
   const dT = Math.abs(parseFloat(c.dT) || 0);
   if (dT < 0.1) return { error: 'ΔT must be > 0' };
@@ -4630,15 +4662,27 @@ function renderCircuits() {
           ? '<div style="font-size:10px;color:#c28a00;font-weight:600;letter-spacing:0.5px;margin-top:2px">' + (result.sizeOverride > 0 ? '+' : '') + result.sizeOverride + ' from auto (' + result.autoRecommended.nom + ')</div>'
           : '';
         const idDisplay = '<div style="font-size:10px;color:var(--muted);font-weight:500;font-family:\'Inter\',sans-serif;letter-spacing:0.3px;margin-top:1px">ID ' + result.recommended.id_mm.toFixed(1) + 'mm</div>';
-        // Peak capacity of the SELECTED size at the Pa/m limit — live headroom guide
+        // Peak capacity of the SELECTED size — live headroom guide. Held to
+        // whichever limit binds first, and it says which, because "peak at
+        // 300 Pa/m" on a pipe that is actually stopped by velocity is a
+        // number this tool would refuse to select.
         const _lim = parseFloat(document.getElementById('limitPd').value) || 300;
         const _rho = parseFloat(document.getElementById('rho').value) || 999;
         const _cp  = parseFloat(document.getElementById('cp').value) || 4.182;
-        const _capL = maxFlowAtLimit(result.recommended.id_mm, c.material, _lim);
+        const _basis = sizingBasisFor(c);
+        const _cap = maxFlowAtLimit(result.recommended.id_mm, _basis.material, _lim, _basis.vMax);
+        const _capL = _cap.lps;
         const _capKw = (_capL/1000) * _rho * _cp * (parseFloat(c.dT) || 0);
         const _upliftAvail = result.vflow_ls > 0 ? ((_capL / result.vflow_ls) - 1) * 100 : 0;
-        const capacityLine = '<div style="font-size:10px;color:var(--brand-blue-deep);margin-top:3px;padding-top:3px;border-top:1px dashed var(--line);text-align:center;line-height:1.4" title="Maximum this size can carry before exceeding the Pa/m limit — the uplift available in this line">'
-          + 'Peak @ ≤' + _lim + ' Pa/m:<br><strong>' + _capL.toFixed(2) + ' l/s · ' + _capKw.toFixed(0) + ' kW</strong>'
+        const _capWhat = _cap.bound === 'vel'
+          ? 'Peak @ ' + _basis.vMax.toFixed(1) + ' m/s'
+          : 'Peak @ ≤' + _lim + ' Pa/m';
+        const _capTitle = _cap.bound === 'vel'
+          ? 'This size reaches the ' + _basis.vMax.toFixed(1) + ' m/s velocity ceiling before it reaches '
+            + _lim + ' Pa/m, so velocity is what caps it — the uplift available in this line'
+          : 'Maximum this size can carry before exceeding the Pa/m limit — the uplift available in this line';
+        const capacityLine = '<div style="font-size:10px;color:var(--brand-blue-deep);margin-top:3px;padding-top:3px;border-top:1px dashed var(--line);text-align:center;line-height:1.4" title="' + _capTitle + '">'
+          + _capWhat + ':<br><strong>' + _capL.toFixed(2) + ' l/s · ' + _capKw.toFixed(0) + ' kW</strong>'
           + ' <span style="color:' + (_upliftAvail >= 0 ? 'var(--ok, #1f7a4c)' : '#c74418') + '">(' + (_upliftAvail >= 0 ? '+' : '') + _upliftAvail.toFixed(0) + '%)</span>'
           + '</div>';
         recText = '<div style="display:flex;flex-direction:column;align-items:center;gap:2px">'
@@ -5486,21 +5530,26 @@ function exportPDFReport() {
   const capRows = results.map(({c,r}) => {
     if (r.error || !r.recommended) return '';
     const rec = r.recommended;
-    const capLps = maxFlowAtLimit(rec.id_mm, c.material, limitPd);
+    const basis = sizingBasisFor(c);
+    const cap = maxFlowAtLimit(rec.id_mm, basis.material, limitPd, basis.vMax);
+    const capLps = cap.lps;
     const rhoNow = parseFloat(document.getElementById('rho').value) || 999;
     const cpNow  = parseFloat(document.getElementById('cp').value) || 4.182;
     const capKw  = (capLps/1000) * rhoNow * cpNow * (parseFloat(c.dT)||0);
     const headroomPct = r.vflow_ls > 0 ? ((capLps / r.vflow_ls) - 1) * 100 : 0;
-    const { v: capV } = calcPD(capLps/1000, rec.id_mm/1000, c.material);
-    const velNote = capV > (parseFloat(document.getElementById('vMax').value)||3.0) ? ' <span style="color:#c74418">(vel!)</span>' : '';
+    /* Says which limit the figure is against, rather than warning that the
+       figure beside it is one the tool would not have selected. */
+    const velNote = cap.bound === 'vel'
+      ? ' <span style="color:var(--muted)" title="capped by the ' + basis.vMax.toFixed(1)
+        + ' m/s velocity ceiling, not by ' + limitPd + ' Pa/m">(vel)</span>' : '';
     return '<tr><td>'+escHtml(c.ref)+'</td><td class="n">'+rec.nom+'</td>'
       + '<td class="n">'+r.vflow_ls.toFixed(2)+'</td><td class="n">'+r.kw.toFixed(1)+'</td>'
       + '<td class="n">'+capLps.toFixed(2)+'</td><td class="n">'+capKw.toFixed(1)+'</td>'
       + '<td class="n">+'+headroomPct.toFixed(0)+'%'+velNote+'</td></tr>';
   }).join('');
   const capacitySection = '<h2>4. Pipe Capacity &amp; Available Uplift at '+limitPd+' Pa/m</h2>'
-    + '<p>For each selected pipe, the table below shows the maximum flow the bore could carry before reaching the '+limitPd+' Pa/m design gradient, and the corresponding duty at the circuit\u2019s \u0394T \u2014 demonstrating the spare capacity (uplift) available in the installed size. Entries marked (vel!) would exceed the velocity limit before reaching the pressure gradient limit.</p>'
-    + '<table class="rpt"><thead><tr><th>Circuit</th><th class="n">Size</th><th class="n">Design l/s</th><th class="n">Design kW</th><th class="n">Max l/s @ '+limitPd+' Pa/m</th><th class="n">Peak kW available</th><th class="n">Uplift</th></tr></thead><tbody>'
+    + '<p>For each selected pipe, the table below shows the maximum flow the bore can carry within the design limits, and the corresponding duty at the circuit\u2019s \u0394T \u2014 demonstrating the spare capacity (uplift) available in the installed size. Most sizes are held by the '+limitPd+' Pa/m gradient; entries marked (vel) reach the velocity ceiling first and are quoted at that instead, since a flow the gradient would allow but the velocity limit would not is not capacity that can be used.</p>'
+    + '<table class="rpt"><thead><tr><th>Circuit</th><th class="n">Size</th><th class="n">Design l/s</th><th class="n">Design kW</th><th class="n">Max l/s</th><th class="n">Peak kW available</th><th class="n">Uplift</th></tr></thead><tbody>'
     + (capRows || '<tr><td colspan="7">No circuits.</td></tr>') + '</tbody></table>';
 
   // ===== Thermal / heat loss section =====
