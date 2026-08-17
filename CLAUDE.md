@@ -772,6 +772,24 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   control valve allowance on raises the system resistance, so without
   re-seeding the model showed the pump falling short instead of the duty now
   being asked for. `cvMode`, `cvFixed` and `aTarget` all re-seed.
+- **Headroom is quoted against whichever limit binds first, and it says
+  which.** `maxFlowAtLimit()` solves the Pa/m limit and then holds the answer
+  to the velocity ceiling, returning `{ lps, v, bound }` — `bound` is `pd` or
+  `vel`. The circuit card reads *Peak @ ≤300 Pa/m* or *Peak @ 3.0 m/s*
+  accordingly, and the report marks the row `(vel)`. Quoting a gradient figure
+  on a pipe the sizer would refuse on velocity is offering capacity that cannot
+  be taken up. It stayed hidden for a long time because nothing in the common
+  range reached 3 m/s before 300 Pa/m while viscosity was pinned; correcting
+  viscosity pushed DN200 TruBore to 3.11 m/s and the line began promising
+  97.8 l/s where the tool would stop at 94.2.
+- **`sizingBasisFor(c)` is the one place that answers "what is this circuit
+  sized against".** Material, `vMin` and `vMax`, with the low loss header
+  overrides applied. `calculateCircuit()` and both headroom figures read it, so
+  a header ticked LLH is reported at 0.4 m/s in the header's own material
+  rather than at the main's 300 Pa/m — which is what it used to say, off by a
+  factor of six on a DN150 shell. Anything new that reports what a size can
+  carry must ask through here, or it answers about a different pipe than the
+  one that was selected.
 - **The sizer's Additional System Resistances all default to zero** — plant,
   control valve, strainer, misc. The pump figure is then the index run and
   nothing else, which is what makes it comparable with the simulator. The
