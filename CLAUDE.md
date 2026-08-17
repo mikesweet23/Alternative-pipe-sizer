@@ -1,6 +1,6 @@
 # adi Pipework Toolchain — design notes
 
-Four self-contained HTML tools served from GitHub Pages. No build step, no
+Three self-contained HTML tools served from GitHub Pages. No build step, no
 dependencies to install, no server. Each file opens on its own from a hard
 disk, which is deliberate: they have to work on site.
 
@@ -17,14 +17,12 @@ this should be enough to make a safe change. Keep it current.
 | 1 | Pipe Trace | `trace.html` | `/trace.html` | Take-off from a scaled drawing, 3D height check |
 | 2 | Pipework Sizer | `index.html` | `/` | Sizing, losses, heat loss, reheat |
 | 3 | Network Simulator | `simulator.html` | `/simulator.html` | Network solve, pumps, balancing |
-| — | Primary Circuit Sizer | `primary-circuit-sizer.html` | `/primary-circuit-sizer.html` | Plant-side primary loop (standalone) |
 
-> **`primary-circuit-sizer.html` is not in this repository** and has no commit
-> in its history. Wherever it lives, it is outside this working copy, so a
-> change described here as going into "all four tools" reaches only three of
-> them. The viscosity correction in section 2 is the live case: if that file
-> exists somewhere and still holds 0.00131 Pa·s, it now disagrees with the
-> other three. Either bring it into this repo or strike it from this table.
+> **There is no fourth tool.** A `primary-circuit-sizer.html` was listed here
+> for a long time and is retired — an earlier iteration, never in this
+> repository and no longer relevant. The toolchain is these three files and
+> nothing else, so "all the tools" means three. If you find that name in an old
+> note or an old tab, it is not part of this.
 
 Steps 1→2→3 pass a single JSON file between them. Cross-links in the top bars
 are **relative** (`./index.html` etc.) so they survive a repo rename.
@@ -713,7 +711,7 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
 - Below the bar every tool keeps its **deliberately different visual identity**
   so it is obvious which one you are in. Sizer: adi blue, Barlow Condensed.
   Simulator: IBM Plex, dark CAD viewport. Pipe Trace: Archivo, drawing paper,
-  graphite rail. Primary: copper/amber. Pipe Trace's 3D check deliberately
+  graphite rail. Pipe Trace's 3D check deliberately
   keeps the paper background rather than borrowing the simulator's dark
   viewport.
 - Each tool sets one `--tool-accent`, and its only job in the shared bar is to
@@ -925,8 +923,8 @@ fluid basis has moved with them.
   finally settled it was an independent calculation, run outside the toolchain,
   that reproduced the sizer's numbers exactly once viscosity was aligned — which
   proved there was only ever one variable in dispute, not a difference of
-  method. The lesson is that "all four tools agree" is a necessary test and not
-  a sufficient one: they agreed with each other for a year while all four were
+  method. The lesson is that "all the tools agree" is a necessary test and not
+  a sufficient one: they agreed with each other for a year while all three were
   4–11% out. Reconcile against something that shares none of the code.
 - The same exercise found the sizer's **carbon steel is BS EN 10255 medium**
   while the comparison calculation used **ASME Sch 10**, whose bore runs 2.5–4%
