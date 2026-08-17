@@ -828,24 +828,26 @@ const ROUGH = { truboreMetric: 1.5e-5, truboreMetric316: 1.5e-5, trubore: 1.5e-5
 /* ---------- fluid ---------- */
 function waterRho(T) { return ((1.051865e-05*T - 5.171329e-03)*T - 6.179237e-03)*T + 1000.068; }
 function waterCp(T)  { return (((1.606849e-09*T - 4.736562e-07)*T + 5.721385e-05)*T - 2.586464e-03)*T + 4.215269; }
-/* Viscosity is deliberately NOT temperature-corrected. The Pipework Sizer and
-   Pipe Trace both work at a fixed 0.00131 Pa.s, and section 2 of the handover
-   requires all the tools to share that basis — a run sized in the sizer has to
-   come out the same here. Correcting it at the mean temperature gives roughly
-   4.0e-4 Pa.s at 70 C, which is a third of the sizer's figure: a higher
-   Reynolds number, a lower friction factor, and pipe losses about 15% under
-   what the sizer reported for the same pipe. That is what was making the
-   simulator disagree with the sizer's index run. If this is ever corrected it
-   has to be corrected in every tool in the same commit. */
-const SIZER_MU = 0.00131;
-function waterMu()  { return SIZER_MU; }
+/* Dynamic viscosity of water at temperature, Pa.s — Vogel form fitted to
+   IAPWS table values over 0-120 C, worst deviation 0.64% at the ends and
+   0.35% at a 70 C mean. Identical function in index.html and trace.html; all
+   three must be changed together or the tools disagree on every size.
+   All three were pinned at 0.00131 Pa.s until this was corrected — water at
+   about 10 C, against rho and cp taken at the mean operating temperature.
+   This file is the reason to be careful: it once ran waterMu(FLUID.Tm) while
+   the other two were fixed, and pipe losses came out about 15% under what the
+   sizer reported for the same pipe. The fix then was to pin it; the fix now is
+   that all three correct together. An imported project carries the sizer's own
+   figure in settings.mu, which wins over this function, so a project made with
+   glycol solves on the glycol viscosity rather than on plain water. */
+function waterMu(T)  { return 2.76473e-5 * Math.exp(524.9766 / (T + 126.05)); }
 
 /* ---------- state ---------- */
 let PROJECT = null;      // imported settings
 let NODES = [];          // working circuits
 let SOLUTION = null;
 
-const FLUID = { rho: 977.9, cp: 4.19, mu: 0.00131, Tm: 70 };
+const FLUID = { rho: 977.9, cp: 4.19, mu: 4.023e-4, Tm: 70 };
 
 /* ---------- velocity-head factors for fixed components (CIBSE C / Crane TP-410) ---------- */
 const KFACTOR = { butterfly: 0.35, gate: 0.15, strainer: 2.5, drv: 3.0, check: 2.0, tee: 1.0 };
@@ -1011,7 +1013,7 @@ function buildNetwork(data) {
   FLUID.Tm = (supply + ret) / 2;
   FLUID.rho = parseFloat(s.rho) || waterRho(FLUID.Tm);
   FLUID.cp = parseFloat(s.cp) || waterCp(FLUID.Tm);
-  FLUID.mu = waterMu();
+  FLUID.mu = parseFloat(s.mu) || waterMu(FLUID.Tm);
 
   PROJECT = {
     ref: s.projectRef || 'Untitled',

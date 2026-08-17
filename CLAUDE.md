@@ -19,6 +19,13 @@ this should be enough to make a safe change. Keep it current.
 | 3 | Network Simulator | `simulator.html` | `/simulator.html` | Network solve, pumps, balancing |
 | — | Primary Circuit Sizer | `primary-circuit-sizer.html` | `/primary-circuit-sizer.html` | Plant-side primary loop (standalone) |
 
+> **`primary-circuit-sizer.html` is not in this repository** and has no commit
+> in its history. Wherever it lives, it is outside this working copy, so a
+> change described here as going into "all four tools" reaches only three of
+> them. The viscosity correction in section 2 is the live case: if that file
+> exists somewhere and still holds 0.00131 Pa·s, it now disagrees with the
+> other three. Either bring it into this repo or strike it from this table.
+
 Steps 1→2→3 pass a single JSON file between them. Cross-links in the top bars
 are **relative** (`./index.html` etc.) so they survive a repo rename.
 
@@ -39,23 +46,46 @@ Break any of these and the tools stop agreeing with each other.
 ### Fluid properties
 - Density and specific heat: polynomial fits to standard water tables, evaluated
   at **mean operating temperature** — `(supply + return) / 2`.
-- **Viscosity is fixed at 0.00131 Pa·s** and is *not* temperature-corrected.
-  This is the sizer's glycol-table value, water at roughly 10 °C.
+- **Viscosity is also evaluated at the mean operating temperature**, by
+  `waterMu(T)` — a Vogel fit, `2.76473e-5 · exp(524.9766 / (T + 126.05))` Pa·s,
+  fitted to IAPWS table values over 0–120 °C. Worst deviation 0.64% at the ends
+  of that range, 0.35% at a 70 °C mean, which is about 0.1% on a pipe capacity
+  and an order below the uncertainty in roughness.
 
-> **Known inconsistency, deliberately left alone.** Correcting viscosity to the
-> mean temperature is more physically right and would give slightly smaller
-> pipes. Pipe Trace originally did this and produced DN50 where the sizer gave
-> DN65 for the same duty. Pipe Trace was aligned *down* to the sizer rather than
-> the other way round, because changing the sizer would silently re-size every
-> saved project. If this is ever corrected it must be corrected in all four
-> tools in the same commit, and every live project re-checked.
+> **`waterMu(T)` is one function with three copies** — `index.html`,
+> `trace.html` and `simulator.html` — byte-identical, exactly like
+> `FITTING_TYPES`. Change one and change all three in the same commit, or the
+> tools disagree on every size. There is a check for this in section 7.
 
-> **The simulator broke this rule until it was caught.** It ran
-> `waterMu(FLUID.Tm)`, giving about 4.0e-4 Pa·s at a 70 °C mean — a third of
-> the sizer's figure. Higher Reynolds, lower friction factor, and pipe losses
-> roughly 15% under what the sizer had reported for the same pipe. It now uses
-> the same fixed `SIZER_MU`. This is the first thing to check if the two tools
-> ever disagree on a run's loss again.
+> **It was pinned at 0.00131 Pa·s in all three until August 2026** — the
+> sizer's glycol-table 0% row, which is water at about 10 °C, while ρ and cp
+> were being taken at the mean operating temperature. Nobody chose that pairing;
+> it fell out of viscosity being read from a table indexed on glycol
+> percentage and never on temperature. Viscosity falls by a factor of three
+> between 10 °C and 70 °C, so the mixture understated LTHW pipe capacity by
+> **4–11%** and put the tools a size above every other calculation. The history
+> is worth knowing because it ran the other way twice: Pipe Trace originally
+> corrected viscosity and was aligned *down* to the sizer, and the simulator
+> was later found running `waterMu(FLUID.Tm)` against the other two fixed and
+> was pinned to match. Both were the right call at the time — one tool correct
+> and two wrong is worse than three consistent — and both are now undone,
+> because the fix went into all three together.
+
+> **Correcting it does not only save pipe.** A run that drops a size sits
+> closer to the 300 Pa/m limit, so it loses more. On the worked example PM1
+> went DN80 → DN65 and the index run went **46.77 → 55.5 kPa**. Smaller pipe,
+> more pump. That is the honest trade and it is what the other calculations
+> were showing all along.
+
+- **Glycol rides on top as a ratio**, `waterMu(Tm) × (μ_glycol / μ_water)` from
+  `GLYCOL_TABLE`, which is how ρ and cp are already handled in
+  `onBasisChange()`. The table's own viscosities are at its reference
+  temperature, so using them raw put 30% glycol at 3.4e-3 Pa·s on an 80/60
+  system — five times too viscous at a 70 °C mean. Glycol projects therefore
+  size **10–15% larger in capacity** than they did, a bigger shift than plain
+  water. The ratio is itself an assumption: it treats the glycol multiplier as
+  independent of temperature, which is roughly true and much closer than the
+  raw table. See section 3.
 
 ### Hydraulics
 - `Q = ṁ·cp·ΔT`
@@ -370,6 +400,7 @@ Flagged in the tools as assumptions. Replace when the figures arrive.
 | Flange / bag loss | 0.40 × valve jacket coefficient | Measured data |
 | Pump curves | Generic parabola through shut-off (125% of design head) and the duty point | **Paste the real one.** Pump → *Use a real pump curve* takes flow/head pairs in l/s or m³/h and kPa or m; everything then solves against that machine |
 | Valve Kv and PICV range | Generic | Selected products |
+| Glycol viscosity against temperature | The `GLYCOL_TABLE` multiplier applied to `waterMu(Tm)`, treated as independent of temperature | Concentration-and-temperature data for the glycol actually specified. The multiplier does fall as temperature rises, so a hot glycol system is sized slightly conservatively |
 | Resistance through a vessel | Low loss header 2 kPa, buffer 3 kPa | Selected products, per vessel |
 | Primary flow margin over secondary | 10%, with a 5–25% band | The plant's own flow rate, per job |
 | PICV / control valve differential | PICV 25, 2-port 20, 3-port 20, DPCV 15 kPa | Selected products, per valve |
@@ -402,6 +433,13 @@ Circuit fields that carry meaning across tools:
 | `isSeparator` | This circuit **is** a header or separating buffer. It opens `opensGroup` and carries `separatorKpa` |
 | `isLLH` | Size on velocity alone, to the header limit. Already existed in the sizer; Pipe Trace now sets it |
 | `vesselType`, `vesselLitres`, `ports`, `marginPct`, `primaryLps`, `secondaryLps` | What the vessel is and what is either side of it |
+
+`settings.mu` is written by the sizer alongside `settings.rho` and
+`settings.cp` — the viscosity actually used, derived rather than typed. The
+simulator prefers it over working one out from the temperatures, so a project
+made with glycol solves on the glycol figure instead of on plain water. A file
+written before this carries no `mu` and the simulator falls back to
+`waterMu(Tm)`, which is right for every project without glycol.
 
 A header crosses as **a circuit of its own**, sitting between the run that
 feeds it and the runs that leave it, with its primary flow given explicitly
@@ -780,6 +818,27 @@ Two minutes, and it exercises every join:
 If sizes differ between trace and sizer, look first at roughness, then at the
 viscosity note in section 2.
 
+### If you touched the fluid properties
+
+**Confirm all three tools hold the identical viscosity.** In each of the three
+consoles, `waterMu(70)` must return `0.000402339802133043` — the same digits,
+not the same to three figures. The sizer's `currentViscosity()` must match it
+with glycol at 0%, and be higher by exactly the `GLYCOL_TABLE` ratio above it.
+
+Then reconcile one pipe through all three. Same bore, same flow, same
+roughness: `calcPD()` in the sizer, `hyd()` in Trace and `pipeHydraulics()` in
+the simulator must agree on Pa/m. They land within 0.001 Pa/m of one another
+rather than exactly — the sizer reads ρ back from its own input field, which
+holds one decimal, so it works at 977.9 where the other two use
+`waterRho(70) = 977.9038`. That gap is 0.0004% and predates the viscosity work;
+anything larger is a real disagreement.
+
+Reference figures at LTHW 80/60, 300 Pa/m, TruBore Metric: **DN50 2.54 l/s ·
+DN65 5.09 · DN80 8.81 · DN100 15.86 · DN125 28.52 · DN150 46.03**, at ρ 977.9
+and cp 4.1907 — so 1 l/s is 81.96 kW at ΔT 20. These match an independent
+Colebrook calculation to three significant figures. If they have moved, the
+fluid basis has moved with them.
+
 ### If you touched valves or fittings
 
 7. Drop a terminal set on a branch and an isolating pair on a main, then open
@@ -841,3 +900,19 @@ viscosity note in section 2.
 - The dwell decay in the report once started from supply temperature instead of
   the mixed shutdown temperature, overstating time-to-target by **1.8×**. Screen
   and report now share one function so they cannot drift again.
+- **The fixed viscosity survived three rounds of being noticed.** Pipe Trace was
+  corrected and then aligned back down to the sizer; the simulator was found
+  correct and pinned to match; and both times the note in this document was
+  updated to explain why the wrong figure was being kept deliberately. What
+  finally settled it was an independent calculation, run outside the toolchain,
+  that reproduced the sizer's numbers exactly once viscosity was aligned — which
+  proved there was only ever one variable in dispute, not a difference of
+  method. The lesson is that "all four tools agree" is a necessary test and not
+  a sufficient one: they agreed with each other for a year while all four were
+  4–11% out. Reconcile against something that shares none of the code.
+- The same exercise found the sizer's **carbon steel is BS EN 10255 medium**
+  while the comparison calculation used **ASME Sch 10**, whose bore runs 2.5–4%
+  larger at every size. That is a different product, not a different method, and
+  both are right for their own market. It is worth stating out loud when
+  anybody says the carbon numbers disagree, because the arithmetic will look
+  wrong when the pipe is simply not the same pipe.

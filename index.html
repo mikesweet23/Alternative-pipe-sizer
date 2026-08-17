@@ -2092,7 +2092,25 @@ const GLYCOL_TABLE = {
 };
 
 function getGlycolProps(pct) { return GLYCOL_TABLE[pct] || GLYCOL_TABLE[0]; }
-function currentViscosity() { return getGlycolProps(parseInt(document.getElementById('glycol').value))[2]; }
+
+/* Dynamic viscosity of water at temperature, Pa.s — Vogel form fitted to
+   IAPWS table values over 0–120 °C, worst deviation 0.64% at the ends and
+   0.35% at a 70 °C mean. Viscosity falls by a factor of three across that
+   range, so it is the one property that cannot be treated as a constant.
+   This used to return the glycol table's 0% row, 0.00131 Pa.s — water at
+   about 10 °C — while rho and cp were being evaluated at the mean operating
+   temperature. That mixture understated the capacity of every LTHW pipe by
+   4–11% and is what put this tool a size above every other calculation. */
+function waterMu(T) { return 2.76473e-5 * Math.exp(524.9766 / (T + 126.05)); }
+
+/* Glycol rides on top as a ratio against the table's own 0% row, which is the
+   same way rho and cp are handled in onBasisChange(). */
+function currentViscosity() {
+  const Tm = getMeanTemp();
+  const pct = parseInt((document.getElementById('glycol') || {}).value) || 0;
+  const gp = getGlycolProps(pct), w0 = getGlycolProps(0);
+  return waterMu(Tm) * (gp[2] / w0[2]);
+}
 
 function calcPD(vflow_m3s, id_m, material) {
   const A = Math.PI * (id_m / 2) ** 2;
@@ -3617,6 +3635,7 @@ function renderBasisSummary() {
     + '<div style="margin-top:4px;color:var(--ink-soft)">'
     + 'Flow duty uses \u03c1 ' + rho.toFixed(1) + ' kg/m\u00b3 and c\u209a ' + cp.toFixed(4) + ' kJ/kg\u00b7K at the mean temperature'
     + (autoPropsOn() ? '' : ' <span style="color:#c28a00;font-weight:700">(entered manually)</span>')
+    + ', and pipe friction \u03bc ' + (currentViscosity() * 1000).toFixed(3) + ' mPa\u00b7s at the same temperature'
     + '. Flow leg loses heat at \u0394T ' + (Ts - Ta).toFixed(0) + ' K, return leg at \u0394T ' + (Tr - Ta).toFixed(0) + ' K.'
     + '</div>';
 }
@@ -5825,6 +5844,11 @@ function buildProjectSnapshot() {
   settings.thermalEnabled = th ? th.checked : false;
   const ap = document.getElementById('autoProps');
   settings.autoProps = ap ? ap.checked : true;
+  /* Derived, not a field: the viscosity actually used, so the simulator solves
+     on this project's figure rather than working one out again from the
+     temperatures and quietly landing somewhere else. rho and cp already cross
+     as their own fields; this is the third property and it was missing. */
+  settings.mu = currentViscosity();
   return {
     app: 'adi-pipework-sizer',
     schema: 1,

@@ -867,13 +867,15 @@ function fittingPa(type, dn, material, v, rho) {
 /* ---------- fluid ---------- */
 function waterRho(T){ return ((1.051865e-05*T - 5.171329e-03)*T - 6.179237e-03)*T + 1000.068; }
 function waterCp(T){ return (((1.606849e-09*T - 4.736562e-07)*T + 5.721385e-05)*T - 2.586464e-03)*T + 4.215269; }
-/* Viscosity is deliberately taken at the Pipework Sizer's basis (0.00131 Pa.s,
-   water with no glycol) rather than corrected to the mean operating
-   temperature. It is the more conservative figure, and matching it means a
-   run sized here keeps the same size when the project is opened in the sizer.
-   Correcting one tool without the other would silently re-size every run. */
-const SIZER_MU = 0.00131;
-function waterMu(){ return SIZER_MU; }
+/* Dynamic viscosity of water at temperature, Pa.s — Vogel form fitted to
+   IAPWS table values over 0-120 C, worst deviation 0.64% at the ends and
+   0.35% at a 70 C mean. Identical function in index.html and simulator.html;
+   all three must be changed together or the tools disagree on every size.
+   It was pinned at 0.00131 Pa.s in all three until this was corrected —
+   water at about 10 C, against rho and cp taken at the mean operating
+   temperature. Viscosity falls by a factor of three between 10 C and 70 C, so
+   that pairing understated LTHW pipe capacity by 4-11%. */
+function waterMu(T){ return 2.76473e-5 * Math.exp(524.9766 / (T + 126.05)); }
 
 /* ---------- plant types ---------- */
 const SOURCE_TYPES = {
@@ -1674,7 +1676,7 @@ function nearestOnPoly(pts, p) {
 /* ---------- hydraulics ---------- */
 function fluid() {
   const Tm = (S.settings.supply + S.settings.ret) / 2;
-  return { rho: waterRho(Tm), cp: waterCp(Tm), mu: waterMu(), Tm };
+  return { rho: waterRho(Tm), cp: waterCp(Tm), mu: waterMu(Tm), Tm };
 }
 function frictionFactor(Re, rel) {
   if (Re < 2300) return 64 / Math.max(Re, 1);
