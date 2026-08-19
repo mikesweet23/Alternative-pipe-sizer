@@ -949,6 +949,20 @@ const SOURCE_TYPES = {
   steam:   'Steam calorifier',
   other:   'Other plant',
 };
+const SOURCE_ROLES = {
+  duty:    'Duty',
+  assist:  'Assist',
+  standby: 'Standby',
+};
+const LOAD_KINDS = {
+  load:      'Load',
+  ahu:       'AHU',
+  fcu:       'FCU',
+  rad:       'Radiator',
+  drycooler: 'Dry cooler',
+  plate:     'Plate exchanger',
+  other:     'Other',
+};
 
 /* ---------- terminal valve arrangements (carried through to the simulator) ---------- */
 /* How the terminal is controlled. The distinction that matters most is
@@ -1361,7 +1375,8 @@ function heightOf(n) {
   if (!isNaN(v)) return v;
   return n.type === 'source' ? S.settings.plantHeight
        : n.type === 'consumer' ? S.settings.loadHeight
-       : (n.type === 'llh' || n.type === 'buffer' || n.type === 'hx') ? S.settings.plantHeight
+       : (n.type === 'llh' || n.type === 'buffer' || n.type === 'hx'
+          || n.type === 'pump' || n.type === 'drycooler') ? S.settings.plantHeight
        : S.settings.mainHeight;
 }
 
@@ -1433,21 +1448,25 @@ function nodeScale(n) { const v = parseFloat(n && n.scale); return (isNaN(v) || 
    become real before anything could be connected to anywhere but its
    centre. */
 const NODE_SIZE_M = {
-  source:   { x: 3.0, y: 2.0 },
-  consumer: { x: 1.6, y: 1.0 },
-  llh:      { x: 0.5, y: 2.0 },
-  buffer:   { x: 1.0, y: 1.8 },
-  hx:       { x: 1.8, y: 1.1 },
+  source:    { x: 3.0, y: 2.0 },
+  consumer:  { x: 1.6, y: 1.0 },
+  llh:       { x: 0.5, y: 2.0 },
+  buffer:    { x: 1.0, y: 1.8 },
+  hx:        { x: 1.8, y: 1.1 },
+  pump:      { x: 0.9, y: 0.9 },
+  drycooler: { x: 2.2, y: 1.2 },
 };
 /* Never smaller than this on screen, or a whole-floor view loses them and
    they become impossible to pick up. The same max(on-screen, real) rule the
    symbols, the leg spacing and the pipe width all follow. */
 const NODE_MIN_PX = {
-  source:   { x: 74, y: 34 },
-  consumer: { x: 62, y: 30 },
-  llh:      { x: 34, y: 62 },
-  buffer:   { x: 40, y: 52 },
-  hx:       { x: 72, y: 44 },
+  source:    { x: 74, y: 34 },
+  consumer:  { x: 62, y: 30 },
+  llh:       { x: 34, y: 62 },
+  buffer:    { x: 40, y: 52 },
+  hx:        { x: 72, y: 44 },
+  pump:      { x: 36, y: 36 },
+  drycooler: { x: 72, y: 40 },
 };
 
 function nodeSizeM(n) {
@@ -1511,14 +1530,37 @@ function portAt(n, p, opts) {
   const dx = p.x - n.x, dy = p.y - n.y;
   const lx = dx * cs - dy * sn, ly = dx * sn + dy * cs;
   let u = clamp(lx / h.hw, -1, 1), v = clamp(ly / h.hh, -1, 1);
-  /* Click in the middle of the box and it is "just connect it". */
-  if (opts.magnet !== false && Math.abs(u) < 0.18 && Math.abs(v) < 0.18) return null;
-  /* Dragging a ring stays on the outline. A click to connect keeps the
-     landing as a fraction of the box, so a stub on the side or the end is
-     where you pointed, not always the centre. */
-  if (opts.edge) {
+  /* Connecting always lands on the outline. The old centre magnet hid the
+     pipe and every valve under the box. Dragging a ring still stays on the
+     edge. */
+  if (opts.magnet && Math.abs(u) < 0.18 && Math.abs(v) < 0.18 && !opts.edge) return null;
+  if (opts.edge !== false) {
     if ((1 - Math.abs(u)) <= (1 - Math.abs(v))) u = u < 0 ? -1 : 1;
     else v = v < 0 ? -1 : 1;
+  }
+  return { u: +u.toFixed(4), v: +v.toFixed(4) };
+}
+
+/* The face the last hop should land on, so the run arrives square to the
+   casing rather than diving into the middle at an odd angle. */
+function portFacing(n, from, click) {
+  const h = nodeHalfPx(n);
+  if (!h) return null;
+  if (!from) return portAt(n, click || n, { edge: true, magnet: false });
+  const r = -nodeRot(n) * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+  const loc = p => {
+    const dx = p.x - n.x, dy = p.y - n.y;
+    return { x: dx * cs - dy * sn, y: dx * sn + dy * cs };
+  };
+  const f = loc(from), c = loc(click || from);
+  const ax = Math.abs(f.x) / Math.max(h.hw, 1e-6), ay = Math.abs(f.y) / Math.max(h.hh, 1e-6);
+  let u, v;
+  if (ax >= ay) {
+    u = f.x < 0 ? -1 : 1;
+    v = clamp(c.y / h.hh, -1, 1);
+  } else {
+    v = f.y < 0 ? -1 : 1;
+    u = clamp(c.x / h.hw, -1, 1);
   }
   return { u: +u.toFixed(4), v: +v.toFixed(4) };
 }
@@ -1558,8 +1600,17 @@ function reseatNode(n) {
    tee and not an open end. */
 function isUnitCasing(n) {
   return n && (n.type === 'source' || n.type === 'consumer' || n.type === 'llh'
-            || n.type === 'buffer' || n.type === 'hx');
+            || n.type === 'buffer' || n.type === 'hx'
+            || n.type === 'pump' || n.type === 'drycooler');
 }
+function isPassThrough(n) {
+  return n && (n.type === 'pump' || n.type === 'drycooler'
+            || (n.type === 'buffer' && n.ports === 2));
+}
+function plantRole(n) {
+  return (n && SOURCE_ROLES[n.dutyRole]) ? n.dutyRole : 'duty';
+}
+function plantRunning(n) { return plantRole(n) !== 'standby'; }
 function isCardinalLeg(a, b) {
   return Math.abs(a.x - b.x) < 0.8 || Math.abs(a.y - b.y) < 0.8;
 }
@@ -2036,6 +2087,13 @@ function buildTree() {
           seg.up = cur.id; seg.down = other; seg.orphan = false;
           seg.parentSeg = cur.seg; seg.depth = cur.depth;
           n.reached = true;
+        } else if (n && (isVessel(n) || isPassThrough(n) || n.type === 'source'
+                     || n.type === 'junction')) {
+          /* A second chiller onto the same header is duty / assist / standby,
+             not a loop. Direct it so Check and the sizes can see it. */
+          seg.up = cur.id; seg.down = other; seg.orphan = false;
+          seg.parentSeg = cur.seg; seg.depth = cur.depth;
+          n.reached = true;
         }
         return;
       }
@@ -2254,9 +2312,70 @@ function consumerKw(n, side) {
 /* Everything a segment has to carry. */
 /* Walked through nodeDemand rather than flattened to a list of consumers, so
    that a separator on the way down can raise the flow above the roll-up. */
+/* A run that joins a plant to a header, buffer, HX or in-line vessel.
+   Direction does not matter: the second chiller is walked *from* the header,
+   so its feed has up = header and down = plant. */
+function plantOnSeg(sg) {
+  const a = nodeById(sg.a), b = nodeById(sg.b);
+  if (a && a.type === 'source') return a;
+  if (b && b.type === 'source') return b;
+  return null;
+}
+function vesselOfPlantFeed(sg) {
+  const src = plantOnSeg(sg);
+  if (!src) return null;
+  const o = nodeById(sg.a === src.id ? sg.b : sg.a);
+  if (o && (isVessel(o) || isPassThrough(o) || isSeparator(o))) return o;
+  return null;
+}
+function plantFeedsInto(vessel) {
+  if (!vessel) return [];
+  return S.segs.filter(s => {
+    if (s.orphan) return false;
+    const v = vesselOfPlantFeed(s);
+    return v && v.id === vessel.id;
+  });
+}
+function plantFeedShare(sg) {
+  const vessel = vesselOfPlantFeed(sg);
+  const src = plantOnSeg(sg);
+  if (!vessel || !src) return null;
+  const feeds = plantFeedsInto(vessel);
+  if (!feeds.length) return null;
+  /* Demand of the vessel is the primary the plants have to make — margin
+     included on a header — not the empty walk into the other plant. */
+  const d = nodeDemand(vessel.id);
+  const running = feeds.filter(s => plantRunning(plantOnSeg(s)));
+  const rated = running.reduce((sum, s) => sum + (parseFloat((plantOnSeg(s) || {}).kw) || 0), 0);
+  const myKw = parseFloat(src.kw) || 0;
+  const nRun = Math.max(1, running.length);
+  const runFactor = (rated > 0 && myKw > 0) ? myKw / rated : 1 / nRun;
+  if (!plantRunning(src)) {
+    const maxKw = running.reduce((m, s) => Math.max(m, parseFloat((plantOnSeg(s) || {}).kw) || 0), 0);
+    const take = (rated > 0 && maxKw > 0) ? maxKw / rated : 1 / nRun;
+    return { kw: 0, lps: 0, n: d.n, sizeLps: d.lps * take };
+  }
+  if (feeds.length < 2) return { kw: d.kw, lps: d.lps, n: d.n, sizeLps: d.lps };
+  return { kw: d.kw * runFactor, lps: d.lps * runFactor, n: d.n, sizeLps: d.lps * runFactor };
+}
 function segDuty(sg) {
   if (sg.down === null || sg.down === undefined) return { kw: 0, lps: 0, n: 0 };
-  return nodeDemand(sg.down, null, sg.service);
+  const sh = plantFeedShare(sg);
+  if (sh) return sh;
+  const d = nodeDemand(sg.down, null, sg.service);
+  return { kw: d.kw, lps: d.lps, n: d.n, sizeLps: d.lps };
+}
+/* An in-line dry cooler has its own drop, split across the runs that meet
+   it so a cooler with a run in and a run out is not counted twice. */
+function dryCoolerKpaOn(sg) {
+  let extra = 0;
+  [nodeById(sg.a), nodeById(sg.b)].forEach(n => {
+    if (!n || n.type !== 'drycooler') return;
+    const kpa = (n.kpa === '' || n.kpa == null) ? 8 : (parseFloat(n.kpa) || 0);
+    const thru = S.segs.filter(x => x.a === n.id || x.b === n.id).length;
+    extra += thru ? kpa / thru : kpa;
+  });
+  return extra;
 }
 
 /* ---------- fittings take-off ----------
@@ -2421,8 +2540,10 @@ function solve() {
     const down = nodeById(sg.down);
     sg.kw = d.kw; sg.lps = d.lps; sg.nCons = d.n;
     sg.runM = segLengthM(sg);                    // the route as traced, in plan
-    sg.pipe = (sg.lps > 0 && S.pxPerM > 0)
-      ? sizeFor(sg.lps, sg.material || S.settings.material, sg.step)
+    const sizeLps = (d.sizeLps > 0 ? d.sizeLps : sg.lps);
+    sg.sizeLps = sizeLps;
+    sg.pipe = (sizeLps > 0 && S.pxPerM > 0)
+      ? sizeFor(sizeLps, sg.material || S.settings.material, sg.step)
       : null;
     sg.fit = segFittings(sg);
     // vertical adds to the pipe you actually install
@@ -2446,6 +2567,7 @@ function solve() {
     // what the load at the end of this run adds on top of the pipework
     sg.coilKpa = (down && down.type === 'consumer')
       ? (parseFloat(loadSide(down, sg.service).coilKpa) || 0) : 0;
+    sg.dropKpa += dryCoolerKpaOn(sg);
     sg.totalKpa = sg.dropKpa + sg.coilKpa;
   });
   /* An item whose run has been deleted has nothing to sit on. Dropping it
@@ -2472,7 +2594,7 @@ function solve() {
       sg.nFit = fittingCount(sg);
       sg.valveKpa = sg.fit.fixedKpa || 0;
       sg.fitKpa = sg.fitPa / 1000;
-      sg.dropKpa = sg.straightKpa + sg.fitKpa + sg.valveKpa;
+      sg.dropKpa = sg.straightKpa + sg.fitKpa + sg.valveKpa + dryCoolerKpaOn(sg);
       sg.totalKpa = sg.dropKpa + sg.coilKpa;
     });
   }
@@ -2502,6 +2624,29 @@ function solve() {
    Marked on the nodes and the runs during the solve, so the schedule, the
    drawing, the check and the export all read the same grouping rather than
    each working it out again. */
+function connectedSourceClusters() {
+  const srcs = S.nodes.filter(n => n.type === 'source');
+  const seen = new Set();
+  const clusters = [];
+  srcs.forEach(s => {
+    if (seen.has(s.id)) return;
+    const cluster = [];
+    const q = [s.id];
+    seen.add(s.id);
+    while (q.length) {
+      const id = q.shift();
+      const n = nodeById(id);
+      if (n && n.type === 'source') cluster.push(n);
+      neighbours(id).forEach(({ other }) => {
+        if (seen.has(other)) return;
+        seen.add(other);
+        q.push(other);
+      });
+    }
+    if (cluster.length) clusters.push(cluster);
+  });
+  return clusters;
+}
 function assignGroups() {
   const groups = [];
   const seen = new Set();
@@ -2535,11 +2680,14 @@ function assignGroups() {
       }
     });
   };
-  S.nodes.filter(n => n.type === 'source').forEach(r => {
+  /* Plants that share a header are one primary, not one group each. Isolated
+     energy centres stay on their own pump. */
+  connectedSourceClusters().forEach(cluster => {
     const g = { id: groups.length, sepId: null, sepName: '', primaryOf: null,
-                label: groups.length === 0 ? 'Primary' : 'Primary — ' + (r.name || 'plant') };
+                label: groups.length === 0 ? 'Primary'
+                  : 'Primary — ' + cluster.map(r => r.name || 'plant').join(', ') };
     groups.push(g);
-    walk(r.id, g.id);
+    cluster.forEach(r => walk(r.id, g.id));
   });
   S.segs.forEach(s => { if (s.orphan) s.hgroup = null; });
   return groups;
@@ -3013,15 +3161,28 @@ function pairLegAt(sg, t, sign, k) { return polyAt(pairLegPts(sg, sign, k), t); 
    It is placed *on the pipework*, not on a spur off it. Drawing it on a stub
    pointing away from the load put a length of pipe on the plan that ran to
    nothing, which reads as a mistake on the drawing. */
-const LOAD_BOX = { w: 62, h: 30 };
+function endClearPx(sg, which, k) {
+  const kk = (k === undefined) ? 1 / zoom : k;
+  const nid = which === 'down'
+    ? (sg.down !== null && sg.down !== undefined ? sg.down : sg.b)
+    : (sg.up !== null && sg.up !== undefined ? sg.up : sg.a);
+  const n = nodeById(nid);
+  let extra = 0;
+  if (isUnitCasing(n) && sg.pts && sg.pts.length > 1) {
+    const h = nodeDrawHalf(n, kk);
+    const a = which === 'down' ? sg.pts[sg.pts.length - 1] : sg.pts[0];
+    const b = which === 'down' ? sg.pts[sg.pts.length - 2] : sg.pts[1];
+    const horiz = b && Math.abs(a.x - b.x) >= Math.abs(a.y - b.y);
+    extra = horiz ? h.hw : h.hh;
+  }
+  return Math.max(setOffsetPx(), extra + valveDrawScale(kk) * 16);
+}
 function loadValveT(sg, k) {
   const pts = sg.pts;
   if (!pts || pts.length < 2) return 1;
   const total = polyCum(pts).pop() || 1;
-  const kk = (k === undefined) ? 1 / zoom : k;
-  // clear of the box, plus room for the symbol itself
-  const clear = (LOAD_BOX.w / 2) * kk + valveDrawScale(kk) * 11;
-  return clamp(1 - clear / total, 0, 1);
+  const clear = endClearPx(sg, 'down', k);
+  return clamp(1 - clear / total, 0.08, 0.92);
 }
 function loadStubPos(sg, leg, k) {
   const down = nodeById(sg.down !== null && sg.down !== undefined ? sg.down : sg.b);
@@ -3227,7 +3388,14 @@ function render() {
 
   // ---- live trace ----
   if (draft && draft.kind === 'trace' && draft.pts.length) {
-    const pts = hoverPt ? draft.pts.concat([previewPoint(hoverPt)]) : draft.pts;
+    let extra = hoverPt ? [previewPoint(hoverPt)] : [];
+    if (hoverPt && extra.length && orthoNow()) {
+      const sn = snapAt(hoverPt, draft.startNode);
+      const prev = draft.pts[draft.pts.length - 1];
+      const land = unitLanding(sn, prev);
+      if (land && prev && !isCardinalLeg(prev, land.at)) extra = [squareCorner(prev, land.at), land.at];
+    }
+    const pts = extra.length ? draft.pts.concat(extra) : draft.pts;
     const d = pts.map((p, i) => (i ? 'L' : 'M') + p.x + ' ' + p.y).join(' ');
     g.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--measure)', 'stroke-width': 2.4 * k,
       'stroke-dasharray': (8 * k) + ' ' + (5 * k), 'stroke-linecap': 'round' }));
@@ -3278,6 +3446,7 @@ function render() {
        buffer is a vessel. Both keep their text square to the sheet, the same
        as the loads. */
     if (isVessel(n)) { drawVessel(g, n, k, picked); return; }
+    if (n.type === 'pump' || n.type === 'drycooler') { drawInline(g, n, k, picked); return; }
     const src = n.type === 'source';
     const rot = nodeRot(n);
     const hf = nodeDrawHalf(n, k);
@@ -3300,7 +3469,7 @@ function render() {
       'font-size': 10 * k, 'font-weight': 600, 'font-family': 'Archivo, sans-serif',
       fill: src ? 'var(--paper)' : 'var(--ink)' }, String(n.name || '').slice(0, 13)));
     const sub = src
-      ? (fmt(n.kw, 0) + ' kW')
+      ? (fmt(n.kw, 0) + ' kW' + (plantRole(n) === 'duty' ? '' : '  ' + SOURCE_ROLES[plantRole(n)]))
       : isFourPipe(n)
         ? ('H ' + fmt(consumerKw(n, 'heat'), 0) + ' / C ' + fmt(consumerKw(n, 'cool'), 0) + ' kW')
         : (fmt(consumerKw(n), 0) + ' kW  ' + fmtVol(consumerFlow(n)));
@@ -3515,6 +3684,57 @@ function drawPorts(g, n, k, picked) {
   });
 }
 
+function drawInline(g, n, k, picked) {
+  const pump = n.type === 'pump';
+  const rot = nodeRot(n);
+  const hf = nodeDrawHalf(n, k);
+  const y = n.y - hf.hh;
+  const box = mk('g', { transform: 'translate(' + n.x + ' ' + n.y + ') rotate(' + rot + ')' });
+  if (picked) {
+    box.appendChild(mk('rect', { x: -(hf.hw + 4 * k), y: -(hf.hh + 4 * k),
+      width: 2 * hf.hw + 8 * k, height: 2 * hf.hh + 8 * k,
+      rx: 5 * k, fill: 'none', stroke: 'var(--measure)', 'stroke-width': 2.5 * k }));
+  }
+  if (pump) {
+    const r = Math.min(hf.hw, hf.hh);
+    box.appendChild(mk('circle', { cx: 0, cy: 0, r: r,
+      fill: 'var(--white)', 'fill-opacity': 0.94,
+      stroke: n.reached ? 'var(--graphite)' : 'var(--alarm)', 'stroke-width': 2 * k }));
+    box.appendChild(mk('polygon', {
+      points: (-r * 0.38) + ',' + (-r * 0.46) + ' ' + (r * 0.52) + ',0 ' + (-r * 0.38) + ',' + (r * 0.46),
+      fill: 'var(--graphite)' }));
+  } else {
+    box.appendChild(mk('rect', { x: -hf.hw, y: -hf.hh, width: 2 * hf.hw, height: 2 * hf.hh,
+      rx: 4 * k, fill: 'var(--white)', 'fill-opacity': 0.94,
+      stroke: n.reached ? 'var(--graphite)' : 'var(--alarm)', 'stroke-width': 2 * k }));
+    for (let i = -2; i <= 2; i++) {
+      box.appendChild(mk('line', {
+        x1: -hf.hw * 0.72, y1: i * hf.hh * 0.28,
+        x2: hf.hw * 0.72, y2: i * hf.hh * 0.28,
+        stroke: 'var(--return)', 'stroke-width': 1.2 * k, opacity: 0.7 }));
+    }
+  }
+  g.appendChild(box);
+  drawPorts(g, n, k, picked);
+  g.appendChild(mk('text', { x: n.x, y: y - 6 * k, 'text-anchor': 'middle',
+    'font-size': 10 * k, 'font-weight': 700, 'font-family': 'Archivo, sans-serif',
+    fill: 'var(--ink)' }, String(n.name || '').slice(0, 14)));
+  const th = pump ? pumpThrough(n) : null;
+  const sub = pump
+    ? ((th && th.lps) ? fmt(th.lps, 2) + ' l/s  ' + fmt(th.kpa, 0) + ' kPa' : 'in-line')
+    : ((parseFloat(n.rejectKw) || 0) > 0
+        ? fmt(n.rejectKw, 0) + ' kW rejected'
+        : (n.leaveTemp != null && n.leaveTemp !== '' ? 'leaves ' + fmt(n.leaveTemp, 0) + ' °C' : 'dry cooler'));
+  g.appendChild(mk('text', { x: n.x, y: n.y + hf.hh + 12 * k, 'text-anchor': 'middle',
+    'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace',
+    fill: 'var(--ink-soft)' }, sub));
+  if (!n.reached) {
+    g.appendChild(mk('text', { x: n.x, y: y - 16 * k, 'text-anchor': 'middle',
+      'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+      fill: 'var(--alarm)' }, 'NOT CONNECTED'));
+  }
+}
+
 function drawVessel(g, n, k, picked) {
   const llh = n.type === 'llh';
   const hx = n.type === 'hx';
@@ -3664,21 +3884,23 @@ const TOOLS = [
   { id: 'source',   label: 'Plant',  key: 'P', icon: 'M3 4h14v12H3zM7 8h6v4H7z' },
   { id: 'llh',      label: 'Header', key: 'L', icon: 'M6 2h8v16H6zM6 6h8M6 14h8M2 5h4M2 15h4M14 5h4M14 15h4' },
   { id: 'buffer',   label: 'Buffer', key: 'U', icon: 'M5 5a5 3 0 0110 0v10a5 3 0 01-10 0zM5 5a5 3 0 0010 0' },
-  { id: 'hx',       label: 'HX',     key: 'X', icon: 'M3 4h14v12H3zM7 4v12M10 4v12M13 4v12' },
-  { id: 'consumer', label: 'Load',   key: 'C', icon: 'M3 6h14v8H3zM6 6v8M10 6v8M14 6v8' },
+  { id: 'hx',        label: 'HX',     key: 'X', icon: 'M3 4h14v12H3zM7 4v12M10 4v12M13 4v12' },
+  { id: 'pump',      label: 'Pump',   key: 'K', icon: 'M10 3a7 7 0 110 14 7 7 0 010-14zM7 10l6-3.5V13.5z' },
+  { id: 'drycooler', label: 'Cooler', key: 'Y', icon: 'M3 5h14v10H3zM6 8h8M6 12h8M5 5V3M15 5V3' },
+  { id: 'consumer',  label: 'Load',   key: 'C', icon: 'M3 6h14v8H3zM6 6v8M10 6v8M14 6v8' },
   { id: 'trace',    label: 'Trace',  key: 'T', icon: 'M2 15l5-9 5 5 6-8' },
   { id: 'tee',      label: 'Tee',    key: 'J', icon: 'M2 12h16M10 12V4' },
   { id: 'valve',    label: 'Valves', key: 'F', icon: 'M3 5v10l7-5zM17 5v10l-7-5zM10 10V4M7 4h6' },
 ];
 
 /* Nothing can be placed or traced until the drawing has a scale. */
-const NEEDS_SCALE = ['tape', 'source', 'llh', 'buffer', 'hx', 'consumer', 'trace', 'tee', 'valve'];
+const NEEDS_SCALE = ['tape', 'source', 'llh', 'buffer', 'hx', 'pump', 'drycooler', 'consumer', 'trace', 'tee', 'valve'];
 
 function buildRail() {
   const rail = el('rail');
   rail.innerHTML = '';
   TOOLS.forEach((t, i) => {
-    if (i === 2 || i === 4 || i === 9) rail.appendChild(document.createElement('hr'));
+    if (i === 2 || i === 4 || i === 11) rail.appendChild(document.createElement('hr'));
     const b = document.createElement('button');
     const locked = scaleNeeded() && NEEDS_SCALE.indexOf(t.id) >= 0;
     b.className = 'tool' + (tool === t.id ? ' on' : '');
@@ -3699,6 +3921,8 @@ const HINTS = {
   llh: 'Click where the header sits. Drag empty paper to pan.',
   buffer: 'Click where the buffer sits. Drag empty paper to pan.',
   hx: 'Click where the heat exchanger sits. It always separates the circuits. Drag empty paper to pan.',
+  pump: 'Click where the inline pump sits. Trace a run in and a run out. Indicative duty comes from the flow and the index head.',
+  drycooler: 'Click where the dry cooler sits, usually on the return. Set the heat rejected and the leaving temperature.',
   trace: 'Start on a ringed point. Click corners; finish on another point. In Concept, type the installed length on the run.',
   pan: 'Drag to move around the drawing. Space also pans in any tool.',
   tape: 'Click along the route; click a corner to turn. Plan metres only.',
@@ -3847,7 +4071,7 @@ function addSource(p) {
   pushUndo('add plant');
   const n = { id: nid(), type: 'source', x: p.x, y: p.y,
     name: 'Plant ' + (S.nodes.filter(x => x.type === 'source').length + 1),
-    plant: 'boiler', kw: 0, dT: S.settings.dT,
+    plant: 'boiler', dutyRole: 'duty', kw: 0, dT: S.settings.dT,
     height: S.settings.plantHeight };
   S.nodes.push(n);
   select('node', n.id);
@@ -3860,11 +4084,11 @@ function addConsumer(p, from) {
     id: 0, type: 'consumer', x: 0, y: 0,
     name: '', basis: 'kw', kw: 0, lps: 0, dT: S.settings.dT,
     coilKpa: 0, valve: 'twoPortMod', height: S.settings.loadHeight,
-    fourPipe: false,
+    fourPipe: false, kind: 'load',
   }, base ? {
     basis: base.basis, kw: base.kw, lps: base.lps, dT: base.dT,
     coilKpa: base.coilKpa, valve: base.valve, height: base.height,
-    fourPipe: !!base.fourPipe,
+    fourPipe: !!base.fourPipe, kind: base.kind || 'load',
     cool: base.cool ? Object.assign({}, defaultCool(), base.cool) : undefined,
   } : {});
   n.id = nid(); n.x = p.x; n.y = p.y;
@@ -3881,7 +4105,8 @@ function addConsumer(p, from) {
    and which are secondary falls out of the tree — what arrives is the primary
    side, what leaves is the secondary — so nothing has to be declared. */
 function nextVesselName(type) {
-  const stem = type === 'llh' ? 'LLH' : type === 'hx' ? 'HX' : 'Buffer';
+  const stem = type === 'llh' ? 'LLH' : type === 'hx' ? 'HX'
+             : type === 'pump' ? 'Pump' : type === 'drycooler' ? 'Dry cooler' : 'Buffer';
   let n = 0;
   S.nodes.forEach(x => {
     const m = String(x.name || '').match(new RegExp('^' + stem + '\\s*(\\d+)$'));
@@ -3978,6 +4203,26 @@ function addHX(p) {
   };
   el('hxPlate').addEventListener('click', () => place('plate'));
   el('hxShell').addEventListener('click', () => place('shell'));
+  return n;
+}
+
+function addPump(p) {
+  pushUndo('add pump');
+  const n = { id: nid(), type: 'pump', x: p.x, y: p.y,
+    name: nextVesselName('pump'), height: S.settings.plantHeight, eta: 0.70 };
+  S.nodes.push(n);
+  select('node', n.id);
+  render();
+  return n;
+}
+function addDryCooler(p) {
+  pushUndo('add dry cooler');
+  const n = { id: nid(), type: 'drycooler', x: p.x, y: p.y,
+    name: nextVesselName('drycooler'), height: S.settings.plantHeight,
+    rejectKw: 0, leaveTemp: S.settings.ret, kpa: '' };
+  S.nodes.push(n);
+  select('node', n.id);
+  render();
   return n;
 }
 
@@ -4087,13 +4332,14 @@ const SNAP_PX = 20;
 function nodeWord(n) {
   return n.type === 'source' ? 'plant' : n.type === 'consumer' ? 'load'
        : n.type === 'llh' ? 'header' : n.type === 'buffer' ? 'buffer'
-       : n.type === 'hx' ? 'HX' : 'tee';
+       : n.type === 'hx' ? 'HX' : n.type === 'pump' ? 'pump'
+       : n.type === 'drycooler' ? 'dry cooler' : 'tee';
 }
 /* A component snaps at the place on it nearest the cursor, not at its
    middle — that is what lets two runs into the same load arrive at two
    different places on it. */
 function snapNode(n, p) {
-  const port = p ? portAt(n, p) : null;
+  const port = p ? portAt(n, p, { edge: true, magnet: false }) : null;
   const at = portPoint(n, port);
   return { kind: 'node', node: n, at, port, d0: p ? distToNode(n, p) : null,
            what: nodeWord(n) + (port ? ' edge' : ''), name: n.name || '' };
@@ -4118,13 +4364,16 @@ function snapCandidates(p) {
    change anything, so the same answer can be drawn and then acted on. */
 function snapAt(p, skipId) {
   const tol = SNAP_PX / zoom;
+  const unitTol = 56 / zoom;
   let best = null;
   snapCandidates(p).forEach(c => {
     if (skipId && c.kind === 'node' && c.node.id === skipId) return;
     /* For a component it is the distance to the box, not to the connection
-       point, so anywhere on a stretched load picks that load up. */
+       point, so anywhere on a stretched load picks that load up. Casings
+       get a wider catch so a click on the edge actually joins. */
     const d = (c.d0 === null || c.d0 === undefined) ? dist(c.at, p) : c.d0;
-    if (d <= tol && (!best || d < best.d)) best = Object.assign({}, c, { d });
+    const allow = (c.kind === 'node' && isUnitCasing(c.node)) ? unitTol : tol;
+    if (d <= allow && (!best || d < best.d)) best = Object.assign({}, c, { d });
   });
   if (best) return best;
 
@@ -4186,10 +4435,23 @@ function orthoPoint(prev, p) {
 
 /* Where the next point would land: on the snap if there is one, otherwise
    the cursor, squared up if the lock is on. */
+/* Landing on a casing: the face toward the last corner, so the last hop
+   stays horizontal or vertical. Alt (or the lock off) keeps the free angle. */
+function unitLanding(sn, from) {
+  if (!sn || sn.kind !== 'node' || !isUnitCasing(sn.node)) return null;
+  const port = (from && orthoNow())
+    ? portFacing(sn.node, from, sn.at)
+    : (sn.port || portFacing(sn.node, from, sn.at));
+  const at = portPoint(sn.node, port) || sn.at;
+  return { port, at };
+}
 function previewPoint(p) {
   const sn = snapAt(p, draft ? draft.startNode : null);
-  if (sn) return { x: sn.at.x, y: sn.at.y };
   const prev = draft && draft.pts.length ? draft.pts[draft.pts.length - 1] : null;
+  if (sn) {
+    const land = unitLanding(sn, prev);
+    return land ? { x: land.at.x, y: land.at.y } : { x: sn.at.x, y: sn.at.y };
+  }
   return orthoPoint(prev, p);
 }
 
@@ -4209,14 +4471,29 @@ function finishTrace(endNode, endPort) {
   if (pts.length < 2 || polyLenPx(pts) < stubPx() * 0.5) {
     draft = null; toast('Too short to be a run'); render(); return;
   }
+  const startN0 = nodeById(draft.startNode);
+  const endN0 = nodeById(endNode);
+  const fromStart = pts[1] || pts[pts.length - 1];
+  const fromEnd = pts[pts.length - 2] || pts[0];
+  const aPort = (isUnitCasing(startN0)
+    ? (orthoNow() ? portFacing(startN0, fromStart, pts[0]) : (draft.startPort || portFacing(startN0, fromStart, pts[0])))
+    : (draft.startPort || null));
+  const bPort = (isUnitCasing(endN0)
+    ? (orthoNow() ? portFacing(endN0, fromEnd, pts[pts.length - 1]) : (endPort || portFacing(endN0, fromEnd, pts[pts.length - 1])))
+    : (endPort || null));
   const sg = {
     id: nid(), a: draft.startNode, b: endNode,
-    aPort: draft.startPort || null, bPort: endPort || null,
+    aPort, bPort,
     pts,
     mode: draft.mode || 'pair', leg: draft.leg || 'flow',
     material: S.settings.material, step: 0,
     ref: 'Run ' + (S.segs.length + 1),
   };
+  reseatSeg(sg);
+  if (S.settings.ortho !== false) {
+    squareIntoUnit(sg.pts, 0, startN0);
+    squareIntoUnit(sg.pts, sg.pts.length - 1, endN0);
+  }
   S.segs.push(sg);
   draft = null;
   const afterService = () => {
@@ -4328,7 +4605,7 @@ function setLayout(sg, t, slots, k, anchor) {
   /* Where the first item of the longest leg goes. Anchored sets are measured
      from the end they belong to; a set that will not fit is squeezed rather
      than allowed to run off the end of the run. */
-  const off = setOffsetPx() / total;
+  const off = endClearPx(sg, anchor === 'up' ? 'up' : 'down', kk) / total;
   let start;
   if (anchor === 'down')     start = 1 - off - (most - 1) * dt;
   else if (anchor === 'up')  start = off;
@@ -4577,16 +4854,21 @@ function openInspector() {
   } else if (sel.kind === 'node') {
     const n = nodeById(sel.id);
     if (!n) { closeInspector(); return; }
-    el('insKind').textContent = n.type === 'source' ? 'Plant' : n.type === 'consumer' ? 'Load'
+    el('insKind').textContent = n.type === 'source' ? 'Plant' : n.type === 'consumer'
+                              ? (LOAD_KINDS[n.kind] || 'Load')
                               : n.type === 'llh' ? 'Low loss header'
                               : n.type === 'hx' ? (hxKind(n) === 'shell' ? 'Shell and tube' : 'Plate heat exchanger')
-                              : n.type === 'buffer' ? 'Buffer vessel' : 'Tee';
+                              : n.type === 'buffer' ? 'Buffer vessel'
+                              : n.type === 'pump' ? 'Inline pump'
+                              : n.type === 'drycooler' ? 'Dry cooler' : 'Tee';
     el('insName').textContent = n.name || '\u2014';
     b.innerHTML = n.type === 'source' ? sourceForm(n)
                 : n.type === 'consumer' ? consumerForm(n)
                 : n.type === 'llh' ? llhForm(n)
                 : n.type === 'hx' ? hxForm(n)
-                : n.type === 'buffer' ? bufferForm(n) : junctionForm(n);
+                : n.type === 'buffer' ? bufferForm(n)
+                : n.type === 'pump' ? pumpForm(n)
+                : n.type === 'drycooler' ? drycoolerForm(n) : junctionForm(n);
   } else {
     const sg = segById(sel.id);
     if (!sg) { closeInspector(); return; }
@@ -4595,6 +4877,13 @@ function openInspector() {
     b.innerHTML = segForm(sg);
   }
   wireInspector();
+  if (sel && sel.kind === 'seg' && S.concept) {
+    const lenEl = b.querySelector('[data-f="lengthOverride"]');
+    const sg0 = segById(sel.id);
+    if (lenEl && sg0 && !(parseFloat(sg0.lengthOverride) > 0)) {
+      setTimeout(() => { lenEl.focus(); lenEl.select(); }, 30);
+    }
+  }
 }
 
 const opts = (obj, cur) => Object.keys(obj)
@@ -4605,6 +4894,9 @@ function sourceForm(n) {
   return ''
     + '<label class="fld"><span>Name</span><input data-f="name" value="' + esc(n.name) + '"></label>'
     + '<label class="fld"><span>Plant type</span><select data-f="plant">' + opts(SOURCE_TYPES, n.plant) + '</select></label>'
+    + '<label class="fld"><span>Duty role</span><select data-f="dutyRole">'
+    +   opts(SOURCE_ROLES, plantRole(n)) + '</select></label>'
+    + '<div class="note">Duty and assist share the flow at design. Standby is connected and sized to take over, but carries nothing until it does. Several chillers or boilers onto one header is the usual case.</div>'
     + '<div class="row2">'
     +   '<label class="fld"><span>Output <em>kW</em></span><input type="number" data-f="kw" step="1" min="0" value="' + (n.kw || '') + '"></label>'
     +   '<label class="fld"><span>&Delta;T <em>K</em></span><input type="number" data-f="dT" step="1" min="1" value="' + (n.dT || S.settings.dT) + '"></label>'
@@ -4618,6 +4910,97 @@ function sourceForm(n) {
                   ['Installed plant', fmt(totals().plantKw, 0) + ' kW'],
                   ['Stream total', fmtVol(stream)]])
     + '<div class="note">The figure on the plant is the stream total. Unpinned loads (left at 0) share what is left after anything pinned. Flow and return are the same volume twice, not one pot.</div>'
+    + placementFields(n)
+    + rowBtns();
+}
+
+const LOAD_KIND_STEM = {
+  load: 'Load', ahu: 'AHU', fcu: 'FCU', rad: 'Radiator',
+  drycooler: 'Dry cooler', plate: 'PHE', other: 'Unit',
+};
+function isStockLoadName(name) {
+  return /^(Load|AHU|FCU|Radiator|Dry cooler|PHE|Unit|Plant) \d+$/.test(name || '');
+}
+function nextKindName(kind) {
+  const stem = LOAD_KIND_STEM[kind] || 'Load';
+  let n = 0;
+  const re = new RegExp('^' + stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(\\d+)$');
+  S.nodes.forEach(x => {
+    const m = String(x.name || '').match(re);
+    if (m) n = Math.max(n, parseInt(m[1], 10));
+  });
+  return stem + ' ' + (n + 1);
+}
+
+function pumpThrough(n) {
+  let best = null;
+  S.segs.forEach(s => {
+    if (s.a !== n.id && s.b !== n.id) return;
+    const q = s.lps || s.sizeLps || 0;
+    const bq = best ? (best.lps || best.sizeLps || 0) : -1;
+    if (!best || q > bq) best = s;
+  });
+  if (!best) return { s: null, lps: 0, dn: '\u2014', kpa: 0 };
+  const idx = (S.indexes || []).find(x => x.group === best.hgroup) || S.index;
+  return {
+    s: best,
+    lps: best.lps || best.sizeLps || 0,
+    dn: best.pipe ? best.pipe.nom : '\u2014',
+    kpa: idx && idx.drop ? idx.drop : (best.dropKpa || 0),
+  };
+}
+function fitPumpSet() {
+  const n = sel && sel.kind === 'node' ? nodeById(sel.id) : null;
+  if (!n || n.type !== 'pump') return;
+  const th = pumpThrough(n);
+  if (!th.s) { toast('Trace a run through the pump first'); return; }
+  if (segHasPlacedValves(th.s.id)) { toast('That run already has valves'); return; }
+  pushUndo('fit the pump set');
+  fitSetOnRun(th.s, 'pumpSet', { quiet: true });
+  toast('Pump set on ' + (th.s.ref || 'the run'));
+  render();
+  openInspector();
+}
+function pumpForm(n) {
+  const th = pumpThrough(n);
+  const eta = n.eta == null || n.eta === '' ? 0.70 : parseFloat(n.eta);
+  const kw = th.lps > 0 && th.kpa > 0 && eta > 0 ? (th.lps / 1000) * th.kpa / eta : 0;
+  const thru = S.segs.filter(s => s.a === n.id || s.b === n.id).length;
+  return ''
+    + '<div class="note">In-line on the run. Indicative duty from the flow through it and this circuit\'s index head &mdash; not a selection. Paste a real curve in the simulator when you have one.</div>'
+    + '<label class="fld"><span>Name</span><input data-f="name" value="' + esc(n.name || '') + '"></label>'
+    + '<label class="fld"><span>Efficiency</span><input type="number" data-f="eta" min="0.2" max="0.9" step="0.01" value="'
+    +   (isNaN(eta) ? 0.70 : eta) + '"></label>'
+    + derivedBox([
+        ['Flow through', th.lps ? fmtVol(th.lps) : '\u2014'],
+        ['Index head', th.kpa ? fmt(th.kpa, 1) + ' kPa' : '\u2014'],
+        ['Pipe', th.dn],
+        ['Absorbed', kw ? fmt(kw, 2) + ' kW' : '\u2014'],
+      ])
+    + '<div class="note">P = Q (m\u00b3/s) \u00d7 \u0394p (kPa) / \u03b7. Type installed lengths and fit a valve set on the runs, and the index head follows.</div>'
+    + (thru < 2 ? '<div class="note warn">In-line &mdash; trace a run in and a run out.</div>' : '')
+    + '<button class="btn ghost sm" id="insPumpSet" style="margin-top:10px">Fit pump set on the run</button>'
+    + '<label class="fld"><span>Height above finished floor <em>m</em></span>'
+    +   '<input type="number" data-f="height" step="0.1" value="' + heightOf(n) + '"></label>'
+    + placementFields(n)
+    + rowBtns();
+}
+function drycoolerForm(n) {
+  const thru = S.segs.filter(s => s.a === n.id || s.b === n.id).length;
+  return ''
+    + '<div class="note">Sits in the line &mdash; typically the return &mdash; and knocks heat off before the plant. It does not open a new circuit. Leaving temperature is the return the plant then sees; it does not rewrite the project \u0394T.</div>'
+    + '<label class="fld"><span>Name</span><input data-f="name" value="' + esc(n.name || '') + '"></label>'
+    + '<label class="fld"><span>Heat rejected <em>kW</em></span>'
+    +   '<input type="number" data-f="rejectKw" min="0" step="1" value="' + (n.rejectKw || '') + '"></label>'
+    + '<label class="fld"><span>Leaves at <em>\u00b0C</em></span>'
+    +   '<input type="number" data-f="leaveTemp" step="0.5" value="'
+    +   (n.leaveTemp == null || n.leaveTemp === '' ? '' : n.leaveTemp) + '" placeholder="return after cooler"></label>'
+    + '<label class="fld"><span>Own drop <em>kPa</em></span>'
+    +   '<input type="number" data-f="kpa" min="0" step="0.5" placeholder="8 assumed" value="'
+    +   (n.kpa === '' || n.kpa == null ? '' : n.kpa) + '"></label>'
+    + (thru < 2 ? '<div class="note warn">In-line &mdash; trace a run in and a run out. On a paired run, switch that run to a single return if the cooler is only on the return.</div>' : '')
+    + '<label class="fld"><span>Height above finished floor <em>m</em></span>'
+    +   '<input type="number" data-f="height" step="0.1" value="' + heightOf(n) + '"></label>'
     + placementFields(n)
     + rowBtns();
 }
@@ -4677,6 +5060,8 @@ function consumerForm(n) {
   if (four) ensureCool(n);
   return ''
     + '<label class="fld"><span>Name</span><input data-f="name" value="' + esc(n.name) + '"></label>'
+    + '<label class="fld"><span>What it is</span><select data-f="kind">'
+    +   opts(LOAD_KINDS, n.kind || 'load') + '</select></label>'
     + '<label class="fld" style="flex-direction:row;align-items:center;gap:8px">'
     +   '<input type="checkbox" data-f="fourPipe"' + (four ? ' checked' : '') + ' style="width:auto;margin:0">'
     +   '<span>4-pipe &mdash; heating and cooling</span></label>'
@@ -5518,6 +5903,9 @@ function wireInspector() {
       else obj[f] = (inp.type === 'number') ? (inp.value === '' ? 0 : parseFloat(inp.value)) : inp.value;
       /* Changing what a vessel is changes the whole panel and, if it is a
          separator, the numbering of everything below it. */
+      if (f === 'kind' && node && node.type === 'consumer' && isStockLoadName(node.name)) {
+        node.name = nextKindName(obj.kind);
+      }
       if (f === 'ports' || f === 'sep' || f === 'primaryBasis' || f === 'priBasis' || f === 'secBasis' || f === 'kind') {
         autoNameRuns(true); openInspector();
       }
@@ -5543,6 +5931,8 @@ function wireInspector() {
     });
   });
   wirePlacementButtons();
+  const pumpSetBtn = el('insPumpSet');
+  if (pumpSetBtn) pumpSetBtn.addEventListener('click', fitPumpSet);
   const dupIt = el('insDupItem');
   if (dupIt) dupIt.addEventListener('click', () => {
     const it = itemById(sel.id);
@@ -5715,7 +6105,13 @@ function auditTrace() {
     tiny.length + ' run' + (tiny.length === 1 ? '' : 's') + ' under 250 mm long, which is a slip '
     + 'of the mouse rather than a length of pipe.', true);
 
-  const noLoad = S.segs.filter(s => !s.orphan && (s.nCons || 0) === 0);
+  const loosePass = S.nodes.filter(n => (n.type === 'pump' || n.type === 'drycooler')
+    && S.segs.filter(s => s.a === n.id || s.b === n.id).length < 2);
+  if (loosePass.length) add('pass', 'warn',
+    loosePass.map(n => n.name).join(', ') + (loosePass.length === 1 ? ' is' : ' are')
+    + ' in-line \u2014 trace a run in and a run out.', false);
+
+  const noLoad = S.segs.filter(s => !s.orphan && (s.nCons || 0) === 0 && !plantOnSeg(s));
   if (noLoad.length) add('noload', 'warn',
     noLoad.length + ' run' + (noLoad.length === 1 ? '' : 's') + ' with no load downstream ('
     + noLoad.map(s => s.ref).join(', ') + '). Nothing flows through them, so they have no size.',
@@ -6755,7 +7151,7 @@ function projectBundle(withImg) {
   });
   out.segs.forEach(s => { ['up','down','parentSeg','depth','orphan','kw','lps','nCons','runM','lenM',
     'pipe','hydM','fit','fitPa','nFit','straightKpa','fitKpa','valveKpa','nValves','dropKpa','equivPct',
-    'coilKpa','totalKpa','isIndex','spine']
+    'coilKpa','totalKpa','isIndex','spine','sizeLps']
     .forEach(k => delete s[k]); });
   return out;
 }
@@ -7768,6 +8164,16 @@ function build3D() {
     }
     /* A header stands up rather than lying down, which is what it does on
        site and what makes it recognisable from any angle in here. */
+    if (n.type === 'pump' || n.type === 'drycooler') {
+      const pump = n.type === 'pump';
+      cuboid3D(c, bs * (pump ? 0.7 : 1.25), bs * (pump ? 0.7 : 0.8), bs * 0.55 * zk,
+        '#ffffff', n.reached ? '#4a5059' : '#bb3b2e').forEach(f => items.push(f));
+      if (V3.labels) labels.push({
+        at: { X: c.X, Y: c.Y, Z: c.Z + bs * 0.35 * zk },
+        text: String(n.name || ''), sub: fmt(z, 2) + ' m',
+      });
+      return;
+    }
     if (isVessel(n)) {
       const sep = isSeparator(n);
       const hx = n.type === 'hx';
@@ -8150,8 +8556,10 @@ function applyToolPointer(ev, p) {
   if (tool === 'source')   { addSource(p);   setTool('select'); return; }
   if (tool === 'llh')      { addLLH(p);      setTool('select'); return; }
   if (tool === 'buffer')   { addBuffer(p);   setTool('select'); return; }
-  if (tool === 'hx')       { addHX(p);       setTool('select'); return; }
-  if (tool === 'consumer') { addConsumer(p); setTool('select'); return; }
+  if (tool === 'hx')        { addHX(p);        setTool('select'); return; }
+  if (tool === 'pump')      { addPump(p);      setTool('select'); return; }
+  if (tool === 'drycooler') { addDryCooler(p); setTool('select'); return; }
+  if (tool === 'consumer')  { addConsumer(p);  setTool('select'); return; }
 
   if (tool === 'trace') {
     if (!draft) {
@@ -8176,8 +8584,14 @@ function applyToolPointer(ev, p) {
       const node = connectAt(sn);
       if (node) {
         if (node.id === draft.startNode) { toast('That is where this run started'); return; }
-        const endPort = (sn.kind === 'node' && sn.node.id === node.id) ? sn.port : null;
-        const at = portPoint(node, endPort);
+        const prev = draft.pts[draft.pts.length - 1];
+        const land = unitLanding(sn, prev);
+        const endPort = land ? land.port
+          : ((sn.kind === 'node' && sn.node.id === node.id) ? sn.port : null);
+        const at = (land && land.at) || portPoint(node, endPort);
+        if (isUnitCasing(node) && orthoNow() && prev && at && !isCardinalLeg(prev, at)) {
+          draft.pts.push(squareCorner(prev, at));
+        }
         draft.pts.push({ x: at.x, y: at.y });
         finishTrace(node.id, endPort);
         return;

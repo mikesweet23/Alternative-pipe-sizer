@@ -278,11 +278,45 @@ A chiller upstream prefers cooling; otherwise the first free side is asked.
 ### Concept mode
 
 Pipe Trace opens on a drawing or on **Concept**: a faint square grid, no
-sheet to calibrate. Plant, loads, headers, buffers and heat exchangers are
-placed the same way; runs are drawn between them; **installed length is
-typed** on the run (`lengthOverride`) because there is nothing to measure.
-That is how a concept design gets concept pipe sizes before a layout exists.
+sheet to calibrate. Plant, loads, headers, buffers, heat exchangers, inline
+pumps and dry coolers are placed the same way; runs are drawn between them;
+**installed length is typed** on the run (`lengthOverride`) because there is
+nothing to measure. Click a run and the inspector focuses that box. That is
+how a concept design gets concept pipe sizes before a layout exists.
 `/` opens Trace so that is the first thing you see.
+
+### Several plants on one header
+
+Duty / assist / standby lives on the plant (`dutyRole`). Plants that share a
+network are **one primary group**; isolated energy centres stay separate
+(`connectedSourceClusters()`). A second chiller onto the same header is not
+a loop — `buildTree()` directs that feed so Check and the sizes can see it.
+
+`plantFeedShare()` splits the header's primary flow across the running plants
+(by rated kW, or equally). Standby is connected and **sized to take over**,
+but carries nothing at design (`lps = 0`, `sizeLps` = takeover). Check does
+not call a plant feed "no load".
+
+### Inline pump and dry cooler
+
+**Pump** (`K`) sits in the line. Indicative duty is the flow through it and
+that circuit's index head: `P = Q (m³/s) × Δp (kPa) / η`. Not a selection —
+paste a real curve in the simulator when you have one. Fit the existing
+`pumpSet` on the run if you want isolations and a strainer on the drawing.
+
+**Dry cooler** (`Y`) also sits in the line, typically the return. Heat
+rejected and leaving temperature are recorded; assumed 8 kPa until a product
+is picked; the drop is split across the runs that meet it. It does not open
+a new circuit. A load can also be *called* a dry cooler (`kind`) when it is
+the terminal rather than a blast-off on the return.
+
+Neither is a separator. Trace a run in and a run out.
+
+### Load kinds
+
+A consumer has a `kind` (`load`, `ahu`, `fcu`, `rad`, `drycooler`, `plate`,
+`other`) so the box can be named what it is. Changing kind renames it only
+while the name is still a stock `Load 1` / `AHU 2` style label.
 
 ### The arrangement travels the whole chain
 
@@ -667,15 +701,25 @@ the drawing, the scale, the traced geometry and any tape measures
   polyline ends back on their ports whenever anything moves). `syncSegEnds()`
   runs at the start of every `solve()`, so moving, resizing or turning a unit
   carries its pipework with it without anything else having to remember.
-  `null` is the centre — old files, and the centre magnet (`|u|,|v| < 0.18`).
+  New traces land on the **outline**, not the centre — the old centre magnet
+  hid the pipe and the terminal valves under the box. `portFacing()` picks
+  the face toward the last corner so the last hop arrives square. Alt (or
+  the lock off) keeps the free angle. Old files with no port still join at
+  the centre.
   Resolve the landing against the **true** footprint (`nodeHalfPx`), never the
   zoomed-out legible box (`nodeDrawHalf`). Hit-testing uses the drawn box so
-  you can click what you see.
+  you can click what you see. Casings get a wider snap (`unitTol`) so a click
+  on the edge actually joins — that is what Check meant by "do not reach".
+- **Valves stand clear of the box.** `endClearPx()` / `loadValveT()` offset
+  the terminal set by the drawn half-size of the casing plus the symbol, not
+  a fixed 31 px, so isolations and the control valve sit outside a load,
+  chiller, header, buffer, HX, pump or cooler.
 - **The last hop onto a casing stays on the square.** After ends are snapped
   to the unit, `squareIntoUnit()` keeps that last leg horizontal or vertical
   when the corner lock is on: it slides an existing stub or inserts one so
   the rest of the run is not pulled off-square. Casings only (plant, load,
-  header, buffer) — not tees or open ends.
+  header, buffer, HX, pump, dry cooler) — not tees or open ends. The live
+  preview inserts the same stub, so it does not look free-form and then snap.
 - **A pair runs true — on the plan and in 3D.** Offset each leg by a constant,
   then mitre the offset lines where they meet (`offsetPoly` / `offsetPoly3D`).
   Do not average incoming and outgoing headings, and do not
@@ -943,6 +987,13 @@ Two minutes, and it exercises every join:
 10. **Valve sets**: PICV, 2-port and 3-port on a load must not place a DRV or
     commissioning set. Isolations and a strainer stay. The two bypass
     arrangements still get their regulating valve.
+11. **Edge snap**: finish a run on the side of a load. The last hop is square,
+    the port sits on the outline, and the terminal valves sit outside the box.
+    Check should not say the run does not reach.
+12. **Two plants**: two chillers onto one header (duty + standby) plus a load.
+    Check is clean. The standby feed has a size and no design flow.
+13. **Inline pump**: place a pump on a concept run, type lengths, confirm the
+    inspector shows flow, index head and absorbed kW.
 
 If sizes differ between trace and sizer, look first at roughness, then at the
 viscosity note in section 2.
