@@ -17,7 +17,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Azeret+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    /* ---- shared adi brand, identical in index.html and simulator.html ---- */
+    /* ---- shared adi brand, identical in sizer.html and simulator.html ---- */
     --adi-bar:       #10151a;
     --adi-bar-ink:   #e8eef2;
     --adi-bar-muted: #93a4b0;
@@ -71,7 +71,7 @@
   .shell { display: grid; grid-template-rows: auto 1fr; height: 100%; }
 
   /* ===== adi SHARED BRAND BAR =====
-     This block is identical in trace.html, index.html and simulator.html —
+     This block is identical in trace.html, sizer.html and simulator.html —
      same logo, same sizes, same step rail. Change one and change all three.
      What tells you which tool you are in is the name, the typeface the tool
      sets, and the lit step, not the furniture around them. */
@@ -174,6 +174,8 @@
   .tb.dwg:hover { background: #3d86cd; color: #fff; }
   .tb:disabled { opacity: .38; cursor: default; }
   .tb:disabled:hover { background: transparent; color: var(--adi-bar-ink); }
+  .tb.on { background: var(--measure); border-color: var(--measure); color: #241a00; font-weight: 600; }
+  .tb.on:hover { background: #eeb43a; color: #241a00; }
 
   /* ================= body ================= */
   .body { display: grid; grid-template-columns: 84px 1fr 0; min-height: 0; }
@@ -209,6 +211,16 @@
   #scroller.pan.down { cursor: grabbing; }
   #sheet { position: relative; transform-origin: 0 0; }
   #sheet img { display: block; user-select: none; -webkit-user-drag: none; }
+  /* Concept mode: a faint square grid instead of a drawing, so a schematic
+     can be laid out before there is anything to trace. */
+  #sheet.concept {
+    background-color: var(--paper);
+    background-image:
+      linear-gradient(rgba(36,38,44,.07) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(36,38,44,.07) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  #sheet.concept img.virtual { visibility: hidden; }
   #ov { position: absolute; inset: 0; overflow: visible; }
 
   /* the drawing board when nothing is loaded */
@@ -616,11 +628,12 @@
     <nav class="adi-chain" aria-label="Pipework toolchain">
       <span class="step here" aria-current="page" title="Step 1 &mdash; you are here"><span class="n">1</span><span class="lbl">Trace</span></span>
       <span class="sep">&rarr;</span>
-      <a href="./index.html" title="Step 2 &mdash; sizing, losses and heat loss"><span class="n">2</span><span class="lbl">Sizer</span></a>
+      <a href="./sizer.html" title="Step 2 &mdash; sizing, losses and heat loss"><span class="n">2</span><span class="lbl">Sizer</span></a>
       <span class="sep">&rarr;</span>
       <a href="./simulator.html" title="Step 3 &mdash; network solve, pumps and balancing"><span class="n">3</span><span class="lbl">Simulator</span></a>
     </nav>
     <button class="tb dwg" id="bOpenDwg">Open drawing</button>
+    <button class="tb" id="bConcept" title="Concept layout — place plant and loads on a grid, type pipe lengths. No drawing needed.">Concept</button>
     <button class="tb" id="bProj">Pipe &amp; basis</button>
     <button class="tb" id="bSteps">How to use</button>
     <button class="tb" id="bUndo" disabled title="Nothing to undo">&#8630; Undo</button>
@@ -655,6 +668,7 @@
                then place the plant and consumers and trace the runs between them.
                Lengths come off the drawing, so the sizing is real.</p>
             <button class="btn go" id="bPick">Choose a drawing</button>
+            <button class="btn ghost" id="bPickConcept" style="margin-left:8px">Start a concept</button>
             <div style="margin-top:12px;font-size:12px;color:var(--muted)">or drop a file here</div>
           </div>
         </div>
@@ -952,7 +966,10 @@ const SOURCE_TYPES = {
 
    The set of valves that goes with each also differs — see setForValveType().
    A PICV regulates itself, so it never gets a double regulating valve or a
-   commissioning set behind it; everything else does. */
+   commissioning set behind it. Two-port and three-port control valves do not
+   either — they are the regulation on that run. The two bypass arrangements
+   still carry a DRV or a commissioning set, because that is the valve the
+   bypass is there to be read on. */
 const VALVE_TYPES = {
   twoPortMod:   '2-port modulating \u2014 temperature control',
   twoPortOnOff: '2-port on/off \u2014 open or shut only',
@@ -1070,22 +1087,21 @@ const VALVE_SETS = {
     items: [ { type: 'iso', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
              { type: 'iso', leg: 'return' }, { type: 'picv', leg: 'return', atLoad: true } ] },
   term3p: { label: 'Terminal set — 3-port', anchor: 'down', forValve: 'threePort',
-    note: 'Three-port on the return with a regulating valve behind it.',
+    note: 'Isolating pair, strainer, 3-port on the load stub. No DRV — the control valve is the regulation.',
     items: [ { type: 'iso', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
-             { type: 'iso', leg: 'return' }, { type: 'dblRegVal', leg: 'return' },
+             { type: 'iso', leg: 'return' },
              { type: 'ctrl3Port', leg: 'return', atLoad: true } ] },
   term2p: { label: 'Terminal set — 2-port modulating', anchor: 'down', forValve: 'twoPortMod',
-    note: 'Isolate and strain on the flow, modulating valve at the coil, regulate on the return.',
+    note: 'Isolate and strain on the flow, modulating valve at the coil. No DRV.',
     items: [ { type: 'iso', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
              { type: 'ctrl2Port', leg: 'flow', atLoad: true },
-             { type: 'iso', leg: 'return' }, { type: 'dblRegVal', leg: 'return' } ] },
+             { type: 'iso', leg: 'return' } ] },
   term2pOnOff: { label: 'Terminal set — 2-port on/off', anchor: 'down', forValve: 'twoPortOnOff',
     note: 'For a plate exchanger or anything where the primary flow is only ever on or off. '
-        + 'The valve is line size and takes almost no pressure, so the branch still needs a '
-        + 'regulating valve to set its flow.',
+        + 'Isolating pair, strainer, on/off valve at the coil. No DRV.',
     items: [ { type: 'iso', leg: 'flow' }, { type: 'strainer', leg: 'flow' },
              { type: 'ctrl2PortOnOff', leg: 'flow', atLoad: true },
-             { type: 'iso', leg: 'return' }, { type: 'dblRegVal', leg: 'return' } ] },
+             { type: 'iso', leg: 'return' } ] },
   isoPair: { label: 'Isolation pair', anchor: 'mid',
     note: 'One valve on each leg, for sectioning a main or a riser.',
     items: [ { type: 'iso', leg: 'flow' }, { type: 'iso', leg: 'return' } ] },
@@ -1111,6 +1127,41 @@ function setForValveType(v) {
   const k = Object.keys(VALVE_SETS).find(x => VALVE_SETS[x].forValve === t);
   return k || 'term2p';
 }
+/* Bypass arrangements are the only ones that still carry a DRV or a
+   commissioning set. PICV, 2-port and 3-port do not. */
+function setNeedsRegValve(v) {
+  const t = migrateValveType(v);
+  return t === 'twoPortBp' || t === 'twoPortCS';
+}
+
+/* ---------- 4-pipe loads ----------
+   One box on the plan, two circuits. Heating keeps the fields that have
+   always lived on the node. Cooling sits on `n.cool` with its own kW, ΔT,
+   coil drop and control valve. Each side fits the same terminal-set rule. */
+function isFourPipe(n) { return !!(n && n.type === 'consumer' && n.fourPipe); }
+function defaultCool() {
+  return { basis: 'kw', kw: 0, lps: 0, dT: 6, coilKpa: 0, valve: 'twoPortMod' };
+}
+function ensureCool(n) {
+  if (!n.cool || typeof n.cool !== 'object') n.cool = defaultCool();
+  n.cool.valve = migrateValveType(n.cool.valve);
+  if (!(parseFloat(n.cool.dT) > 0)) n.cool.dT = 6;
+  return n.cool;
+}
+function loadSide(n, side) {
+  if (side === 'cool' && n && n.type === 'consumer') return ensureCool(n);
+  return n;
+}
+function loadValve(n, side) {
+  if (!n) return 'twoPortMod';
+  return migrateValveType(loadSide(n, side).valve);
+}
+function feedOf(n, side) {
+  if (!n) return null;
+  if (side === 'cool') return n.feedSegCool != null ? segById(n.feedSegCool) : null;
+  return n.feedSeg != null ? segById(n.feedSeg) : null;
+}
+function segService(sg) { return sg && sg.service === 'cool' ? 'cool' : 'heat'; }
 
 /* ---------- the standard isolating valve ----------
    adi standard: ball valves up to and including DN50, butterfly valves from
@@ -1179,7 +1230,8 @@ function valveEachKpa(it, sg) {
 /* ---------- project state ---------- */
 const S = {
   ref: '', engineer: '', date: new Date().toISOString().slice(0, 10),
-  img: null,                 // { src, w, h, label }
+  img: null,                 // { src, w, h, label, virtual? }
+  concept: false,            // schematic on a grid — no drawing to trace
   pxPerM: 0,                 // set by calibration
   calib: null,               // { a:{x,y}, b:{x,y}, metres }
   nodes: [], segs: [],
@@ -1212,7 +1264,8 @@ const S = {
        file or autosave without it was written when free corners were the
        default, so its `false` is the old default rather than a choice. */
     angleLockRev: 2,
-    termValves: true,            // isolation + strainer + regulating at each load,
+    termValves: true,            // isolation + strainer at each load; regulating
+                                 // valve only on the two bypass arrangements
                                  // assumed only on runs with no valves placed on them
     valveTags: true,             // draw the tag beside each placed valve
     autoTermSet: true,           // fit the terminal set when a run reaches a load
@@ -1657,16 +1710,24 @@ function hxSecondaryFlow(n, secondaryKw) {
    kW is not touched by the margin. The heat is the heat; it is the flow that
    is deliberately higher, which is the same as saying the primary runs at a
    smaller ΔT than the secondaries. That is reported rather than hidden. */
-function nodeDemand(nodeId, seen) {
+function nodeDemand(nodeId, seen, service) {
   seen = seen || new Set();
   if (nodeId === null || nodeId === undefined || seen.has(nodeId)) return { kw: 0, lps: 0, n: 0 };
   seen.add(nodeId);
   const n = nodeById(nodeId);
+  const side = service === 'cool' ? 'cool' : 'heat';
   let kw = 0, lps = 0, cnt = 0;
-  if (n && n.type === 'consumer') { kw = consumerKw(n); lps = consumerFlow(n); cnt = 1; }
+  if (n && n.type === 'consumer') {
+    /* A 4-pipe load is two duties in one box. A run only carries the
+       side it is on — adding both would invent flow the other circuit
+       is already taking. */
+    kw = isFourPipe(n) ? consumerKw(n, side) : consumerKw(n);
+    lps = isFourPipe(n) ? consumerFlow(n, side) : consumerFlow(n);
+    cnt = 1;
+  }
   S.segs.forEach(s => {
     if (s.up !== nodeId || s.down === null || s.down === undefined) return;
-    const d = nodeDemand(s.down, seen);
+    const d = nodeDemand(s.down, seen, s.service);
     kw += d.kw; lps += d.lps; cnt += d.n;
   });
   if (isSeparator(n)) return { kw, lps: sepPrimaryFlow(n, lps, kw), n: cnt, secondaryLps: lps };
@@ -1919,10 +1980,43 @@ function neighbours(nodeId) {
 }
 
 /* Walk out from the source, giving every segment a direction and a parent. */
+function inferCoolFromNode(nodeId) {
+  let id = nodeId, guard = 0;
+  while (id != null && guard++ < 80) {
+    const n = nodeById(id);
+    if (n && n.type === 'source' && n.plant === 'chiller') return true;
+    const feed = n && n.feedSeg != null ? segById(n.feedSeg) : null;
+    id = feed ? feed.up : null;
+  }
+  return false;
+}
+function assignLoadFeed(n, seg, fromId) {
+  if (!n || n.type !== 'consumer') {
+    if (n) n.feedSeg = seg.id;
+    return true;
+  }
+  if (!isFourPipe(n)) { n.feedSeg = seg.id; return true; }
+  let svc = seg.service === 'cool' || seg.service === 'heat' ? seg.service : null;
+  if (!svc) {
+    const heatTaken = n.feedSeg != null && n.feedSeg !== seg.id;
+    const coolTaken = n.feedSegCool != null && n.feedSegCool !== seg.id;
+    if (heatTaken && !coolTaken) svc = 'cool';
+    else if (coolTaken && !heatTaken) svc = 'heat';
+    else if (heatTaken && coolTaken) return false;
+    else svc = inferCoolFromNode(fromId) ? 'cool' : 'heat';
+  }
+  if (svc === 'cool' && n.feedSegCool != null && n.feedSegCool !== seg.id) return false;
+  if (svc === 'heat' && n.feedSeg != null && n.feedSeg !== seg.id) return false;
+  seg.service = svc;
+  if (svc === 'cool') n.feedSegCool = seg.id;
+  else n.feedSeg = seg.id;
+  return true;
+}
+
 function buildTree() {
   const roots = S.nodes.filter(n => n.type === 'source');
   S.segs.forEach(s => { s.up = null; s.down = null; s.parentSeg = null; s.depth = 0; s.orphan = true; });
-  S.nodes.forEach(n => { n.feedSeg = null; n.reached = false; });
+  S.nodes.forEach(n => { n.feedSeg = null; n.feedSegCool = null; n.reached = false; });
   if (roots.length === 0) return { roots: [], orphans: S.segs.slice() };
 
   const seen = new Set();
@@ -1933,13 +2027,23 @@ function buildTree() {
     const cur = q.shift();
     neighbours(cur.id).forEach(({ seg, other }) => {
       if (seg.up !== null && seg.up !== undefined) return;   // already directed
-      if (seen.has(other)) return;                            // would close a loop
+      const n = nodeById(other);
+      if (seen.has(other)) {
+        /* A 4-pipe load is one box with two circuits. The second run in
+           is not a loop — it is the other service. */
+        if (n && n.type === 'consumer' && isFourPipe(n) && assignLoadFeed(n, seg, cur.id)) {
+          seg.up = cur.id; seg.down = other; seg.orphan = false;
+          seg.parentSeg = cur.seg; seg.depth = cur.depth;
+          n.reached = true;
+        }
+        return;
+      }
       seg.up = cur.id; seg.down = other; seg.orphan = false;
       seg.parentSeg = cur.seg; seg.depth = cur.depth;
-      const n = nodeById(other);
-      if (n) { n.feedSeg = seg.id; n.reached = true; }
+      if (n) { assignLoadFeed(n, seg, cur.id); n.reached = true; }
       seen.add(other);
-      q.push({ id: other, seg: seg.id, depth: cur.depth + 1 });
+      if (!(n && n.type === 'consumer'))
+        q.push({ id: other, seg: seg.id, depth: cur.depth + 1 });
     });
   }
   return { roots, orphans: S.segs.filter(s => s.orphan) };
@@ -1980,24 +2084,27 @@ function volToggle() {
 
 /* A typed rate pins the load. Left at 0 it shares what remains of the plant
    stream after every pinned load has taken its figure. */
-function consumerDT(n) {
-  const own = parseFloat(n && n.dT);
+function consumerDT(n, side) {
+  const obj = loadSide(n, side);
+  const own = parseFloat(obj && obj.dT);
   if (!isNaN(own) && own > 0) return own;
   const hx = n ? ancestorHx(n.id) : null;
   return hx ? hxSecDT(hx) : S.settings.dT;
 }
 
-function consumerIsPinned(n) {
+function consumerIsPinned(n, side) {
   if (!n || n.type !== 'consumer') return false;
-  if (n.basis === 'lps') return (parseFloat(n.lps) || 0) > 0;
-  return (parseFloat(n.kw) || 0) > 0;
+  const obj = loadSide(n, side);
+  if (obj.basis === 'lps') return (parseFloat(obj.lps) || 0) > 0;
+  return (parseFloat(obj.kw) || 0) > 0;
 }
-function consumerFlowPinned(n) {
+function consumerFlowPinned(n, side) {
   if (!n || n.type !== 'consumer') return 0;
-  if (n.basis === 'lps') return parseFloat(n.lps) || 0;
+  const obj = loadSide(n, side);
+  if (obj.basis === 'lps') return parseFloat(obj.lps) || 0;
   const hx = ancestorHx(n.id);
-  if (hx) return flowFromKwAt(parseFloat(n.kw) || 0, consumerDT(n), hxSecTm(hx));
-  return flowFromKw(parseFloat(n.kw) || 0, consumerDT(n));
+  if (hx) return flowFromKwAt(parseFloat(obj.kw) || 0, consumerDT(n, side), hxSecTm(hx));
+  return flowFromKw(parseFloat(obj.kw) || 0, consumerDT(n, side));
 }
 function plantStreamLps(n) {
   if (!n || n.type !== 'source') return 0;
@@ -2011,20 +2118,56 @@ function plantStreamLps(n) {
    pinned. Each run then rolls up what it carries — own load plus everything
    downstream — and is not overwritten with the plant total. Flow and return
    on a paired run are the same volume twice, not one pot split in half. */
+function feedReaches(sg, rootId) {
+  let cur = sg, guard = 0;
+  while (cur && guard++ < 500) {
+    if (cur.up === rootId) return true;
+    cur = cur.parentSeg != null ? segById(cur.parentSeg) : null;
+  }
+  return false;
+}
+function loadSlots(n) {
+  if (!n || n.type !== 'consumer') return [];
+  return isFourPipe(n) ? [{ n, side: 'heat' }, { n, side: 'cool' }] : [{ n, side: 'heat' }];
+}
+function setSharedLps(n, side, v) {
+  if (side === 'cool') ensureCool(n).sharedLps = v;
+  else n.sharedLps = v;
+}
+function getSharedLps(n, side) {
+  if (side === 'cool') return parseFloat(n.cool && n.cool.sharedLps) || 0;
+  return parseFloat(n.sharedLps) || 0;
+}
+function slotsUnder(rootId, nodes) {
+  const out = [];
+  (nodes || []).forEach(n => {
+    loadSlots(n).forEach(slot => {
+      const feed = feedOf(n, slot.side);
+      if (feed && feedReaches(feed, rootId)) out.push(slot);
+    });
+  });
+  return out;
+}
 function sharePlantFlow() {
-  S.nodes.forEach(n => { if (n.type === 'consumer') n.sharedLps = 0; });
+  S.nodes.forEach(n => {
+    if (n.type !== 'consumer') return;
+    n.sharedLps = 0;
+    if (n.cool) n.cool.sharedLps = 0;
+  });
   S.nodes.filter(n => n.type === 'source').forEach(src => {
     /* Loads below a heat exchanger are on a different water — they must
        not take a share of the plant stream. A header is the same water,
-       so those loads still share here. */
+       so those loads still share here. A 4-pipe load is two slots. */
     const cons = subtreeConsumers(src.id).filter(n => !ancestorHx(n.id));
-    const free = cons.filter(n => !consumerIsPinned(n));
+    const slots = slotsUnder(src.id, cons);
+    const free = slots.filter(s => !consumerIsPinned(s.n, s.side));
     if (!free.length) return;
-    const pinnedLps = cons.filter(consumerIsPinned).reduce((s, n) => s + consumerFlowPinned(n), 0);
+    const pinnedLps = slots.filter(s => consumerIsPinned(s.n, s.side))
+      .reduce((sum, s) => sum + consumerFlowPinned(s.n, s.side), 0);
     const total = plantStreamLps(src);
     const spare = total > 0 ? Math.max(0, total - pinnedLps) : 0;
     const per = spare / free.length;
-    free.forEach(n => { n.sharedLps = per; });
+    free.forEach(s => setSharedLps(s.n, s.side, per));
   });
   /* Each heat exchanger has its own secondary stream. Unpinned loads
      below it share that, the same way the plant side works. */
@@ -2044,37 +2187,48 @@ function sharePlantFlow() {
       });
     };
     S.segs.forEach(s => { if (s.up === hx.id) walk(s.down); });
-    const free = cons.filter(n => !consumerIsPinned(n));
+    const slots = slotsUnder(hx.id, cons);
+    const free = slots.filter(s => !consumerIsPinned(s.n, s.side));
     if (!free.length) return;
-    const pinnedLps = cons.filter(consumerIsPinned).reduce((s, n) => s + consumerFlowPinned(n), 0);
-    const pinnedKw = cons.filter(consumerIsPinned).reduce((s, n) => {
-      if (n.basis === 'lps') return s + kwFromFlowAt(parseFloat(n.lps) || 0, consumerDT(n), hxSecTm(hx));
-      return s + (parseFloat(n.kw) || 0);
+    const pinnedLps = slots.filter(s => consumerIsPinned(s.n, s.side))
+      .reduce((sum, s) => sum + consumerFlowPinned(s.n, s.side), 0);
+    const pinnedKw = slots.filter(s => consumerIsPinned(s.n, s.side)).reduce((sum, s) => {
+      const obj = loadSide(s.n, s.side);
+      if (obj.basis === 'lps') return sum + kwFromFlowAt(parseFloat(obj.lps) || 0, consumerDT(s.n, s.side), hxSecTm(hx));
+      return sum + (parseFloat(obj.kw) || 0);
     }, 0);
     const total = hxSecondaryFlow(hx, pinnedKw);
     const spare = total > 0 ? Math.max(0, total - pinnedLps) : 0;
     const per = spare / free.length;
-    free.forEach(n => { n.sharedLps = per; });
+    free.forEach(s => setSharedLps(s.n, s.side, per));
   });
 }
-function consumerFlow(n) {
+function consumerFlow(n, side) {
   if (!n || n.type !== 'consumer') return 0;
-  if (consumerIsPinned(n)) return consumerFlowPinned(n);
-  return parseFloat(n.sharedLps) || 0;
-}
-function consumerKw(n) {
-  if (!n || n.type !== 'consumer') return 0;
-  const dT = consumerDT(n);
-  const hx = ancestorHx(n.id);
-  if (consumerIsPinned(n)) {
-    if (n.basis === 'lps') {
-      return hx ? kwFromFlowAt(parseFloat(n.lps) || 0, dT, hxSecTm(hx))
-                : kwFromFlow(parseFloat(n.lps) || 0, dT);
-    }
-    return parseFloat(n.kw) || 0;
+  if (side) {
+    if (consumerIsPinned(n, side)) return consumerFlowPinned(n, side);
+    return getSharedLps(n, side);
   }
-  return hx ? kwFromFlowAt(parseFloat(n.sharedLps) || 0, dT, hxSecTm(hx))
-            : kwFromFlow(parseFloat(n.sharedLps) || 0, dT);
+  if (isFourPipe(n)) return consumerFlow(n, 'heat') + consumerFlow(n, 'cool');
+  if (consumerIsPinned(n)) return consumerFlowPinned(n);
+  return getSharedLps(n, 'heat');
+}
+function consumerKw(n, side) {
+  if (!n || n.type !== 'consumer') return 0;
+  if (!side && isFourPipe(n)) return consumerKw(n, 'heat') + consumerKw(n, 'cool');
+  const use = side || 'heat';
+  const obj = loadSide(n, use);
+  const dT = consumerDT(n, use);
+  const hx = ancestorHx(n.id);
+  if (consumerIsPinned(n, use)) {
+    if (obj.basis === 'lps') {
+      return hx ? kwFromFlowAt(parseFloat(obj.lps) || 0, dT, hxSecTm(hx))
+                : kwFromFlow(parseFloat(obj.lps) || 0, dT);
+    }
+    return parseFloat(obj.kw) || 0;
+  }
+  const shared = getSharedLps(n, use);
+  return hx ? kwFromFlowAt(shared, dT, hxSecTm(hx)) : kwFromFlow(shared, dT);
 }
 
 /* Everything a segment has to carry. */
@@ -2082,7 +2236,7 @@ function consumerKw(n) {
    that a separator on the way down can raise the flow above the roll-up. */
 function segDuty(sg) {
   if (sg.down === null || sg.down === undefined) return { kw: 0, lps: 0, n: 0 };
-  return nodeDemand(sg.down);
+  return nodeDemand(sg.down, null, sg.service);
 }
 
 /* ---------- fittings take-off ----------
@@ -2177,13 +2331,13 @@ function segFittings(sg) {
   // terminal set at a load, unless this run carries valves that were placed
   const placed = segItems(sg.id);
   const autoTerm = !!(down && down.type === 'consumer' && S.settings.termValves && !placed.length);
-  if (autoTerm) {
+    if (autoTerm) {
     add('butterfly', 2);
     add('strainer', 1);
-    const v = down.valve;
-    if (v === 'twoPortBp') add('dblRegVal', 1);
-    else if (v === 'twoPortCS') add('commSet', 1);
-    else if (v === 'threePort') add('dblRegVal', 1);
+    /* Only the bypass arrangements still assume a regulating valve.
+       PICV, 2-port and 3-port keep isolations and a strainer. */
+    const v = loadValve(down, sg.service);
+    if (setNeedsRegValve(v)) add(v === 'twoPortCS' ? 'commSet' : 'dblRegVal', 1);
   }
 
   // flanged joints along the run
@@ -2252,7 +2406,11 @@ function solve() {
       : null;
     sg.fit = segFittings(sg);
     // vertical adds to the pipe you actually install
-    sg.lenM = sg.runM + sg.fit.rise + sg.fit.extra;
+    /* A typed length (concept, or a run whose drawing length is not the
+       installed length) replaces the measured figure. Rise is already
+       inside that number — do not add it again. */
+    const typedLen = parseFloat(sg.lengthOverride);
+    sg.lenM = typedLen > 0 ? typedLen : (sg.runM + sg.fit.rise + sg.fit.extra);
     sg.hydM = sg.lenM * (sg.mode === 'single' ? 1 : 2);
     sg.fitPa = fittingsPa(sg);
     sg.nFit = fittingCount(sg);
@@ -2266,7 +2424,8 @@ function solve() {
     sg.equivPct = sg.straightKpa > 0 ? sg.fitKpa / sg.straightKpa * 100 : 0;
     sg.nValves = segItems(sg.id).reduce((n, it) => n + itemQty(it, sg), 0);
     // what the load at the end of this run adds on top of the pipework
-    sg.coilKpa = (down && down.type === 'consumer') ? (parseFloat(down.coilKpa) || 0) : 0;
+    sg.coilKpa = (down && down.type === 'consumer')
+      ? (parseFloat(loadSide(down, sg.service).coilKpa) || 0) : 0;
     sg.totalKpa = sg.dropKpa + sg.coilKpa;
   });
   /* An item whose run has been deleted has nothing to sit on. Dropping it
@@ -2381,9 +2540,19 @@ function assignGroups() {
    and the header's own resistance ends it — small, but it is the end of that
    circuit and it is what the primary pump has to push through. */
 function indexRunFor(gid) {
-  const ends = S.nodes.filter(n =>
-    n.hgroup === gid && n.feedSeg &&
-    (n.type === 'consumer' || isSeparator(n)));
+  const ends = [];
+  S.nodes.forEach(n => {
+    const consider = (feedId, side) => {
+      const sg = feedId != null ? segById(feedId) : null;
+      if (sg && sg.hgroup === gid) ends.push({ node: n, feedSeg: feedId, side });
+    };
+    if (n.type === 'consumer') {
+      consider(n.feedSeg, 'heat');
+      if (isFourPipe(n)) consider(n.feedSegCool, 'cool');
+    } else if (isSeparator(n)) {
+      consider(n.feedSeg, 'heat');
+    }
+  });
   let best = null;
   ends.forEach(c => {
     const chain = [];
@@ -2393,11 +2562,12 @@ function indexRunFor(gid) {
       chain.push(sg);
       sg = sg.parentSeg ? segById(sg.parentSeg) : null;
     }
-    const coil = c.type === 'consumer' ? (parseFloat(c.coilKpa) || 0) : vesselKpa(c);
+    const coil = c.node.type === 'consumer'
+      ? (parseFloat(loadSide(c.node, c.side).coilKpa) || 0) : vesselKpa(c.node);
     const drop = pipe + coil;
     if (!best || drop > best.drop) {
-      best = { node: c, group: gid, drop, pipe, coil, chain: chain.reverse(),
-               endsAtVessel: c.type !== 'consumer' };
+      best = { node: c.node, group: gid, drop, pipe, coil, chain: chain.reverse(),
+               endsAtVessel: c.node.type !== 'consumer' };
     }
   });
   if (best) {
@@ -2953,7 +3123,8 @@ function render() {
       const a = sg.pts[bi - 1], b = sg.pts[bi];
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
       const txt = (sg.pipe ? sg.pipe.nom + '  ' : '') + fmt(sg.lenM, 1) + ' m'
-        + (single ? '  1-pipe' : '');
+        + (single ? '  1-pipe' : '')
+        + (sg.service === 'cool' ? '  C' : (sg.service === 'heat' ? '  H' : ''));
       const wPx = txt.length * 6.0 + 12;
       g.appendChild(mk('rect', { x: mx - wPx / 2 * k, y: my - 9 * k, width: wPx * k, height: 16 * k,
         rx: 2 * k, fill: 'rgba(255,255,255,.93)', stroke: 'var(--rule-2)', 'stroke-width': .8 * k }));
@@ -3110,10 +3281,17 @@ function render() {
       fill: src ? 'var(--paper)' : 'var(--ink)' }, String(n.name || '').slice(0, 13)));
     const sub = src
       ? (fmt(n.kw, 0) + ' kW')
-      : (fmt(consumerKw(n), 0) + ' kW  ' + fmtVol(consumerFlow(n)));
+      : isFourPipe(n)
+        ? ('H ' + fmt(consumerKw(n, 'heat'), 0) + ' / C ' + fmt(consumerKw(n, 'cool'), 0) + ' kW')
+        : (fmt(consumerKw(n), 0) + ' kW  ' + fmtVol(consumerFlow(n)));
     g.appendChild(mk('text', { x: n.x, y: n.y + 9 * k, 'text-anchor': 'middle',
       'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace',
       fill: src ? '#9aa3b1' : 'var(--ink-soft)' }, sub));
+    if (!src && isFourPipe(n)) {
+      g.appendChild(mk('text', { x: n.x, y: n.y + (hf.hh + 8 * k), 'text-anchor': 'middle',
+        'font-size': 7.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+        fill: 'var(--ink-soft)' }, '4-PIPE'));
+    }
     if (!src && !n.reached) {
       g.appendChild(mk('text', { x: n.x, y: n.y - (hf.hh + 5 * k), 'text-anchor': 'middle',
         'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
@@ -3426,11 +3604,14 @@ function renderStatus() {
   const t = totals();
   const st = el('status');
   st.style.display = S.img ? 'flex' : 'none';
+  /* concept status is the same strip — scale is already set */
   const cell = (k, v, warn) =>
     '<div class="st' + (warn ? ' warn' : '') + '"><b>' + k + '</b><span>' + v + '</span></div>';
   const worst = worstPath();
   st.innerHTML =
-      cell('Scale', S.pxPerM > 0 ? fmt(S.pxPerM, 1) + ' px/m' : 'not set', S.pxPerM <= 0)
+      cell(S.concept ? 'Concept' : 'Scale',
+        S.concept ? 'schematic' : (S.pxPerM > 0 ? fmt(S.pxPerM, 1) + ' px/m' : 'not set'),
+        !S.concept && S.pxPerM <= 0)
     + cell('Consumers', String(t.consumers))
     + cell('Load', fmt(t.kw, 0) + ' kW')
     + cell('Flow', fmtVol(t.lps))
@@ -3494,11 +3675,11 @@ function buildRail() {
 const HINTS = {
   calib: 'Click two points a known distance apart, then type the real dimension.',
   source: 'Click where the plant sits. Drag empty paper to pan.',
-  consumer: 'Click where the load sits. Drag empty paper to pan.',
+  consumer: 'Click where the load sits. Drag empty paper to pan. On the load, tick 4-pipe for heating and cooling.',
   llh: 'Click where the header sits. Drag empty paper to pan.',
   buffer: 'Click where the buffer sits. Drag empty paper to pan.',
   hx: 'Click where the heat exchanger sits. It always separates the circuits. Drag empty paper to pan.',
-  trace: 'Start on a ringed point. Click corners; finish on another point.',
+  trace: 'Start on a ringed point. Click corners; finish on another point. In Concept, type the installed length on the run.',
   pan: 'Drag to move around the drawing. Space also pans in any tool.',
   tape: 'Click along the route; click a corner to turn. Plan metres only.',
   tee: 'Click along a run to cut a tee, then trace a branch off it.',
@@ -3564,7 +3745,7 @@ function setOverride(on) {
 }
 
 function setTool(t) {
-  if (!S.img && t !== 'select') { toast('Load a drawing first'); return; }
+  if (!S.img && t !== 'select') { toast(S.concept ? 'Start a concept first' : 'Load a drawing first'); return; }
   if (scaleNeeded() && NEEDS_SCALE.indexOf(t) >= 0) { scaleGate(); return; }
   if (t === 'calib' && S.pxPerM > 0 && tool !== 'calib') {
     // re-calibrating replaces the old scale, which moves every traced length
@@ -3659,9 +3840,12 @@ function addConsumer(p, from) {
     id: 0, type: 'consumer', x: 0, y: 0,
     name: '', basis: 'kw', kw: 0, lps: 0, dT: S.settings.dT,
     coilKpa: 0, valve: 'twoPortMod', height: S.settings.loadHeight,
+    fourPipe: false,
   }, base ? {
     basis: base.basis, kw: base.kw, lps: base.lps, dT: base.dT,
     coilKpa: base.coilKpa, valve: base.valve, height: base.height,
+    fourPipe: !!base.fourPipe,
+    cool: base.cool ? Object.assign({}, defaultCool(), base.cool) : undefined,
   } : {});
   n.id = nid(); n.x = p.x; n.y = p.y;
   const nth = S.nodes.filter(x => x.type === 'consumer').length + 1;
@@ -4004,16 +4188,54 @@ function finishTrace(endNode, endPort) {
   };
   S.segs.push(sg);
   draft = null;
-  if (S.settings.autoName !== false) autoNameRuns(true);
-  /* Part of tracing the run, so it shares that run's undo entry: one Undo
-     takes the run and the valves that came with it. */
-  undoSuspended = true;
-  const fitted = autoFitTerminalSet(sg);
-  undoSuspended = false;
-  refreshUndoBtn();
-  select('seg', sg.id);
-  render();
-  if (fitted) toast(fitted + ' terminal valves fitted — drag or re-type any of them');
+  const afterService = () => {
+    if (S.settings.autoName !== false) autoNameRuns(true);
+    /* Part of tracing the run, so it shares that run's undo entry: one Undo
+       takes the run and the valves that came with it. */
+    undoSuspended = true;
+    const fitted = autoFitTerminalSet(sg);
+    undoSuspended = false;
+    refreshUndoBtn();
+    select('seg', sg.id);
+    render();
+    if (fitted) toast(fitted + ' terminal valves fitted — drag or re-type any of them');
+    else if (S.concept) toast('Type the installed length on this run');
+  };
+  const startN = nodeById(sg.a);
+  const endN = nodeById(sg.b);
+  const four = (endN && isFourPipe(endN)) ? endN
+             : (startN && isFourPipe(startN)) ? startN : null;
+  if (four) pickLoadService(sg, four, afterService);
+  else afterService();
+}
+
+/* A 4-pipe load takes two runs. The first free side is inferred from the
+   plant (a chiller prefers cooling); if both sides are still free and the
+   plant is not a chiller, it is asked. */
+function pickLoadService(sg, load, then) {
+  const others = S.segs.filter(s => s.id !== sg.id && (s.a === load.id || s.b === load.id));
+  const used = {};
+  others.forEach(s => { used[s.service === 'cool' ? 'cool' : 'heat'] = true; });
+  if (used.heat && used.cool) {
+    S.segs = S.segs.filter(s => s.id !== sg.id);
+    toast('Both sides of ' + (load.name || 'this load') + ' already have a run');
+    render();
+    return;
+  }
+  if (used.heat && !used.cool) { sg.service = 'cool'; then(); return; }
+  if (used.cool && !used.heat) { sg.service = 'heat'; then(); return; }
+  const otherId = sg.a === load.id ? sg.b : sg.a;
+  if (inferCoolFromNode(otherId)) { sg.service = 'cool'; then(); return; }
+  modal('Heating or cooling?',
+      '<p style="margin-top:0"><strong>' + esc(load.name || 'This load') + '</strong> is 4-pipe. '
+    + 'Which circuit is this run?</p>'
+    + '<div class="note">Each side keeps its own duty, &Delta;T, coil drop and control valve. '
+    + 'The other side gets its own run.</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'
+    + '<button class="btn go" id="svcHeat">Heating</button>'
+    + '<button class="btn ghost" id="svcCool">Cooling</button></div>');
+  el('svcHeat').addEventListener('click', () => { closeModal(true); sg.service = 'heat'; then(); });
+  el('svcCool').addEventListener('click', () => { closeModal(true); sg.service = 'cool'; then(); });
 }
 
 /* ==========================================================================
@@ -4189,7 +4411,7 @@ function autoFitTerminalSet(sg) {
   buildTree();
   const down = nodeById(sg.down !== null && sg.down !== undefined ? sg.down : sg.b);
   if (!down || down.type !== 'consumer') return 0;
-  return fitSetOnRun(sg, setForValveType(down.valve), { quiet: true });
+  return fitSetOnRun(sg, setForValveType(loadValve(down, sg.service)), { quiet: true });
 }
 
 /* Every load that has a run to it and no valves on that run. Used by the
@@ -4202,7 +4424,7 @@ function fitAllTerminalSets() {
       const down = nodeById(sg.down);
       if (!down || down.type !== 'consumer') return;
       if (segHasPlacedValves(sg.id)) return;
-      const n = fitSetOnRun(sg, setForValveType(down.valve), { quiet: true });
+      const n = fitSetOnRun(sg, setForValveType(loadValve(down, sg.service)), { quiet: true });
       if (n) { runs++; items += n; }
     });
   });
@@ -4362,56 +4584,81 @@ function sourceForm(n) {
     + rowBtns();
 }
 
-function consumerForm(n) {
-  const byKw = n.basis !== 'lps';
-  const feed = n.feedSeg ? segById(n.feedSeg) : null;
+function consumerSideFields(n, side) {
+  const obj = loadSide(n, side);
+  const byKw = obj.basis !== 'lps';
+  const feed = feedOf(n, side);
+  const sideAttr = side === 'cool' ? ' data-side="cool"' : '';
+  const hx = ancestorHx(n.id);
   return ''
-    + '<label class="fld"><span>Name</span><input data-f="name" value="' + esc(n.name) + '"></label>'
-    + '<label class="fld"><span>Rated by</span><select data-f="basis">'
+    + '<label class="fld"><span>Rated by</span><select data-f="basis"' + sideAttr + '>'
     +   '<option value="kw"' + (byKw ? ' selected' : '') + '>Duty in kW</option>'
     +   '<option value="lps"' + (byKw ? '' : ' selected') + '>Flow (' + volLabel() + ')</option></select></label>'
     + '<div class="row2">'
     +   '<label class="fld"><span>' + (byKw ? 'Duty <em>kW</em>' : 'Flow <em>' + volLabel() + '</em> ' + volToggle()) + '</span>'
     +     (byKw
-          ? '<input type="number" data-f="kw" step="1" min="0" value="' + (n.kw || '') + '">'
+          ? '<input type="number" data-f="kw" step="1" min="0" value="' + (obj.kw || '') + '"' + sideAttr + '>'
           : '<input type="number" data-vol="lps" step="' + (volUnit() === 'm3h' ? '1' : '0.1') + '" min="0" value="'
-            + ((parseFloat(n.lps) || 0) > 0 ? lpsToVol(n.lps).toFixed(volUnit() === 'm3h' ? 1 : 2) : '') + '">')
+            + ((parseFloat(obj.lps) || 0) > 0 ? lpsToVol(obj.lps).toFixed(volUnit() === 'm3h' ? 1 : 2) : '') + '"' + sideAttr + '>')
     +     '</label>'
-    +   '<label class="fld"><span>&Delta;T <em>K</em></span><input type="number" data-f="dT" step="1" min="1" value="' + (n.dT || S.settings.dT) + '"></label>'
+    +   '<label class="fld"><span>&Delta;T <em>K</em></span><input type="number" data-f="dT" step="1" min="1" value="'
+    +     (obj.dT || (side === 'cool' ? 6 : S.settings.dT)) + '"' + sideAttr + '></label>'
     + '</div>'
-    + ((() => {
-        const hx = ancestorHx(n.id);
-        return hx
-          ? '<div class="note">This load is on the <strong>secondary</strong> of '
-            + esc(hx.name || 'the heat exchanger') + ' at '
-            + fmt(hxSecSup(hx), 0) + '/' + fmt(hxSecRet(hx), 0)
-            + ' (' + fmt(hxSecDT(hx), 1) + ' K). Its &Delta;T is the secondary-side figure. '
-            + 'The exchanger separates the circuits &mdash; this water is not the plant water.</div>'
-          : '';
-      })())
+    + (hx
+        ? '<div class="note">This load is on the <strong>secondary</strong> of '
+          + esc(hx.name || 'the heat exchanger') + ' at '
+          + fmt(hxSecSup(hx), 0) + '/' + fmt(hxSecRet(hx), 0)
+          + ' (' + fmt(hxSecDT(hx), 1) + ' K). Its &Delta;T is the secondary-side figure. '
+          + 'The exchanger separates the circuits &mdash; this water is not the plant water.</div>'
+        : '')
     + '<label class="fld"><span>Coil pressure drop <em>kPa</em></span>'
-    +   '<input type="number" data-f="coilKpa" step="1" min="0" value="' + (n.coilKpa || '') + '"></label>'
-    + '<label class="fld"><span>Control valve</span><select data-f="valve">' + opts(VALVE_TYPES, n.valve) + '</select></label>'
-    + '<label class="fld"><span>Height above finished floor <em>m</em></span>'
-    +   '<input type="number" data-f="height" step="0.1" value="' + heightOf(n) + '"></label>'
+    +   '<input type="number" data-f="coilKpa" step="1" min="0" value="' + (obj.coilKpa || '') + '"' + sideAttr + '></label>'
+    + '<label class="fld"><span>Control valve</span><select data-f="valve"' + sideAttr + '>'
+    +   opts(VALVE_TYPES, migrateValveType(obj.valve)) + '</select></label>'
     + derivedBox([
-        ['Duty', fmt(consumerKw(n), 1) + ' kW'],
-        ['Flow', fmtVol(consumerFlow(n))],
-        ['Share', consumerIsPinned(n) ? 'pinned to the typed rate' : 'unpinned \u2014 shares what is left'],
+        ['Duty', fmt(consumerKw(n, side), 1) + ' kW'],
+        ['Flow', fmtVol(consumerFlow(n, side))],
+        ['Share', consumerIsPinned(n, side) ? 'pinned to the typed rate' : 'unpinned \u2014 shares what is left'],
         ['Fed by', feed ? esc(feed.ref) + ' (' + (feed.pipe ? feed.pipe.nom : 'unsized') + ')'
                         : '<span style="color:var(--alarm)">nothing yet</span>'],
       ])
-    + '<div class="note">Leave the rate at 0 to share what remains of the plant stream after anything pinned. Type a figure to pin this load; the rest re-share.</div>'
-    + (n.reached ? '' : '<div class="note bad">Not connected to plant. Trace a run to it, '
-        + 'or it will be left out of the export.</div>')
     + (feed
-        ? '<button class="btn ghost sm" id="insRefit" style="margin-top:10px">'
+        ? '<button class="btn ghost sm" id="insRefit" data-side="' + side + '" style="margin-top:10px">'
           + (segHasPlacedValves(feed.id) ? 'Refit the terminal set' : 'Fit the terminal set')
           + '</button>'
           + '<div class="note">Puts the set that suits <strong>'
-          + esc(VALVE_TYPES[n.valve] || n.valve) + '</strong> on ' + esc(feed.ref)
-          + ', in the usual order and standing off the load. Refitting replaces whatever '
-          + 'is on that run now.</div>'
+          + esc(VALVE_TYPES[migrateValveType(obj.valve)] || obj.valve) + '</strong> on ' + esc(feed.ref)
+          + '. PICV, 2-port and 3-port keep isolations and a strainer, with no DRV or commissioning set. '
+          + 'Refitting replaces whatever is on that run now.</div>'
+        : '');
+}
+
+function consumerForm(n) {
+  const four = isFourPipe(n);
+  const tab = four && n.uiTab === 'cool' ? 'cool' : 'heat';
+  if (four) ensureCool(n);
+  return ''
+    + '<label class="fld"><span>Name</span><input data-f="name" value="' + esc(n.name) + '"></label>'
+    + '<label class="fld" style="flex-direction:row;align-items:center;gap:8px">'
+    +   '<input type="checkbox" data-f="fourPipe"' + (four ? ' checked' : '') + ' style="width:auto;margin:0">'
+    +   '<span>4-pipe &mdash; heating and cooling</span></label>'
+    + (four
+        ? '<div class="note">Two circuits into one load. Each side has its own duty, &Delta;T, '
+          + 'coil drop and control valve. Trace a run onto each tab.</div>'
+          + '<div class="segbtn" role="tablist" aria-label="Load service" style="margin:10px 0 12px">'
+          + '<button type="button" data-loadtab="heat"' + (tab === 'heat' ? ' class="on"' : '') + '>Heating</button>'
+          + '<button type="button" data-loadtab="cool"' + (tab === 'cool' ? ' class="on"' : '') + '>Cooling</button>'
+          + '</div>'
+        : '')
+    + consumerSideFields(n, four ? tab : 'heat')
+    + '<label class="fld"><span>Height above finished floor <em>m</em></span>'
+    +   '<input type="number" data-f="height" step="0.1" value="' + heightOf(n) + '"></label>'
+    + '<div class="note">Leave the rate at 0 to share what remains of the plant stream after anything pinned. Type a figure to pin this load; the rest re-share.</div>'
+    + (n.reached ? '' : '<div class="note bad">Not connected to plant. Trace a run to it, '
+        + 'or it will be left out of the export.</div>')
+    + (four && n.reached && (!n.feedSeg || !n.feedSegCool)
+        ? '<div class="note warn">' + (!n.feedSeg ? 'Heating' : 'Cooling')
+          + ' has no run yet. Trace the other circuit onto this load.</div>'
         : '')
     + placementFields(n)
     + rowBtns(true);
@@ -4908,6 +5155,16 @@ function segForm(sg) {
     + '<label class="fld"><span>Extra rise and drop within the run <em>m</em>'
     +   ' <em style="color:var(--muted)">over an obstruction</em></span>'
     +   '<input type="number" data-f="extraRise" step="0.1" min="0" value="' + (sg.extraRise || '') + '"></label>'
+    + '<label class="fld"><span>Installed length <em>m</em>'
+    +   (S.concept ? ' <em style="color:var(--muted)">type it — there is no drawing to measure</em>' : '')
+    +   '</span><input type="number" data-f="lengthOverride" step="0.1" min="0" value="'
+    +   ((parseFloat(sg.lengthOverride) || 0) > 0 ? sg.lengthOverride : '') + '"></label>'
+    + (nodeById(sg.down) && isFourPipe(nodeById(sg.down))
+        ? '<label class="fld"><span>Service on this 4-pipe load</span><select data-f="service">'
+          + '<option value="heat"' + (sg.service !== 'cool' ? ' selected' : '') + '>Heating</option>'
+          + '<option value="cool"' + (sg.service === 'cool' ? ' selected' : '') + '>Cooling</option>'
+          + '</select></label>'
+        : '')
     + derivedBox([
         ['Route on the plan', fmt(sg.runM, 2) + ' m'],
         ['Riser between ends', fmt(sg.fit.rise, 2) + ' m'],
@@ -5046,9 +5303,10 @@ function placedValvesBox(sg) {
   const termOff = down && down.type === 'consumer' && S.settings.termValves && items.length;
   if (!items.length) {
     return (down && down.type === 'consumer' && S.settings.termValves)
-      ? '<div class="note">Terminal valves are being assumed on this run: two isolating valves, '
-        + 'a strainer and whatever the control arrangement needs. Drop real valves on it with the '
-        + 'Valves tool and the assumption stops.</div>'
+      ? '<div class="note">Terminal valves are being assumed on this run: two isolating valves '
+        + 'and a strainer'
+        + (setNeedsRegValve(loadValve(down, sg.service)) ? ', plus a regulating valve' : '')
+        + '. Drop real valves on it with the Valves tool and the assumption stops.</div>'
       : '';
   }
   const rows = items.map(it => {
@@ -5121,6 +5379,24 @@ function rowBtns(dup) {
     + '<button class="btn ghost sm" id="insDel" style="color:var(--alarm)">Delete</button></div>';
 }
 
+function inspectorTarget(elInp) {
+  let obj = sel.kind === 'item' ? itemById(sel.id)
+          : sel.kind === 'tape' ? measureById(sel.id)
+          : sel.kind === 'node' ? nodeById(sel.id) : segById(sel.id);
+  if (!obj) return null;
+  if (sel.kind === 'node' && obj.type === 'consumer' && elInp && elInp.getAttribute('data-side') === 'cool')
+    return ensureCool(obj);
+  return obj;
+}
+function syncTerminalSet(n, side) {
+  const feed = feedOf(n, side);
+  if (!feed) return;
+  asOneUndo('refit the terminal set', () => {
+    S.items = S.items.filter(it => it.seg !== feed.id);
+    fitSetOnRun(feed, setForValveType(loadValve(n, side)), { quiet: true });
+  });
+}
+
 function wireInspector() {
   el('insBody').querySelectorAll('[data-volunit]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -5128,11 +5404,17 @@ function wireInspector() {
       render(); openInspector();
     });
   });
+  el('insBody').querySelectorAll('[data-loadtab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const n = nodeById(sel && sel.id);
+      if (!n) return;
+      n.uiTab = btn.getAttribute('data-loadtab');
+      openInspector();
+    });
+  });
   el('insBody').querySelectorAll('[data-vol]').forEach(inp => {
     inp.addEventListener('change', () => {
-      const obj = sel.kind === 'item' ? itemById(sel.id)
-                : sel.kind === 'tape' ? measureById(sel.id)
-                : sel.kind === 'node' ? nodeById(sel.id) : segById(sel.id);
+      const obj = inspectorTarget(inp);
       if (!obj) return;
       obj[inp.getAttribute('data-vol')] = volToLps(inp.value);
       render(); openInspector();
@@ -5151,11 +5433,23 @@ function wireInspector() {
   });
   el('insBody').querySelectorAll('[data-f]').forEach(inp => {
     inp.addEventListener('change', () => {
-      const obj = sel.kind === 'item' ? itemById(sel.id)
-                : sel.kind === 'tape' ? measureById(sel.id)
-                : sel.kind === 'node' ? nodeById(sel.id) : segById(sel.id);
+      const node = sel.kind === 'node' ? nodeById(sel.id) : null;
+      const obj = inspectorTarget(inp);
       if (!obj) return;
       const f = inp.dataset.f;
+      if (f === 'fourPipe') {
+        node.fourPipe = inp.checked;
+        if (node.fourPipe) { ensureCool(node); node.uiTab = node.uiTab || 'heat'; }
+        render(); openInspector();
+        return;
+      }
+      if (f === 'lengthOverride') {
+        const v = parseFloat(inp.value);
+        if (!(v > 0) || inp.value.trim() === '') delete obj.lengthOverride;
+        else obj.lengthOverride = v;
+        render(); openInspector();
+        return;
+      }
       /* An empty resistance box means "use the typical figure", which is not
          the same as zero — so it clears the override rather than storing 0. */
       if (f === 'kpa' && inp.value.trim() === '') {
@@ -5184,7 +5478,15 @@ function wireInspector() {
          any figure typed against the old one — it no longer means anything. */
       if (sel.kind === 'item' && (f === 'type' || f === 'basis')) delete obj.kpa;
       if (f === 'basis' || f === 'mode') openInspector();
-      if (sel.kind !== 'item') el('insName').textContent = obj.name || obj.ref || measureName(obj) || '\u2014';
+      if (sel.kind !== 'item') el('insName').textContent = (node || obj).name || obj.ref || measureName(obj) || '\u2014';
+      if (sel.kind === 'node' && node && node.type === 'consumer' && f === 'valve') {
+        const side = inp.getAttribute('data-side') === 'cool' ? 'cool' : 'heat';
+        syncTerminalSet(node, side);
+      }
+      if (sel.kind === 'seg' && f === 'service') {
+        const down = nodeById(obj.down);
+        if (down && down.type === 'consumer') syncTerminalSet(down, obj.service);
+      }
       render(); openInspector();
     });
   });
@@ -5214,12 +5516,10 @@ function wireInspector() {
   const refit = el('insRefit');
   if (refit) refit.addEventListener('click', () => {
     const n = nodeById(sel.id);
-    const feed = n && n.feedSeg ? segById(n.feedSeg) : null;
+    const side = refit.getAttribute('data-side') === 'cool' ? 'cool' : 'heat';
+    const feed = feedOf(n, side);
     if (!feed) return;
-    asOneUndo('refit the terminal set', () => {
-      S.items = S.items.filter(it => it.seg !== feed.id);
-      fitSetOnRun(feed, setForValveType(n.valve), { quiet: true });
-    });
+    syncTerminalSet(n, side);
     render(); openInspector();
     toast('Terminal set fitted on ' + (feed.ref || 'the run'));
   });
@@ -5247,6 +5547,11 @@ function auditTrace() {
   if (loose.length) add('loose', 'bad',
     loose.length + ' load' + (loose.length === 1 ? '' : 's') + ' not connected to plant ('
     + loose.map(n => n.name).join(', ') + '). They are left out of the export.', false);
+
+  const half4 = S.nodes.filter(n => isFourPipe(n) && n.reached && (!n.feedSeg || !n.feedSegCool));
+  if (half4.length) add('fourpipe', 'warn',
+    half4.map(n => n.name + ' (' + (!n.feedSeg ? 'heating' : 'cooling') + ' not connected)').join(', ')
+    + ' — a 4-pipe load needs a run on each side.', false);
 
   const orph = S.segs.filter(s => s.orphan);
   if (orph.length) add('orphan', 'bad',
@@ -5941,7 +6246,10 @@ function buildSizerProject() {
       const single = sg.mode === 'single';
       const c = {
         id: cid,
-        ref: isCons ? (down.name || sg.ref) : sg.ref,
+        ref: isCons
+          ? ((down.name || sg.ref) + (isFourPipe(down)
+              ? (sg.service === 'cool' ? ' (cooling)' : ' (heating)') : ''))
+          : sg.ref,
         circuitType: isCons ? 'consumer' : 'main',
         parentId: parentCircuit,
         material: sg.material || S.settings.material,
@@ -5954,10 +6262,11 @@ function buildSizerProject() {
         fittingsMode: 'counted',
         fittingSchedule: singleLegSchedule(sg),
         fittings: Math.round(sg.equivPct) || 20,
-        dT: isCons ? (parseFloat(down.dT) || dTnow) : dTnow,
+        dT: isCons
+          ? (parseFloat(loadSide(down, sg.service).dT) || dTnow) : dTnow,
         // the coil plus any valve on this run that holds a set differential
         consumerLoad: isCons
-          ? +((parseFloat(down.coilKpa) || 0) + terminalValveKpa(sg)).toFixed(2) : 0,
+          ? +((parseFloat(loadSide(down, sg.service).coilKpa) || 0) + terminalValveKpa(sg)).toFixed(2) : 0,
         sizeOverride: sg.step || 0,
         // the critical path worked out here, ticked ready in the sizer
         isIndex: !!sg.isIndex, isLLH: false,
@@ -5974,14 +6283,16 @@ function buildSizerProject() {
           tag: it.tag, type: it.type, leg: it.leg, qty: itemQty(it, sg),
           fixedKpa: valveIsFixed(it) ? valveKpaOf(it) : 0,
         })),
-        traceCoilKpa: isCons ? (parseFloat(down.coilKpa) || 0) : 0,
+        traceCoilKpa: isCons ? (parseFloat(loadSide(down, sg.service).coilKpa) || 0) : 0,
         traceValveKpa: +(terminalValveKpa(sg)).toFixed(2),
       };
       if (isCons) {
-        if (down.basis === 'lps') { c.mode = 'fromFlow'; c.lps = +consumerFlow(down).toFixed(3); c.kw = 0; }
-        else { c.mode = 'fromKw'; c.kw = +consumerKw(down).toFixed(2); c.lps = 0; }
+        const side = isFourPipe(down) ? segService(sg) : 'heat';
+        const obj = loadSide(down, side);
+        if (obj.basis === 'lps') { c.mode = 'fromFlow'; c.lps = +consumerFlow(down, side).toFixed(3); c.kw = 0; }
+        else { c.mode = 'fromKw'; c.kw = +consumerKw(down, side).toFixed(2); c.lps = 0; }
         // carry the valve arrangement through for the simulator
-        const vt = migrateValveType(down.valve);
+        const vt = migrateValveType(obj.valve);
         c.isBypass = (vt === 'threePort' || vt === 'twoPortBp' || vt === 'twoPortCS');
         /* The control arrangement is a decision made on the drawing, so it
            travels with the circuit all the way to the simulator rather than
@@ -5989,6 +6300,8 @@ function buildSizerProject() {
         c.traceValve = vt;
         c.controlValve = vt;
         c.needsAuthority = valveNeedsAuthority(vt);
+        c.fourPipe = !!isFourPipe(down);
+        c.fourPipeSide = isFourPipe(down) ? side : '';
       } else {
         c.mode = 'fromChildren'; c.kw = 0; c.lps = 0;
       }
@@ -6336,10 +6649,10 @@ function doExport() {
     closeModal(true);
     if (ok) {
       toast('Sent \u2014 the sizer is opening with the project in it');
-      setTimeout(() => window.open('./index.html?handoff=1', '_blank'), 350);
+      setTimeout(() => window.open('./sizer.html?handoff=1', '_blank'), 350);
     } else {
       toast('Saved \u2014 this browser will not pass it across, so open the file in the sizer');
-      setTimeout(() => window.open('./index.html', '_blank'), 350);
+      setTimeout(() => window.open('./sizer.html', '_blank'), 350);
     }
   });
 }
@@ -6369,7 +6682,10 @@ let autoTimer = null;
    — a rotated drawing is a drawing in its own right, and opening it again
    simply starts from there. */
 function imgForSave() {
-  return S.img ? { src: S.img.src, w: S.img.w, h: S.img.h, label: S.img.label } : null;
+  if (!S.img) return null;
+  const o = { src: S.img.src, w: S.img.w, h: S.img.h, label: S.img.label };
+  if (S.img.virtual) o.virtual = true;
+  return o;
 }
 
 function projectBundle(withImg) {
@@ -6377,11 +6693,13 @@ function projectBundle(withImg) {
     app: 'adi-pipe-trace', schema: 1,
     ref: S.ref, engineer: S.engineer, date: S.date,
     img: withImg ? imgForSave() : null, pxPerM: S.pxPerM, calib: S.calib,
+    concept: !!S.concept,
     nodes: S.nodes, segs: S.segs, items: S.items, measures: S.measures || [],
     nextId: S.nextId, settings: S.settings,
   }));
   out.nodes.forEach(n => {
-    ['feedSeg','reached','flowLps','sharedLps','dutyKw','shell','hgroup','subGroup'].forEach(kk => delete n[kk]);
+    ['feedSeg','feedSegCool','reached','flowLps','sharedLps','dutyKw','shell','hgroup','subGroup','uiTab'].forEach(kk => delete n[kk]);
+    if (n.cool) delete n.cool.sharedLps;
   });
   out.segs.forEach(s => { ['up','down','parentSeg','depth','orphan','kw','lps','nCons','runM','lenM',
     'pipe','hydM','fit','fitPa','nFit','straightKpa','fitKpa','valveKpa','nValves','dropKpa','equivPct',
@@ -6510,11 +6828,16 @@ function loadProject(data) {
   }
   S.ref = data.ref || ''; S.engineer = data.engineer || ''; S.date = data.date || S.date;
   S.pxPerM = data.pxPerM || 0; S.calib = data.calib || null;
+  S.concept = !!data.concept;
   S.nodes = data.nodes || []; S.segs = data.segs || [];
   /* Files written before valves could be placed simply have none. */
   S.items = (data.items || []).filter(it => it && VALVE_LIB[it.type]);
   S.measures = (data.measures || []).filter(m => m && m.pts && m.pts.length >= 2);
-  S.nodes.forEach(n => { if (n.type === 'consumer') n.valve = migrateValveType(n.valve); });
+  S.nodes.forEach(n => {
+    if (n.type !== 'consumer') return;
+    n.valve = migrateValveType(n.valve);
+    if (n.cool) n.cool.valve = migrateValveType(n.cool.valve);
+  });
   S.nextId = data.nextId || (S.nodes.length + S.segs.length + S.items.length + (S.measures || []).length + 1);
   /* Corners lock by default now. A file written before that carries the old
      default of `ortho: false`, which is not a decision anybody made — so it is
@@ -6524,8 +6847,10 @@ function loadProject(data) {
   if (!(st.angleLockRev >= 2)) delete st.ortho;
   Object.assign(S.settings, st);
   if (data.img) { S.img = data.img; showDrawing(); }
+  else if (S.concept) startConcept();
   sel = null; closeInspector();
   el('orthoChk').checked = !!S.settings.ortho;   // the file may hold its own answer
+  syncConceptUi();
   buildRail(); render();
   toast('Opened ' + (S.ref || 'project'));
 }
@@ -6549,9 +6874,17 @@ function showDrawing(opts) {
   paintDrawing();
   el('board').style.display = 'none';
   el('zoomer').style.display = 'flex';
+  const zRot = el('zRot');
+  if (zRot) zRot.style.display = S.img.virtual ? 'none' : '';
   ['bSched','bExport','bName','b3d','bCheck'].forEach(id => el(id).disabled = false);
-  el('bOpenDwg').textContent = 'Change drawing';
-  el('bOpenDwg').title = 'Load a different drawing — the scale has to be set again';
+  if (S.img.virtual) {
+    el('bOpenDwg').textContent = 'Open drawing';
+    el('bOpenDwg').title = 'Load a PDF or image — this concept sheet has no drawing';
+  } else {
+    el('bOpenDwg').textContent = 'Change drawing';
+    el('bOpenDwg').title = 'Load a different drawing — the scale has to be set again';
+  }
+  syncConceptUi();
   buildRail();
   setTimeout(() => { zoomFit(); render(); }, 40);
   // the scale is the gate: a drawing without one goes no further
@@ -6641,6 +6974,7 @@ function turnTakeoff(deg, cOld, cNew) {
 function rotateDrawing(target, opts) {
   opts = opts || {};
   if (!S.img) { toast('Load a drawing first'); return; }
+  if (S.img.virtual) { toast('A concept sheet cannot be rotated'); return; }
   if (rotBusy) return;
   imgBase();
   target = ((target % 360) + 360) % 360;
@@ -6761,7 +7095,8 @@ function rotateDialog() {
 
 async function loadDrawingFile(file) {
   if (!file) return;
-  const replaced = !!S.img;          // swapping the sheet behind an existing trace
+  const replaced = !!(S.img && !S.img.virtual);  // swapping the sheet behind an existing trace
+  S.concept = false;                 // a real drawing leaves the concept grid
   const isPdf = /pdf$/i.test(file.type) || /\.pdf$/i.test(file.name);
   if (isPdf) {
     if (typeof pdfjsLib === 'undefined') {
@@ -6830,7 +7165,62 @@ function closeModal(force) {
    Nothing traced before the scale is set means anything, so a drawing that
    arrives without one stops here. Plant, loads and tracing stay locked until
    two points and a real dimension have been given. */
-function scaleNeeded() { return !!S.img && !(S.pxPerM > 0); }
+function scaleNeeded() { return !!S.img && !S.img.virtual && !(S.pxPerM > 0); }
+
+/* ---------- concept mode ----------
+   A schematic on a faint grid, for the stage of a job that has no drawing
+   to trace. Plant, loads, headers and pipes are placed the same way; lengths
+   are typed on the run rather than measured off a sheet. */
+const CONCEPT_PX_PER_M = 24;
+const CONCEPT_W = 2400;
+const CONCEPT_H = 1600;
+
+function blankConceptSrc() {
+  const cv = document.createElement('canvas');
+  cv.width = 8; cv.height = 8;
+  const cx = cv.getContext('2d');
+  cx.fillStyle = '#fbfaf7';
+  cx.fillRect(0, 0, 8, 8);
+  return cv.toDataURL('image/png');
+}
+function syncConceptUi() {
+  const b = el('bConcept');
+  if (b) b.classList.toggle('on', !!S.concept);
+  const sheet = el('sheet');
+  if (sheet) sheet.classList.toggle('concept', !!(S.concept || (S.img && S.img.virtual)));
+  const img = el('dwg');
+  if (img) img.classList.toggle('virtual', !!(S.img && S.img.virtual));
+}
+function startConcept() {
+  S.concept = true;
+  if (!S.img) {
+    S.img = { src: blankConceptSrc(), w: CONCEPT_W, h: CONCEPT_H, label: 'Concept', virtual: true };
+    S.pxPerM = CONCEPT_PX_PER_M;
+  }
+  showDrawing();
+  syncConceptUi();
+  toast('Concept — place plant and loads, draw the pipes, type the lengths');
+}
+function stopConcept() {
+  S.concept = false;
+  if (S.img && S.img.virtual && !S.nodes.length && !S.segs.length) {
+    S.img = null;
+    S.pxPerM = 0;
+    el('board').style.display = '';
+    el('zoomer').style.display = 'none';
+    el('dwg').style.display = 'none';
+    el('ov').innerHTML = '';
+    ['bSched','bExport','bName','b3d','bCheck'].forEach(id => { const b = el(id); if (b) b.disabled = true; });
+    el('bOpenDwg').textContent = 'Open drawing';
+    buildRail();
+  }
+  syncConceptUi();
+  render();
+}
+function toggleConcept() {
+  if (S.concept) stopConcept();
+  else startConcept();
+}
 
 function scaleGate() {
   if (!scaleNeeded()) return false;
@@ -7932,6 +8322,8 @@ document.addEventListener('keydown', ev => {
    WIRING
    ========================================================================== */
 el('bPick').addEventListener('click', () => el('fDwg').click());
+el('bPickConcept').addEventListener('click', startConcept);
+el('bConcept').addEventListener('click', toggleConcept);
 el('bOpenDwg').addEventListener('click', () => el('fDwg').click());
 el('fDwg').addEventListener('change', e => { loadDrawingFile(e.target.files[0]); e.target.value = ''; });
 

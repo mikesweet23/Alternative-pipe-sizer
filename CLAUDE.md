@@ -14,9 +14,12 @@ this should be enough to make a safe change. Keep it current.
 
 | Step | Name in the bar | File | URL | Does |
 |---|---|---|---|---|
-| 1 | Pipe Trace | `trace.html` | `/trace.html` | Take-off from a scaled drawing, 3D height check |
-| 2 | Pipework Sizer | `index.html` | `/` | Sizing, losses, heat loss, reheat |
+| 1 | Pipe Trace | `trace.html` | `/` and `/trace.html` | Take-off from a scaled drawing, or a Concept schematic |
+| 2 | Pipework Sizer | `sizer.html` | `/sizer.html` | Sizing, losses, heat loss, reheat |
 | 3 | Network Simulator | `simulator.html` | `/simulator.html` | Network solve, pumps, balancing |
+
+`index.html` is a redirect, not a tool. Opening `/` goes to Pipe Trace. A
+handoff from an old bookmark still works: `/?handoff=1` opens the sizer.
 
 > **There is no fourth tool.** A `primary-circuit-sizer.html` was listed here
 > for a long time and is retired — an earlier iteration, never in this
@@ -25,7 +28,7 @@ this should be enough to make a safe change. Keep it current.
 > note or an old tab, it is not part of this.
 
 Steps 1→2→3 pass a single JSON file between them. Cross-links in the top bars
-are **relative** (`./index.html` etc.) so they survive a repo rename.
+are **relative** (`./sizer.html` etc.) so they survive a repo rename.
 
 The order is fixed and every page states it: all three carry the same step rail
 — `1 Trace → 2 Sizer → 3 Simulator` — with the page you are on lit and the
@@ -50,7 +53,7 @@ Break any of these and the tools stop agreeing with each other.
   of that range, 0.35% at a 70 °C mean, which is about 0.1% on a pipe capacity
   and an order below the uncertainty in roughness.
 
-> **`waterMu(T)` is one function with three copies** — `index.html`,
+> **`waterMu(T)` is one function with three copies** — `sizer.html`,
 > `trace.html` and `simulator.html` — byte-identical, exactly like
 > `FITTING_TYPES`. Change one and change all three in the same commit, or the
 > tools disagree on every size. There is a check for this in section 7.
@@ -242,8 +245,36 @@ expansion all see them.
 
 A **PICV holds its own flow**, so it never gets a double regulating valve or a
 commissioning set behind it — that would be regulating something already
-regulated. Everything else does. `setForValveType()` maps the arrangement to
-its set; `termPicv` is the one with no DRV.
+regulated. **2-port and 3-port control valves do not get one either**: they
+are the regulation on that run. The two bypass arrangements (`twoPortBp`,
+`twoPortCS`) still carry a DRV or a commissioning set, because that is the
+valve the bypass is there to be read on.
+
+`setForValveType()` maps the arrangement to its set. `setNeedsRegValve()` is
+true only for the two bypasses. Changing the control valve on a load refits
+that run's terminal set.
+
+### 4-pipe loads
+
+A load can be marked **4-pipe** — heating and cooling as two circuits into
+one box. Heating keeps the node's own `kw` / `dT` / `coilKpa` / `valve`.
+Cooling sits on `n.cool` with the same fields (cooling ΔT defaults to 6 K).
+The inspector shows Heating / Cooling tabs. Each side gets its own feed
+(`feedSeg` / `feedSegCool`), its own terminal set, and exports as its own
+consumer circuit, named `"Load (heating)"` / `"Load (cooling)"`.
+
+A second run into a 4-pipe load is not a loop. `buildTree()` assigns it to
+the unused service. A chiller upstream prefers cooling; otherwise the first
+free side is asked.
+
+### Concept mode
+
+Pipe Trace opens on a drawing or on **Concept**: a faint square grid, no
+sheet to calibrate. Plant, loads, headers, buffers and heat exchangers are
+placed the same way; runs are drawn between them; **installed length is
+typed** on the run (`lengthOverride`) because there is nothing to measure.
+That is how a concept design gets concept pipe sizes before a layout exists.
+`/` opens Trace so that is the first thing you see.
 
 ### The arrangement travels the whole chain
 
@@ -251,7 +282,7 @@ Set on the load in Pipe Trace → `controlValve` on the exported circuit →
 carried untouched through the sizer (which does not use it) → read by the
 simulator as the node's `arrangement`. The simulator used to hard-code
 `twoPort` and default everything back to modulating, which re-invented the
-pump duty at the last step. Circuit factories in `index.html` must keep
+pump duty at the last step. Circuit factories in `sizer.html` must keep
 passing `controlValve` through or the chain breaks silently again.
 
 ### The standard isolating valve
@@ -282,7 +313,7 @@ material (carbon 1.00, stainless 0.95, copper 0.92). Applied as
 `Δp = K · ρv² / 2` at the circuit's own velocity, so changing pipe size updates
 them automatically. Source: CIBSE Guide C / Crane TP-410 unless marked.
 
-**`FITTING_TYPES` is one table with two copies — `trace.html` and `index.html`
+**`FITTING_TYPES` is one table with two copies — `trace.html` and `sizer.html`
 — and they must stay identical.** Pipe Trace hands valve counts to the sizer
 inside `fittingSchedule`, and the sizer's `fittingK()` returns **0** for a key
 it does not know. A type added to one file and not the other therefore crosses
@@ -355,7 +386,7 @@ The project default is `S.settings.valveBasis`; an item can override it.
 
 There is no per-circuit field on a main that can hold a fixed kPa.
 `consumerLoad > 0` makes the sizer reclassify the circuit as a consumer
-(`index.html`, `c.circuitType = ... consumerLoad > 0 ? 'consumer' : 'main'`)
+(`sizer.html`, `c.circuitType = ... consumerLoad > 0 ? 'consumer' : 'main'`)
 and trips the index-run duplicate-load validation. So on the default basis a
 valve on a main is in Pipe Trace's own figures and in `traceMeta`, and the
 export dialog gives the number and says to add it to pump head by hand.
@@ -748,6 +779,8 @@ the drawing, the scale, the traced geometry and any tape measures
   extra rise), and pipe metres is every leg as installed. Route + riser, times
   the number of pipes, is the pipe figure. `length` in the exchange file is the
   one-way installed length, with `lengthsPaired` saying whether it is doubled.
+  In Concept, `lengthOverride` on the run is that installed length — typed,
+  not measured — and rise is not added on top of it.
 - **Number inputs must not respond to the scroll wheel.** Wheel over a focused
   number field blurs it instead. Arrow keys blocked, spinners hidden. This was a
   deliberate safety decision — scrolling a page was silently changing design
@@ -760,7 +793,7 @@ the drawing, the scale, the traced geometry and any tape measures
   strings. Any scripted edit has to match those bytes rather than the character
   they stand for. (It is plain LF now, whatever it once was.)
 - **The top bar is shared; everything below it is not.** `trace.html`,
-  `index.html` and `simulator.html` each hold a copy of the same block, marked
+  `sizer.html` and `simulator.html` each hold a copy of the same block, marked
   `adi SHARED BRAND BAR ... end shared brand bar`. Same adi logo at 30 px, same
   `#10151a` bar, same 3 px adi-blue rule under it, same title and strapline
   scale, same step rail (`.adi-bar`, `.adi-chain`, both namespaced because
@@ -893,6 +926,15 @@ Two minutes, and it exercises every join:
 5. Confirm the **size and the fitting count match** what Pipe Trace showed, and
    that the **index run is ticked on the same path** the trace schedule named.
 6. Save from the sizer, open it in the simulator, confirm it solves.
+7. Opening `/` lands on Pipe Trace, not the sizer. `/?handoff=1` still opens
+   the sizer.
+8. **Concept**: Start a concept, place a plant and a load, draw a run, type
+   an installed length, confirm the schedule uses that length.
+9. **4-pipe**: tick it on a load, set different kW / ΔT / valve on Heating
+   and Cooling, trace a run onto each, Send to Sizer — two consumer circuits.
+10. **Valve sets**: PICV, 2-port and 3-port on a load must not place a DRV or
+    commissioning set. Isolations and a strainer stay. The two bypass
+    arrangements still get their regulating valve.
 
 If sizes differ between trace and sizer, look first at roughness, then at the
 viscosity note in section 2.
