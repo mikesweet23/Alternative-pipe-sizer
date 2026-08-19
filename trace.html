@@ -2353,7 +2353,10 @@ function vesselOfPlantFeed(sg) {
   const src = plantOnSeg(sg);
   if (!src) return null;
   const o = nodeById(sg.a === src.id ? sg.b : sg.a);
-  if (o && (isVessel(o) || isPassThrough(o) || isSeparator(o))) return o;
+  /* Only a header, HX or separating buffer splits plant flow.
+     A two-port buffer is a piece of the main — the run into it must
+     carry whatever sits past it, not be treated as a plant header. */
+  if (o && isSeparator(o)) return o;
   return null;
 }
 function plantFeedsInto(vessel) {
