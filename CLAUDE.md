@@ -131,21 +131,23 @@ simulator are the same rule and must agree.
 
 ### Hydraulic separation — the rule that runs through all three tools
 
-A job with a low loss header is **not one system**. The primary from the plant
-to the header is one circuit with its own pump; each secondary main leaving it
-is another with its own. Adding a secondary's loss to the primary's — which is
-what a single index run back to the plant does — invents pump head that the
-header exists precisely to avoid.
+A job with a low loss header or a heat exchanger is **not one system**. The
+primary from the plant to that device is one circuit with its own pump; each
+secondary main leaving it is another with its own. Adding a secondary's loss
+to the primary's — which is what a single index run back to the plant does —
+invents pump head that the break exists precisely to avoid.
 
-So a separating device is **a break in the pressure path but not in the flow
-path**. Duty still rolls all the way up, because the plant still has to make
-the heat. Pressure stops dead at the header.
+A **header** is a break in the pressure path but not in the flow path — same
+water, mixed. A **heat exchanger** is a break in both: two waters, different
+temperatures, different flows. Heat still crosses (the plant still has to make
+it). Pressure and volume flow stop dead at the plates.
 
 What separates:
 
 | | Separates | Why |
 |---|---|---|
 | Low loss header | **always** | That is what it is |
+| Plate or shell-and-tube heat exchanger | **always** | Two waters. Primary and secondary temperatures and flows are inputs. No shared volume, so the header margin rule does **not** apply — primary flow is the duty at the primary ΔT (or a typed rate) |
 | Four-port buffer | **asked** | Usually piped to separate, but it can be a common-flow vessel, and the two are different systems. Asked once on placement, never assumed |
 | Two-port buffer | no | It sits in the flow or the return as a piece of the main |
 
@@ -165,10 +167,12 @@ Where it lives in each tool:
   when the project is separated. Deliberate: the solve, the pump curve, the
   balancing pass and the diagram are all built around one machine on one
   network, which is exactly what a separated circuit is. The mains leaving a
-  header become parallel roots, which the solver already handles because a
-  plant with two mains is the same shape. Solving all of them at once would
-  mean several pumps and several balancing passes on one screen for circuits
-  that by definition do not interact.
+  header or heat exchanger become parallel roots, which the solver already
+  handles because a plant with two mains is the same shape. An HX secondary
+  group is solved at the **secondary** temperatures (`hxSecSup`/`hxSecRet`);
+  the primary keeps the plant water, including any glycol `settings.mu`.
+  Solving all of them at once would mean several pumps and several balancing
+  passes on one screen for circuits that by definition do not interact.
 
 ### The flow rule: primary above secondary, always
 
@@ -193,11 +197,18 @@ Three bands, all flagged on the drawing, in the header panel and in Check:
 
 The bands are an assumption until set per job.
 
+A **heat exchanger does not use this rule.** There is no shared volume to
+reverse. Primary flow is the duty at the primary ΔT (or a typed `priLps`);
+secondary flow is the duty at the secondary ΔT (or a typed `secLps`). Check
+flags a heat imbalance or a secondary-pipe rate that does not match.
+
 > **This is where the margin gets lost if you are not careful.** The sizer's
 > `rolledUpKw()` walked straight through the header, so every primary main was
 > sized for the secondary flow. It now stops at a separator and takes its
 > declared primary flow — `separatorDutyKw()`. If Trace and the sizer ever
-> disagree on a main above a header again, look there first.
+> disagree on a main above a header again, look there first. For an HX,
+> `separatorDutyKw()` prefers `hxKw` so it does not reconstruct the heat from
+> the sizer's single plant-side ρ/cp.
 
 ### Sizing the header shell
 
@@ -399,7 +410,7 @@ Flagged in the tools as assumptions. Replace when the figures arrive.
 | Pump curves | Generic parabola through shut-off (125% of design head) and the duty point | **Paste the real one.** Pump → *Use a real pump curve* takes flow/head pairs in l/s or m³/h and kPa or m; everything then solves against that machine |
 | Valve Kv and PICV range | Generic | Selected products |
 | Glycol viscosity against temperature | The `GLYCOL_TABLE` multiplier applied to `waterMu(Tm)`, treated as independent of temperature | Concentration-and-temperature data for the glycol actually specified. The multiplier does fall as temperature rises, so a hot glycol system is sized slightly conservatively |
-| Resistance through a vessel | Low loss header 2 kPa, buffer 3 kPa | Selected products, per vessel |
+| Resistance through a vessel | Low loss header 2 kPa, buffer 3 kPa, plate HX 15 kPa, shell-and-tube 20 kPa | Selected products, per vessel |
 | Primary flow margin over secondary | 10%, with a 5–25% band | The plant's own flow rate, per job |
 | PICV / control valve differential | PICV 25, 2-port 20, 3-port 20, DPCV 15 kPa | Selected products, per valve |
 | K for wafer check, basket strainer, dirt separator, flow station, flexible | See section 2, marked *assumed* | Supplier data |
@@ -427,10 +438,11 @@ Circuit fields that carry meaning across tools:
 | `isIndex` | On the critical path. Pipe Trace works this out and ticks it |
 | `traceValves` | The valves placed on this run — tag, type, leg, qty |
 | `traceCoilKpa`, `traceValveKpa` | How `consumerLoad` splits between coil and control valve |
-| `hydraulicGroup` | Which pump this run belongs to. 0 is the primary; every header opens another |
-| `isSeparator` | This circuit **is** a header or separating buffer. It opens `opensGroup` and carries `separatorKpa` |
-| `isLLH` | Size on velocity alone, to the header limit. Already existed in the sizer; Pipe Trace now sets it |
-| `vesselType`, `vesselLitres`, `ports`, `marginPct`, `primaryLps`, `secondaryLps` | What the vessel is and what is either side of it |
+| `hydraulicGroup` | Which pump this run belongs to. 0 is the primary; every header or heat exchanger opens another |
+| `isSeparator` | This circuit **is** a header, heat exchanger or separating buffer. It opens `opensGroup` and carries `separatorKpa` |
+| `isLLH` | Size on velocity alone, to the header limit. Already existed in the sizer; Pipe Trace now sets it. **Never** set on a heat exchanger |
+| `vesselType`, `vesselKind`, `vesselLitres`, `ports`, `marginPct`, `primaryLps`, `secondaryLps` | What the vessel is and what is either side of it. `vesselType: 'hx'` with `vesselKind: 'plate'` or `'shell'` |
+| `hxPriSup`, `hxPriRet`, `hxSecSup`, `hxSecRet`, `hxPriLps`, `hxSecLps`, `hxKw`, `secDT` | Heat exchanger only. Four temperatures, both flows, the duty that crosses, and the secondary ΔT. `dT` on that circuit is the **primary** ΔT so `separatorDutyKw()` rolls the heat up correctly |
 
 `settings.mu` is written by the sizer alongside `settings.rho` and
 `settings.cp` — the viscosity actually used, derived rather than typed. The
@@ -439,17 +451,18 @@ made with glycol solves on the glycol figure instead of on plain water. A file
 written before this carries no `mu` and the simulator falls back to
 `waterMu(Tm)`, which is right for every project without glycol.
 
-A header crosses as **a circuit of its own**, sitting between the run that
-feeds it and the runs that leave it, with its primary flow given explicitly
-(`mode: 'fromFlow'`) rather than rolled up. That is what makes the margin
-propagate up through the sizer's own roll-up, and it means the secondary mains
-hang off the header rather than off the primary main that fed it, so the two
-sides can never be added together by accident.
+A header or heat exchanger crosses as **a circuit of its own**, sitting
+between the run that feeds it and the runs that leave it, with its primary
+flow given explicitly (`mode: 'fromFlow'`) rather than rolled up. That is
+what makes the header margin — or the HX primary flow at the primary ΔT —
+propagate up through the sizer's own roll-up, and it means the secondary
+mains hang off the vessel rather than off the primary main that fed it, so
+the two sides can never be added together by accident.
 
 `traceMeta.hydraulicGroups` is one entry per pump, and `traceMeta.separators`
-carries each header's two flows, its margin, its shell and whether it is
-reversed. A tool reading only `indexKpa` still gets the primary, which is what
-it always got.
+carries each header or exchanger's two flows, and for an HX the four
+temperatures and the duty. A tool reading only `indexKpa` still gets the
+primary, which is what it always got.
 
 The project also carries a top-level **`valveSchedule`**: the whole take-off as
 a flat list — tag, type, symbol key, run, size, DN, leg, quantity, kPa, and
@@ -481,7 +494,7 @@ the drawing, the scale, the traced geometry and any tape measures
   default main height. Turn the rule off in Pipe & basis if a genuine mid-span
   tee is needed.
 - **Run naming.** `PM1, PM2` primary mains from the plant; `SM1, SM2` secondary
-  mains from a low loss header or a separating buffer; `SB1, SB2` sub-mains
+  mains from a low loss header, heat exchanger or a separating buffer; `SB1, SB2` sub-mains
   that branch off a main and still feed more than one load; `B1, B2` branches
   into a load; `X1` anything not connected. A main cut by a tee is numbered in
   sections from its own pump — `PM1.1, PM1.2`. A run in one piece keeps its
@@ -937,6 +950,11 @@ fluid basis has moved with them.
     index and a separate header index that **do not add up**; the sizer opens
     with an index run ticked in each circuit and a duty table saying the same;
     the simulator offers a circuit picker and solves either one on its own.
+    Repeat with a **plate or shell-and-tube heat exchanger**: different
+    flow/return on each side, different l/s, `SEPARATES — two waters` on the
+    drawing, Check clean when the load ΔT matches the secondary, and the
+    simulator solving the secondary at the secondary temperatures. The two
+    pump duties still do not add.
 13. **Reconcile across the header.** A main above it must agree between Trace
     and the sizer on the *primary* flow, margin included — on the worked
     example, PM1 at 1.007 l/s and 8.86 kPa against the sizer's 8.87. If the

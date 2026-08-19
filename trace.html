@@ -1308,7 +1308,7 @@ function heightOf(n) {
   if (!isNaN(v)) return v;
   return n.type === 'source' ? S.settings.plantHeight
        : n.type === 'consumer' ? S.settings.loadHeight
-       : (n.type === 'llh' || n.type === 'buffer') ? S.settings.plantHeight
+       : (n.type === 'llh' || n.type === 'buffer' || n.type === 'hx') ? S.settings.plantHeight
        : S.settings.mainHeight;
 }
 
@@ -1321,29 +1321,37 @@ function heightOf(n) {
    to the plant does — invents pump head that the header exists precisely to
    avoid.
 
-   So a separating device is a **break in the pressure path but not in the
-   flow path**. Duty still rolls all the way up, because the plant still has
-   to make the heat. Pressure stops dead at the header.
+   A header is a break in the pressure path but not in the flow path —
+   same water, mixed. A heat exchanger is a break in both: two waters,
+   different temperatures, different flows. Heat still crosses (the plant
+   still has to make it); pressure and volume flow stop dead at the plates.
 
    What separates:
      - a low loss header, always
+     - a plate or shell-and-tube heat exchanger, always — two circuits,
+       two temperatures, two pumps
      - a four-port buffer, if it was placed as a separator — a four-port
        vessel is usually there to do exactly that, but it can be piped as a
        common-flow buffer instead, so it is asked rather than assumed
      - a two-port buffer never does: it sits in the flow or the return as a
        piece of the main, and its resistance is part of that circuit
    ========================================================================== */
-const VESSEL_TYPES = { llh: 'Low loss header', buffer: 'Buffer vessel' };
+const VESSEL_TYPES = { llh: 'Low loss header', buffer: 'Buffer vessel',
+                       hx: 'Heat exchanger' };
+const HX_KINDS = { plate: 'Plate heat exchanger', shell: 'Shell and tube' };
 
 /* Resistance through the vessel itself. A header is deliberately almost
    nothing — slow water through a large shell — and an in-line buffer is a
-   little more. Both are placeholders until a product is selected, flagged as
-   assumptions wherever they are shown, and overridable per vessel. */
-const VESSEL_KPA = { llh: 2, buffer: 3 };
+   little more. A heat exchanger is a real drop: 15 kPa plate, 20 kPa
+   shell-and-tube, until a product is selected. All are placeholders,
+   flagged as assumptions wherever they are shown, and overridable. */
+const VESSEL_KPA = { llh: 2, buffer: 3, hx: 15 };
+function hxDefaultKpa(n) { return (n && n.kind === 'shell') ? 20 : 15; }
 function vesselKpa(n) {
   if (!isVessel(n)) return 0;
   const v = parseFloat(n && n.kpa);
-  return isNaN(v) ? (VESSEL_KPA[n.type] || 0) : v;
+  if (!isNaN(v)) return v;
+  return n.type === 'hx' ? hxDefaultKpa(n) : (VESSEL_KPA[n.type] || 0);
 }
 function vesselKpaAssumed(n) { return isVessel(n) && isNaN(parseFloat(n && n.kpa)); }
 
@@ -1376,6 +1384,7 @@ const NODE_SIZE_M = {
   consumer: { x: 1.6, y: 1.0 },
   llh:      { x: 0.5, y: 2.0 },
   buffer:   { x: 1.0, y: 1.8 },
+  hx:       { x: 1.8, y: 1.1 },
 };
 /* Never smaller than this on screen, or a whole-floor view loses them and
    they become impossible to pick up. The same max(on-screen, real) rule the
@@ -1385,6 +1394,7 @@ const NODE_MIN_PX = {
   consumer: { x: 62, y: 30 },
   llh:      { x: 34, y: 62 },
   buffer:   { x: 40, y: 52 },
+  hx:       { x: 72, y: 44 },
 };
 
 function nodeSizeM(n) {
@@ -1494,7 +1504,8 @@ function reseatNode(n) {
 /* A plant, load, header or buffer — a casing with a real footprint. Not a
    tee and not an open end. */
 function isUnitCasing(n) {
-  return n && (n.type === 'source' || n.type === 'consumer' || n.type === 'llh' || n.type === 'buffer');
+  return n && (n.type === 'source' || n.type === 'consumer' || n.type === 'llh'
+            || n.type === 'buffer' || n.type === 'hx');
 }
 function isCardinalLeg(a, b) {
   return Math.abs(a.x - b.x) < 0.8 || Math.abs(a.y - b.y) < 0.8;
@@ -1542,11 +1553,49 @@ function syncSegEnds() {
   }
 }
 
-function isVessel(n)   { return !!n && (n.type === 'llh' || n.type === 'buffer'); }
+function isVessel(n)   { return !!n && (n.type === 'llh' || n.type === 'buffer' || n.type === 'hx'); }
+function isHx(n)       { return !!n && n.type === 'hx'; }
 function isSeparator(n) {
   if (!n) return false;
-  if (n.type === 'llh') return true;                       // always
+  if (n.type === 'llh' || n.type === 'hx') return true;    // always
   return n.type === 'buffer' && (n.ports === 4) && n.sep !== false;
+}
+
+/* Temperatures and flows either side of a heat exchanger. Two waters, so
+   each side has its own mean T for ρ and cp, and its own ΔT. The heat is
+   the same (what the loads below ask for); the flows are not. A typed
+   rate pins that side; left at 0 it is derived from the duty. */
+function hxKind(n) { return (n && n.kind === 'shell') ? 'shell' : 'plate'; }
+function hxPriSup(n) { const v = parseFloat(n && n.priSup); return isNaN(v) ? S.settings.supply : v; }
+function hxPriRet(n) { const v = parseFloat(n && n.priRet); return isNaN(v) ? S.settings.ret : v; }
+function hxSecSup(n) { const v = parseFloat(n && n.secSup); return isNaN(v) ? (S.settings.supply - 10) : v; }
+function hxSecRet(n) { const v = parseFloat(n && n.secRet); return isNaN(v) ? (S.settings.ret - 10) : v; }
+function hxPriDT(n) { return Math.max(0.1, Math.abs(hxPriSup(n) - hxPriRet(n))); }
+function hxSecDT(n) { return Math.max(0.1, Math.abs(hxSecSup(n) - hxSecRet(n))); }
+function hxPriTm(n) { return (hxPriSup(n) + hxPriRet(n)) / 2; }
+function hxSecTm(n) { return (hxSecSup(n) + hxSecRet(n)) / 2; }
+function fluidAt(Tm) { return { rho: waterRho(Tm), cp: waterCp(Tm), mu: waterMu(Tm), Tm }; }
+function flowFromKwAt(kw, dT, Tm) {
+  const f = fluidAt(Tm);
+  if (kw <= 0 || dT <= 0) return 0;
+  return (kw / (f.cp * dT)) / f.rho * 1000;
+}
+function kwFromFlowAt(lps, dT, Tm) {
+  const f = fluidAt(Tm);
+  return (lps / 1000) * f.rho * f.cp * dT;
+}
+/* The heat exchanger feeding this node, walking up. Loads below one sit on
+   its secondary water, not the plant's. */
+function ancestorHx(nodeId) {
+  let n = nodeById(nodeId);
+  const seen = new Set();
+  while (n && !seen.has(n.id)) {
+    seen.add(n.id);
+    if (n.type === 'hx') return n;
+    const sg = n.feedSeg != null ? segById(n.feedSeg) : null;
+    n = sg ? nodeById(sg.up) : null;
+  }
+  return null;
 }
 
 /* ---------- the flow rule ----------
@@ -1568,13 +1617,35 @@ function sepMarginPct(n) {
   return isNaN(v) ? 10 : v;
 }
 /* What the runs feeding a separator have to carry. */
-function sepPrimaryFlow(n, secondaryLps) {
+function sepPrimaryFlow(n, secondaryLps, secondaryKw) {
   if (!n) return secondaryLps;
+  /* A heat exchanger is not a header: there is no shared volume and no
+     margin rule. The primary carries the heat at the primary ΔT (or a
+     figure typed on that side). */
+  if (n.type === 'hx') {
+    if (n.priBasis === 'flow') {
+      const v = parseFloat(n.priLps);
+      return isNaN(v) || v <= 0 ? flowFromKwAt(secondaryKw || 0, hxPriDT(n), hxPriTm(n)) : v;
+    }
+    return flowFromKwAt(secondaryKw || 0, hxPriDT(n), hxPriTm(n));
+  }
   if (n.primaryBasis === 'flow') {
     const v = parseFloat(n.primaryLps);
     return isNaN(v) || v <= 0 ? secondaryLps : v;
   }
   return secondaryLps * (1 + sepMarginPct(n) / 100);
+}
+
+/* What the secondary pump on an HX has to move: a typed rate, or the heat
+   at the secondary ΔT. The pipes below may carry a slightly different
+   figure if a load was given its own ΔT — Check compares the two. */
+function hxSecondaryFlow(n, secondaryKw) {
+  if (!n || n.type !== 'hx') return 0;
+  if (n.secBasis === 'flow') {
+    const v = parseFloat(n.secLps);
+    if (!isNaN(v) && v > 0) return v;
+  }
+  return flowFromKwAt(secondaryKw || 0, hxSecDT(n), hxSecTm(n));
 }
 
 /* ---------- what a node asks its feed for ----------
@@ -1598,7 +1669,7 @@ function nodeDemand(nodeId, seen) {
     const d = nodeDemand(s.down, seen);
     kw += d.kw; lps += d.lps; cnt += d.n;
   });
-  if (isSeparator(n)) return { kw, lps: sepPrimaryFlow(n, lps), n: cnt, secondaryLps: lps };
+  if (isSeparator(n)) return { kw, lps: sepPrimaryFlow(n, lps, kw), n: cnt, secondaryLps: lps };
   return { kw, lps, n: cnt };
 }
 
@@ -1675,9 +1746,9 @@ function polyLenPx(pts) {
    reads the way the system is actually described on site. */
 const NAMING_NOTE =
   'PM1, PM2 &hellip; primary mains from the plant &middot; SM1, SM2 &hellip; secondary mains from a '
-  + 'low loss header or a separating buffer &middot; SB1, SB2 &hellip; sub-mains that branch off a '
-  + 'main and still feed more than one load &middot; B1, B2 &hellip; branches into a load &middot; '
-  + 'a main or sub-main cut by a tee is numbered in sections from its own pump, PM1.1, PM1.2';
+  + 'low loss header, heat exchanger or separating buffer &middot; SB1, SB2 &hellip; sub-mains that '
+  + 'branch off a main and still feed more than one load &middot; B1, B2 &hellip; branches into a '
+  + 'load &middot; a main or sub-main cut by a tee is numbered in sections from its own pump, PM1.1, PM1.2';
 
 function autoNameRuns(quiet) {
   buildTree();
@@ -1909,6 +1980,13 @@ function volToggle() {
 
 /* A typed rate pins the load. Left at 0 it shares what remains of the plant
    stream after every pinned load has taken its figure. */
+function consumerDT(n) {
+  const own = parseFloat(n && n.dT);
+  if (!isNaN(own) && own > 0) return own;
+  const hx = n ? ancestorHx(n.id) : null;
+  return hx ? hxSecDT(hx) : S.settings.dT;
+}
+
 function consumerIsPinned(n) {
   if (!n || n.type !== 'consumer') return false;
   if (n.basis === 'lps') return (parseFloat(n.lps) || 0) > 0;
@@ -1917,7 +1995,9 @@ function consumerIsPinned(n) {
 function consumerFlowPinned(n) {
   if (!n || n.type !== 'consumer') return 0;
   if (n.basis === 'lps') return parseFloat(n.lps) || 0;
-  return flowFromKw(parseFloat(n.kw) || 0, parseFloat(n.dT) || S.settings.dT);
+  const hx = ancestorHx(n.id);
+  if (hx) return flowFromKwAt(parseFloat(n.kw) || 0, consumerDT(n), hxSecTm(hx));
+  return flowFromKw(parseFloat(n.kw) || 0, consumerDT(n));
 }
 function plantStreamLps(n) {
   if (!n || n.type !== 'source') return 0;
@@ -1934,11 +2014,44 @@ function plantStreamLps(n) {
 function sharePlantFlow() {
   S.nodes.forEach(n => { if (n.type === 'consumer') n.sharedLps = 0; });
   S.nodes.filter(n => n.type === 'source').forEach(src => {
-    const cons = subtreeConsumers(src.id);
+    /* Loads below a heat exchanger are on a different water — they must
+       not take a share of the plant stream. A header is the same water,
+       so those loads still share here. */
+    const cons = subtreeConsumers(src.id).filter(n => !ancestorHx(n.id));
     const free = cons.filter(n => !consumerIsPinned(n));
     if (!free.length) return;
     const pinnedLps = cons.filter(consumerIsPinned).reduce((s, n) => s + consumerFlowPinned(n), 0);
     const total = plantStreamLps(src);
+    const spare = total > 0 ? Math.max(0, total - pinnedLps) : 0;
+    const per = spare / free.length;
+    free.forEach(n => { n.sharedLps = per; });
+  });
+  /* Each heat exchanger has its own secondary stream. Unpinned loads
+     below it share that, the same way the plant side works. */
+  S.nodes.filter(n => n.type === 'hx').forEach(hx => {
+    const cons = [];
+    const seen = new Set();
+    const walk = (id) => {
+      if (id == null || seen.has(id)) return;
+      seen.add(id);
+      const n = nodeById(id);
+      if (n && n.type === 'consumer') cons.push(n);
+      S.segs.forEach(s => {
+        if (s.up !== id || s.down == null) return;
+        const dn = nodeById(s.down);
+        if (isSeparator(dn) && dn.id !== hx.id) return;
+        walk(s.down);
+      });
+    };
+    S.segs.forEach(s => { if (s.up === hx.id) walk(s.down); });
+    const free = cons.filter(n => !consumerIsPinned(n));
+    if (!free.length) return;
+    const pinnedLps = cons.filter(consumerIsPinned).reduce((s, n) => s + consumerFlowPinned(n), 0);
+    const pinnedKw = cons.filter(consumerIsPinned).reduce((s, n) => {
+      if (n.basis === 'lps') return s + kwFromFlowAt(parseFloat(n.lps) || 0, consumerDT(n), hxSecTm(hx));
+      return s + (parseFloat(n.kw) || 0);
+    }, 0);
+    const total = hxSecondaryFlow(hx, pinnedKw);
     const spare = total > 0 ? Math.max(0, total - pinnedLps) : 0;
     const per = spare / free.length;
     free.forEach(n => { n.sharedLps = per; });
@@ -1951,12 +2064,17 @@ function consumerFlow(n) {
 }
 function consumerKw(n) {
   if (!n || n.type !== 'consumer') return 0;
-  const dT = parseFloat(n.dT) || S.settings.dT;
+  const dT = consumerDT(n);
+  const hx = ancestorHx(n.id);
   if (consumerIsPinned(n)) {
-    if (n.basis === 'lps') return kwFromFlow(parseFloat(n.lps) || 0, dT);
+    if (n.basis === 'lps') {
+      return hx ? kwFromFlowAt(parseFloat(n.lps) || 0, dT, hxSecTm(hx))
+                : kwFromFlow(parseFloat(n.lps) || 0, dT);
+    }
     return parseFloat(n.kw) || 0;
   }
-  return kwFromFlow(parseFloat(n.sharedLps) || 0, dT);
+  return hx ? kwFromFlowAt(parseFloat(n.sharedLps) || 0, dT, hxSecTm(hx))
+            : kwFromFlow(parseFloat(n.sharedLps) || 0, dT);
 }
 
 /* Everything a segment has to carry. */
@@ -2222,8 +2340,10 @@ function assignGroups() {
            side is the end of that circuit — and opens a new one below. */
         dn.hgroup = gid;
         seen.add(dn.id);
-        const sub = { id: groups.length, sepId: dn.id, sepName: dn.name || 'Header',
-                      primaryOf: gid, label: 'Secondary off ' + (dn.name || 'header') };
+        const sub = { id: groups.length, sepId: dn.id,
+                      sepName: dn.name || (dn.type === 'hx' ? 'HX' : 'Header'),
+                      primaryOf: gid,
+                      label: 'Secondary off ' + (dn.name || (dn.type === 'hx' ? 'HX' : 'header')) };
         groups.push(sub);
         dn.subGroup = sub.id;
         S.segs.forEach(s2 => {
@@ -3199,6 +3319,7 @@ function drawPorts(g, n, k, picked) {
 
 function drawVessel(g, n, k, picked) {
   const llh = n.type === 'llh';
+  const hx = n.type === 'hx';
   const rot = nodeRot(n);
   const hf = nodeDrawHalf(n, k);
   const w = 2 * hf.hw / k, h = 2 * hf.hh / k;      // in on-screen units, for the text below
@@ -3214,8 +3335,17 @@ function drawVessel(g, n, k, picked) {
       rx: 5 * k, fill: 'none', stroke: 'var(--measure)', 'stroke-width': 2.5 * k }));
   }
   box.appendChild(mk('rect', { x: -hf.hw, y: -hf.hh, width: 2 * hf.hw, height: 2 * hf.hh,
-    rx: Math.min((llh ? 3 : 14) * k, hf.hw * 0.5), fill: 'var(--white)', 'fill-opacity': 0.94,
-    stroke: n.reached ? 'var(--graphite)' : 'var(--alarm)', 'stroke-width': 2 * k }));
+    rx: Math.min((llh ? 3 : hx ? 6 : 14) * k, hf.hw * 0.5), fill: 'var(--white)', 'fill-opacity': 0.94,
+    stroke: n.reached ? (hx ? 'var(--measure)' : 'var(--graphite)') : 'var(--alarm)', 'stroke-width': 2 * k }));
+  if (hx) {
+    // plates, so it does not read as a header or a buffer
+    const inset = hf.hw * 0.35;
+    for (let i = -2; i <= 2; i++) {
+      box.appendChild(mk('line', { x1: i * inset * 0.45, y1: -hf.hh + 4 * k,
+        x2: i * inset * 0.45, y2: hf.hh - 4 * k,
+        stroke: 'var(--measure)', 'stroke-width': 1.2 * k, opacity: 0.55 }));
+    }
+  }
   if (sep) {
     // the hydraulic break, drawn across the shell
     box.appendChild(mk('line', { x1: -hf.hw + 3 * k, y1: 0, x2: hf.hw - 3 * k, y2: 0,
@@ -3232,7 +3362,11 @@ function drawVessel(g, n, k, picked) {
   g.appendChild(mk('text', { x: n.x, y: y - 6 * k, 'text-anchor': 'middle',
     'font-size': 10 * k, 'font-weight': 700, 'font-family': 'Archivo, sans-serif',
     fill: 'var(--ink)' }, label));
-  const sub = llh
+  const sub = hx
+    ? ((hxKind(n) === 'shell' ? 'S&T' : 'plate') + '  '
+        + fmt(hxPriSup(n), 0) + '/' + fmt(hxPriRet(n), 0)
+        + ' \u2192 ' + fmt(hxSecSup(n), 0) + '/' + fmt(hxSecRet(n), 0))
+    : llh
     ? (n.shell && n.shell.pipe ? n.shell.pipe.nom + '  ' + fmt(n.shell.vPri, 2) + ' m/s' : 'header')
     : (fmt(parseFloat(n.litres) || 0, 0) + ' L' + (n.ports === 4 ? '  4-port' : '  in ' + (n.leg || 'return')));
   g.appendChild(mk('text', { x: n.x, y: y + (h + 15) * k, 'text-anchor': 'middle',
@@ -3241,7 +3375,7 @@ function drawVessel(g, n, k, picked) {
   if (sep) {
     g.appendChild(mk('text', { x: n.x, y: y + (h + 25) * k, 'text-anchor': 'middle',
       'font-size': 8 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
-      fill: 'var(--measure-ink, #8a5d00)' }, 'SEPARATES'));
+      fill: 'var(--measure-ink, #8a5d00)' }, hx ? 'SEPARATES \u2014 two waters' : 'SEPARATES'));
   }
   if (!n.reached) {
     g.appendChild(mk('text', { x: n.x, y: y - 16 * k, 'text-anchor': 'middle',
@@ -3329,6 +3463,7 @@ const TOOLS = [
   { id: 'source',   label: 'Plant',  key: 'P', icon: 'M3 4h14v12H3zM7 8h6v4H7z' },
   { id: 'llh',      label: 'Header', key: 'L', icon: 'M6 2h8v16H6zM6 6h8M6 14h8M2 5h4M2 15h4M14 5h4M14 15h4' },
   { id: 'buffer',   label: 'Buffer', key: 'U', icon: 'M5 5a5 3 0 0110 0v10a5 3 0 01-10 0zM5 5a5 3 0 0010 0' },
+  { id: 'hx',       label: 'HX',     key: 'X', icon: 'M3 4h14v12H3zM7 4v12M10 4v12M13 4v12' },
   { id: 'consumer', label: 'Load',   key: 'C', icon: 'M3 6h14v8H3zM6 6v8M10 6v8M14 6v8' },
   { id: 'trace',    label: 'Trace',  key: 'T', icon: 'M2 15l5-9 5 5 6-8' },
   { id: 'tee',      label: 'Tee',    key: 'J', icon: 'M2 12h16M10 12V4' },
@@ -3336,13 +3471,13 @@ const TOOLS = [
 ];
 
 /* Nothing can be placed or traced until the drawing has a scale. */
-const NEEDS_SCALE = ['tape', 'source', 'llh', 'buffer', 'consumer', 'trace', 'tee', 'valve'];
+const NEEDS_SCALE = ['tape', 'source', 'llh', 'buffer', 'hx', 'consumer', 'trace', 'tee', 'valve'];
 
 function buildRail() {
   const rail = el('rail');
   rail.innerHTML = '';
   TOOLS.forEach((t, i) => {
-    if (i === 2 || i === 4 || i === 8) rail.appendChild(document.createElement('hr'));
+    if (i === 2 || i === 4 || i === 9) rail.appendChild(document.createElement('hr'));
     const b = document.createElement('button');
     const locked = scaleNeeded() && NEEDS_SCALE.indexOf(t.id) >= 0;
     b.className = 'tool' + (tool === t.id ? ' on' : '');
@@ -3362,6 +3497,7 @@ const HINTS = {
   consumer: 'Click where the load sits. Drag empty paper to pan.',
   llh: 'Click where the header sits. Drag empty paper to pan.',
   buffer: 'Click where the buffer sits. Drag empty paper to pan.',
+  hx: 'Click where the heat exchanger sits. It always separates the circuits. Drag empty paper to pan.',
   trace: 'Start on a ringed point. Click corners; finish on another point.',
   pan: 'Drag to move around the drawing. Space also pans in any tool.',
   tape: 'Click along the route; click a corner to turn. Plan metres only.',
@@ -3541,7 +3677,7 @@ function addConsumer(p, from) {
    and which are secondary falls out of the tree — what arrives is the primary
    side, what leaves is the secondary — so nothing has to be declared. */
 function nextVesselName(type) {
-  const stem = type === 'llh' ? 'LLH' : 'Buffer';
+  const stem = type === 'llh' ? 'LLH' : type === 'hx' ? 'HX' : 'Buffer';
   let n = 0;
   S.nodes.forEach(x => {
     const m = String(x.name || '').match(new RegExp('^' + stem + '\\s*(\\d+)$'));
@@ -3603,6 +3739,41 @@ function addBuffer(p) {
   el('bv4s').addEventListener('click', () => place({ ports: 4, sep: true,
     primaryBasis: 'margin', marginPct: 10, primaryLps: 0 }));
   el('bv4c').addEventListener('click', () => place({ ports: 4, sep: false }));
+  return n;
+}
+
+/* A heat exchanger always separates: two waters, two pumps. Plate or
+   shell-and-tube is asked once so the resistance assumption and the
+   label are right from the start. Temps default to the project on the
+   primary and 10 K cooler on the secondary — they are edited on the
+   panel, not guessed here. */
+function addHX(p) {
+  const n = { id: nid(), type: 'hx', x: p.x, y: p.y, name: nextVesselName('hx'),
+    height: S.settings.plantHeight, kind: 'plate',
+    priSup: S.settings.supply, priRet: S.settings.ret,
+    secSup: S.settings.supply - 10, secRet: S.settings.ret - 10,
+    priBasis: 'duty', secBasis: 'duty', priLps: 0, secLps: 0, kpa: '' };
+  modal('What kind of heat exchanger?',
+      '<p style="margin-top:0">A heat exchanger is <strong>always a hydraulic break</strong>: '
+    + 'two waters, different temperatures, different flow rates, two pumps. Heat crosses; '
+    + 'pressure and volume flow do not. The primary and secondary duties never add.</p>'
+    + '<div class="note" style="margin-bottom:12px"><strong>Plate</strong> is the usual LTHW / '
+    + 'cooling interface &mdash; compact, assumed 15 kPa until a product is selected.<br><br>'
+    + '<strong>Shell and tube</strong> is the heavier machine, assumed 20 kPa. Either way you '
+    + 'set the four temperatures and, if you want, a flow on each side.</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    + '<button class="btn go" id="hxPlate">Plate heat exchanger</button>'
+    + '<button class="btn ghost" id="hxShell">Shell and tube</button></div>');
+  const place = (kind) => {
+    closeModal(true);
+    n.kind = kind;
+    pushUndo('add heat exchanger');
+    S.nodes.push(n);
+    select('node', n.id);
+    render();
+  };
+  el('hxPlate').addEventListener('click', () => place('plate'));
+  el('hxShell').addEventListener('click', () => place('shell'));
   return n;
 }
 
@@ -3711,7 +3882,8 @@ const SNAP_PX = 20;
 
 function nodeWord(n) {
   return n.type === 'source' ? 'plant' : n.type === 'consumer' ? 'load'
-       : n.type === 'llh' ? 'header' : n.type === 'buffer' ? 'buffer' : 'tee';
+       : n.type === 'llh' ? 'header' : n.type === 'buffer' ? 'buffer'
+       : n.type === 'hx' ? 'HX' : 'tee';
 }
 /* A component snaps at the place on it nearest the cursor, not at its
    middle — that is what lets two runs into the same load arrive at two
@@ -4147,11 +4319,13 @@ function openInspector() {
     if (!n) { closeInspector(); return; }
     el('insKind').textContent = n.type === 'source' ? 'Plant' : n.type === 'consumer' ? 'Load'
                               : n.type === 'llh' ? 'Low loss header'
+                              : n.type === 'hx' ? (hxKind(n) === 'shell' ? 'Shell and tube' : 'Plate heat exchanger')
                               : n.type === 'buffer' ? 'Buffer vessel' : 'Tee';
     el('insName').textContent = n.name || '\u2014';
     b.innerHTML = n.type === 'source' ? sourceForm(n)
                 : n.type === 'consumer' ? consumerForm(n)
                 : n.type === 'llh' ? llhForm(n)
+                : n.type === 'hx' ? hxForm(n)
                 : n.type === 'buffer' ? bufferForm(n) : junctionForm(n);
   } else {
     const sg = segById(sel.id);
@@ -4205,6 +4379,16 @@ function consumerForm(n) {
     +     '</label>'
     +   '<label class="fld"><span>&Delta;T <em>K</em></span><input type="number" data-f="dT" step="1" min="1" value="' + (n.dT || S.settings.dT) + '"></label>'
     + '</div>'
+    + ((() => {
+        const hx = ancestorHx(n.id);
+        return hx
+          ? '<div class="note">This load is on the <strong>secondary</strong> of '
+            + esc(hx.name || 'the heat exchanger') + ' at '
+            + fmt(hxSecSup(hx), 0) + '/' + fmt(hxSecRet(hx), 0)
+            + ' (' + fmt(hxSecDT(hx), 1) + ' K). Its &Delta;T is the secondary-side figure. '
+            + 'The exchanger separates the circuits &mdash; this water is not the plant water.</div>'
+          : '';
+      })())
     + '<label class="fld"><span>Coil pressure drop <em>kPa</em></span>'
     +   '<input type="number" data-f="coilKpa" step="1" min="0" value="' + (n.coilKpa || '') + '"></label>'
     + '<label class="fld"><span>Control valve</span><select data-f="valve">' + opts(VALVE_TYPES, n.valve) + '</select></label>'
@@ -4334,6 +4518,124 @@ function llhForm(n) {
     + rowBtns();
 }
 
+/* ---------- the heat exchanger ----------
+   Two waters. The four temperatures and the two flows are the whole of
+   the input; everything else is derived. It always separates, so there
+   is no "does it break the circuit?" switch — that question is a header
+   question, not this one. */
+function hxForm(n) {
+  const sec = sepSecondary(n);
+  const priLps = sepPrimaryFlow(n, sec.lps, sec.kw);
+  const secWant = hxSecondaryFlow(n, sec.kw);
+  const g = groupOf(n.subGroup);
+  const idx = g ? indexRunFor(g.id) : null;
+  const qPri = kwFromFlowAt(priLps, hxPriDT(n), hxPriTm(n));
+  const qSecOwn = kwFromFlowAt(secWant, hxSecDT(n), hxSecTm(n));
+  const mismatch = sec.kw > 0 && secWant > 0 && sec.lps > 0
+    ? Math.abs(sec.lps - secWant) / Math.max(secWant, sec.lps) : 0;
+  const heatGap = sec.kw > 0 && qPri > 0
+    ? Math.abs(qPri - sec.kw) / Math.max(qPri, sec.kw) : 0;
+
+  let flag = '';
+  if (!n.reached) {
+    flag = '<div class="note bad">Not connected to plant. Trace a run to it, or nothing below it is exported.</div>';
+  } else if (sec.lps <= 0) {
+    flag = '<div class="note bad">Nothing is connected on the secondary side, so there is no circuit to pump and no duty to size the primary against.</div>';
+  } else if (mismatch > 0.02) {
+    flag = '<div class="note warn">The secondary pipes are carrying <strong>' + fmtVol(sec.lps)
+      + '</strong> from the loads, but this exchanger at '
+      + fmt(hxSecSup(n), 0) + '/' + fmt(hxSecRet(n), 0) + ' wants <strong>' + fmtVol(secWant)
+      + '</strong> for the same heat. Align the load &Delta;Ts with the secondary, or pin the secondary flow.</div>';
+  } else if (heatGap > 0.02 && n.priBasis === 'flow') {
+    flag = '<div class="note warn">Primary flow at this &Delta;T is <strong>' + fmt(qPri, 1)
+      + ' kW</strong> against <strong>' + fmt(sec.kw, 1) + ' kW</strong> on the secondary. The heat has to balance.</div>';
+  } else {
+    flag = '<div class="note ok">Two waters, hydraulically separate. Heat crosses; pressure does not. '
+      + 'Primary ' + fmtVol(priLps) + ' at ' + fmt(hxPriDT(n), 1) + ' K &middot; secondary '
+      + fmtVol(secWant) + ' at ' + fmt(hxSecDT(n), 1) + ' K.</div>';
+  }
+
+  return ''
+    + '<div class="note">This exchanger <strong>always separates</strong> the circuits. Everything '
+    + 'past it is its own hydraulic circuit on its own pump, at its own temperatures. Runs leaving '
+    + 'it are numbered <strong>SM</strong>. The two pump duties are never added.</div>'
+    + '<label class="fld"><span>Name</span><input data-f="name" value="' + esc(n.name || '') + '"></label>'
+    + '<div class="row2">'
+    + '<label class="fld"><span>Kind</span><select data-f="kind">'
+    +   '<option value="plate"' + (hxKind(n) === 'plate' ? ' selected' : '') + '>Plate</option>'
+    +   '<option value="shell"' + (hxKind(n) === 'shell' ? ' selected' : '') + '>Shell and tube</option>'
+    + '</select></label>'
+    + '<label class="fld"><span>Height above finished floor <em>m</em></span>'
+    +   '<input type="number" data-f="height" step="0.1" value="' + heightOf(n) + '"></label>'
+    + '</div>'
+
+    + '<div class="sub-hd">Primary &mdash; plant side</div>'
+    + '<div class="row2">'
+    + '<label class="fld"><span>Flow <em>&deg;C</em></span>'
+    +   '<input type="number" data-f="priSup" step="1" value="' + hxPriSup(n) + '"></label>'
+    + '<label class="fld"><span>Return <em>&deg;C</em></span>'
+    +   '<input type="number" data-f="priRet" step="1" value="' + hxPriRet(n) + '"></label>'
+    + '</div>'
+    + '<label class="fld"><span>Primary flow</span><select data-f="priBasis">'
+    +   '<option value="duty"' + (n.priBasis !== 'flow' ? ' selected' : '') + '>From the duty at this &Delta;T</option>'
+    +   '<option value="flow"' + (n.priBasis === 'flow' ? ' selected' : '') + '>A figure I will give</option>'
+    + '</select></label>'
+    + (n.priBasis === 'flow'
+        ? '<label class="fld"><span>Primary flow <em>' + volLabel() + '</em> ' + volToggle() + '</span>'
+          + '<input type="number" data-vol="priLps" step="' + (volUnit() === 'm3h' ? '1' : '0.01') + '" value="'
+          + lpsToVol(n.priLps || 0).toFixed(volUnit() === 'm3h' ? 1 : 2) + '"></label>'
+        : '')
+
+    + '<div class="sub-hd">Secondary &mdash; load side</div>'
+    + '<div class="row2">'
+    + '<label class="fld"><span>Flow <em>&deg;C</em></span>'
+    +   '<input type="number" data-f="secSup" step="1" value="' + hxSecSup(n) + '"></label>'
+    + '<label class="fld"><span>Return <em>&deg;C</em></span>'
+    +   '<input type="number" data-f="secRet" step="1" value="' + hxSecRet(n) + '"></label>'
+    + '</div>'
+    + '<label class="fld"><span>Secondary flow</span><select data-f="secBasis">'
+    +   '<option value="duty"' + (n.secBasis !== 'flow' ? ' selected' : '') + '>From the duty at this &Delta;T</option>'
+    +   '<option value="flow"' + (n.secBasis === 'flow' ? ' selected' : '') + '>A figure I will give</option>'
+    + '</select></label>'
+    + (n.secBasis === 'flow'
+        ? '<label class="fld"><span>Secondary flow <em>' + volLabel() + '</em> ' + volToggle() + '</span>'
+          + '<input type="number" data-vol="secLps" step="' + (volUnit() === 'm3h' ? '1' : '0.01') + '" value="'
+          + lpsToVol(n.secLps || 0).toFixed(volUnit() === 'm3h' ? 1 : 2) + '"></label>'
+        : '')
+
+    + flag
+    + '<table class="mini">'
+    +   '<tr><td>Duty through it</td><td class="n">' + fmt(sec.kw, 1) + ' kW</td><td></td></tr>'
+    +   '<tr><td>Primary, ' + fmt(hxPriSup(n), 0) + '/' + fmt(hxPriRet(n), 0) + ' &nbsp;'
+      + fmt(hxPriDT(n), 1) + ' K</td><td class="n">' + fmtVol(priLps) + '</td>'
+      + '<td class="n">' + fmt(qPri, 1) + ' kW</td></tr>'
+    +   '<tr><td>Secondary, ' + fmt(hxSecSup(n), 0) + '/' + fmt(hxSecRet(n), 0) + ' &nbsp;'
+      + fmt(hxSecDT(n), 1) + ' K</td><td class="n">' + fmtVol(secWant) + '</td>'
+      + '<td class="n">' + fmt(qSecOwn, 1) + ' kW</td></tr>'
+    +   (sec.lps > 0 && mismatch > 0.005
+        ? '<tr><td>Secondary pipes, from the loads</td><td class="n">' + fmtVol(sec.lps) + '</td><td></td></tr>'
+        : '')
+    + '</table>'
+    + '<div class="note">The heat is the same on both sides. It is the flows that differ, because '
+    + 'the &Delta;Ts differ. A typed flow pins that side; leave it on duty and the rate follows '
+    + 'the loads.</div>'
+
+    + '<label class="fld"><span>Resistance through the exchanger <em>kPa</em></span>'
+    +   '<input type="number" data-f="kpa" step="0.5" placeholder="' + hxDefaultKpa(n) + ' assumed" value="'
+    +   (n.kpa === '' || n.kpa === undefined ? '' : n.kpa) + '"></label>'
+    + (vesselKpaAssumed(n)
+        ? '<div class="note">Using <strong>' + hxDefaultKpa(n) + ' kPa</strong>, an assumption until a '
+          + (hxKind(n) === 'shell' ? 'shell-and-tube' : 'plate') + ' exchanger is selected. It is on '
+          + 'the primary side of the circuit, not the secondary.</div>' : '')
+    + (idx
+        ? '<div class="note">Secondary index run: <strong>' + esc(idx.node.name || '') + '</strong> at '
+          + '<strong>' + fmt(idx.drop, 1) + ' kPa</strong>. That is the duty for this exchanger&rsquo;s '
+          + 'secondary pump &mdash; not added to the primary.</div>'
+        : '')
+    + placementFields(n)
+    + rowBtns();
+}
+
 /* ---------- the buffer ----------
    Volume is taken, not invented — but what that volume buys in run time is
    worked out and said, because a vessel that is too small for the plant it is
@@ -4413,10 +4715,10 @@ function bufferForm(n) {
 }
 
 /* ---------- turning and sizing a component ----------
-   The same block on the plant, the loads, the headers and the buffers,
-   because it is the same job on all four and it would be irritating to find
-   it in one place and not another. Quarter turns for the common case, a free
-   angle for the rest. */
+   The same block on the plant, the loads, the headers, the exchangers and
+   the buffers, because it is the same job on all of them and it would be
+   irritating to find it in one place and not another. Quarter turns for the
+   common case, a free angle for the rest. */
 function placementFields(n) {
   const rot = nodeRot(n), s = nodeScale(n), m = nodeSizeM(n);
   return '<div class="sub-hd">On the sheet</div>'
@@ -4870,7 +5172,9 @@ function wireInspector() {
       else obj[f] = (inp.type === 'number') ? (inp.value === '' ? 0 : parseFloat(inp.value)) : inp.value;
       /* Changing what a vessel is changes the whole panel and, if it is a
          separator, the numbering of everything below it. */
-      if (f === 'ports' || f === 'sep' || f === 'primaryBasis') { autoNameRuns(true); openInspector(); }
+      if (f === 'ports' || f === 'sep' || f === 'primaryBasis' || f === 'priBasis' || f === 'secBasis' || f === 'kind') {
+        autoNameRuns(true); openInspector();
+      }
       /* Turning or stretching a component moves its connection points, and
          every pipe joined to one has to come with it. */
       if (f === 'rot' || f === 'sizeXm' || f === 'sizeYm' || f === 'scale') reseatNode(obj);
@@ -4959,7 +5263,33 @@ function auditTrace() {
   const emptySep = S.nodes.filter(n => isSeparator(n) && n.reached && sepSecondary(n).lps <= 0);
   if (emptySep.length) add('sepempty', 'bad',
     emptySep.map(n => n.name).join(', ') + ' has nothing connected below it, so there is no secondary '
-    + 'flow to size the shell on and no secondary circuit to pump.', false);
+    + 'circuit to pump'
+    + (emptySep.some(n => n.type === 'llh') ? ' and no secondary flow to size the shell on' : '') + '.', false);
+
+  /* Heat has to balance across an exchanger. Different ΔTs are fine —
+     that is the point — but a typed flow that cannot carry the duty, or
+     load ΔTs that put a different rate on the secondary pipes, is a fault
+     worth seeing here rather than in the sizer. */
+  S.nodes.filter(n => n.type === 'hx' && n.reached).forEach(n => {
+    const sec = sepSecondary(n);
+    if (sec.kw <= 0) return;
+    const want = hxSecondaryFlow(n, sec.kw);
+    const pri = sepPrimaryFlow(n, sec.lps, sec.kw);
+    const qPri = kwFromFlowAt(pri, hxPriDT(n), hxPriTm(n));
+    if (want > 0 && sec.lps > 0 && Math.abs(sec.lps - want) / Math.max(want, sec.lps) > 0.02) {
+      add('hxflow', 'warn',
+        n.name + ' — secondary pipes carry ' + fmt(sec.lps, 3) + ' l/s from the loads, but the '
+        + 'exchanger at ' + fmt(hxSecSup(n), 0) + '/' + fmt(hxSecRet(n), 0) + ' wants '
+        + fmt(want, 3) + ' l/s for ' + fmt(sec.kw, 1) + ' kW. Align the load ΔTs with the '
+        + 'secondary, or pin the secondary flow.', false);
+    }
+    if (qPri > 0 && Math.abs(qPri - sec.kw) / Math.max(qPri, sec.kw) > 0.02) {
+      add('hxheat', 'warn',
+        n.name + ' — primary side is ' + fmt(qPri, 1) + ' kW at ' + fmt(hxPriDT(n), 1)
+        + ' K against ' + fmt(sec.kw, 1) + ' kW on the secondary. The heat through the '
+        + 'exchanger has to balance.', false);
+    }
+  });
 
   /* The flow rule. This is the one that quietly ruins a system: the primary
      carrying less than the secondaries take means reverse flow through the
@@ -5596,7 +5926,8 @@ function buildSizerProject() {
   const dropped = [];
   let next = 1;
 
-  const walk = (nodeId, parentCircuit) => {
+  const walk = (nodeId, parentCircuit, sideDT) => {
+    const dTnow = sideDT || S.settings.dT;
     S.segs.filter(s => s.up === nodeId).forEach(sg => {
       const down = nodeById(sg.down);
       const isCons = down && down.type === 'consumer';
@@ -5623,7 +5954,7 @@ function buildSizerProject() {
         fittingsMode: 'counted',
         fittingSchedule: singleLegSchedule(sg),
         fittings: Math.round(sg.equivPct) || 20,
-        dT: isCons ? (parseFloat(down.dT) || S.settings.dT) : S.settings.dT,
+        dT: isCons ? (parseFloat(down.dT) || dTnow) : dTnow,
         // the coil plus any valve on this run that holds a set differential
         consumerLoad: isCons
           ? +((parseFloat(down.coilKpa) || 0) + terminalValveKpa(sg)).toFixed(2) : 0,
@@ -5669,7 +6000,12 @@ function buildSizerProject() {
          chain rather than leaving it as a bare join means the secondary mains
          hang off the header rather than off the primary main that fed it, and
          the two sides can never be added together by accident. */
-      walk(down.id, isVessel(down) ? vesselCircuit(down, cid) : cid);
+      if (isVessel(down)) {
+        const nextDT = down.type === 'hx' ? hxSecDT(down) : dTnow;
+        walk(down.id, vesselCircuit(down, cid), nextDT);
+      } else {
+        walk(down.id, cid, dTnow);
+      }
     });
   };
 
@@ -5681,10 +6017,11 @@ function buildSizerProject() {
     const sep = isSeparator(n);
     const s = n.type === 'llh' ? (n.shell || llhShell(n)) : null;
     const sec = sepSecondary(n);
-    const pri = sep ? sepPrimaryFlow(n, sec.lps) : sec.lps;
+    const pri = sep ? sepPrimaryFlow(n, sec.lps, sec.kw) : sec.lps;
+    const secHx = n.type === 'hx' ? hxSecondaryFlow(n, sec.kw) : sec.lps;
     const c = {
       id: cid,
-      ref: n.name || (n.type === 'llh' ? 'LLH' : 'Buffer'),
+      ref: n.name || (n.type === 'llh' ? 'LLH' : n.type === 'hx' ? 'HX' : 'Buffer'),
       circuitType: 'main',
       parentId: parentCircuit,
       material: (n.material || S.settings.material),
@@ -5698,7 +6035,8 @@ function buildSizerProject() {
       shellLengthM: +(parseFloat(n.lengthM) || (n.type === 'llh' ? 1.0 : 0.5)).toFixed(2),
       lengthsPaired: false, lengthReturn: 0,
       fittingsMode: 'counted', fittingSchedule: {}, fittings: 0,
-      dT: S.settings.dT,
+      dT: n.type === 'hx' ? +hxPriDT(n).toFixed(2) : S.settings.dT,
+      secDT: n.type === 'hx' ? +hxSecDT(n).toFixed(2) : null,
       consumerLoad: 0,
       sizeOverride: n.step || 0,
       /* Where the primary's index run ends at this header, the header is the
@@ -5708,26 +6046,36 @@ function buildSizerProject() {
         r.group === (n.hgroup === undefined || n.hgroup === null ? 0 : n.hgroup) &&
         r.node && r.node.id === n.id),
       /* The one tick the sizer already had for this: size it on velocity
-         alone, to the header limit, rather than to a gradient. */
+         alone, to the header limit, rather than to a gradient. A heat
+         exchanger is not a header shell — do not LLH-size it. */
       isLLH: n.type === 'llh',
       /* Given explicitly rather than rolled up from below, because the
          primary carries the margin over the secondaries and the mains above
-         this take their flow from it. */
+         this take their flow from it. On an HX the figure is the heat at
+         the primary ΔT, not a header margin. */
       mode: 'fromFlow', lps: +pri.toFixed(3), kw: 0,
       hydraulicGroup: n.hgroup === null || n.hgroup === undefined ? 0 : n.hgroup,
       groupLabel: (groupOf(n.hgroup) || {}).label || 'Primary',
       /* What this vessel is, and what it does to the network. */
       vesselType: n.type,
+      vesselKind: n.type === 'hx' ? hxKind(n) : '',
       vesselLitres: +vesselLitres(n).toFixed(0),
       isSeparator: sep,
       opensGroup: sep ? n.subGroup : null,
       separatorKpa: +vesselKpa(n).toFixed(2),
       separatorKpaAssumed: vesselKpaAssumed(n),
       primaryLps: +pri.toFixed(3),
-      secondaryLps: +sec.lps.toFixed(3),
+      secondaryLps: +(n.type === 'hx' ? secHx : sec.lps).toFixed(3),
       marginPct: s ? +s.marginPct.toFixed(1) : null,
       ports: n.type === 'buffer' ? (n.ports || 2) : 4,
       bufferLeg: n.type === 'buffer' && n.ports !== 4 ? (n.leg || 'return') : '',
+      hxPriSup: n.type === 'hx' ? +hxPriSup(n) : null,
+      hxPriRet: n.type === 'hx' ? +hxPriRet(n) : null,
+      hxSecSup: n.type === 'hx' ? +hxSecSup(n) : null,
+      hxSecRet: n.type === 'hx' ? +hxSecRet(n) : null,
+      hxPriLps: n.type === 'hx' ? +pri.toFixed(3) : null,
+      hxSecLps: n.type === 'hx' ? +secHx.toFixed(3) : null,
+      hxKw: n.type === 'hx' ? +sec.kw.toFixed(2) : null,
     };
     circuits.push(c);
     return cid;
@@ -5802,10 +6150,12 @@ function buildSizerProject() {
       separators: S.nodes.filter(isSeparator).map(n => {
         const s = n.type === 'llh' ? (n.shell || llhShell(n)) : null;
         const sec = sepSecondary(n);
+        const pri = sepPrimaryFlow(n, sec.lps, sec.kw);
         return {
           name: n.name || '', type: n.type,
-          primaryLps: +sepPrimaryFlow(n, sec.lps).toFixed(3),
-          secondaryLps: +sec.lps.toFixed(3),
+          kind: n.type === 'hx' ? hxKind(n) : '',
+          primaryLps: +pri.toFixed(3),
+          secondaryLps: +(n.type === 'hx' ? hxSecondaryFlow(n, sec.kw) : sec.lps).toFixed(3),
           kw: +sec.kw.toFixed(2),
           marginPct: s ? +s.marginPct.toFixed(1) : null,
           shellDN: s && s.pipe ? s.pipe.nom : null,
@@ -5814,6 +6164,10 @@ function buildSizerProject() {
           reversed: s ? !!s.reversed : false,
           litres: +vesselLitres(n).toFixed(0),
           kpa: +vesselKpa(n).toFixed(2),
+          hxPriSup: n.type === 'hx' ? +hxPriSup(n) : null,
+          hxPriRet: n.type === 'hx' ? +hxPriRet(n) : null,
+          hxSecSup: n.type === 'hx' ? +hxSecSup(n) : null,
+          hxSecRet: n.type === 'hx' ? +hxSecRet(n) : null,
         };
       }),
       /* Vessels that do not separate still hold water and still resist. The
@@ -5825,14 +6179,14 @@ function buildSizerProject() {
     },
     /* Buffers, headers and their water, straight into the sizer's plant
        volumes — system volume, heat-up and expansion all have to see them. */
-    plantItems: S.nodes.filter(isVessel).map((n, i) => ({
+    plantItems: S.nodes.filter(n => isVessel(n) && n.type !== 'hx').map((n, i) => ({
       id: i + 1,
       name: n.name || VESSEL_TYPES[n.type],
       type: n.type === 'llh' ? 'llh' : 'buffer',
       litres: +vesselLitres(n).toFixed(0),
       lossW: '', qty: 1,
     })),
-    nextPlantId: S.nodes.filter(isVessel).length + 1,
+    nextPlantId: S.nodes.filter(n => isVessel(n) && n.type !== 'hx').length + 1,
   };
 }
 
@@ -5947,6 +6301,15 @@ function doExport() {
     + (idx ? '<div class="note">Index run ticked on the way over: '
         + esc(idx.chain.map(s => s.ref).join(' → ')) + ' → ' + esc(idx.node.name)
         + ', ' + fmt(idx.drop, 1) + ' kPa including the coil.</div>' : '')
+    + ((S.indexes || []).length > 1
+        ? '<div class="note">This job is <strong>hydraulically separated</strong>'
+          + (S.nodes.some(n => n.type === 'hx')
+              ? ' by a heat exchanger (two waters, different temperatures)' : '')
+          + (S.nodes.some(n => n.type === 'llh') ? ' by a low loss header' : '')
+          + (S.nodes.some(n => n.type === 'buffer' && isSeparator(n)) ? ' by a separating buffer' : '')
+          + '. The sizer will show <strong>' + S.indexes.length + ' pump duties</strong> side by '
+          + 'side &mdash; they are not added together.</div>'
+        : '')
     + valveNote
     + warn
     + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">'
@@ -6549,7 +6912,7 @@ function stepsDialog() {
      + 'no rise, not on the schedule.'],
     ['Place the plant, and give it a height', tick(done.plant),
      'The boiler, CHP, chiller or heat pump. Its height above finished floor is the datum the risers are measured from.'],
-    ['Put in the headers and buffers, if there are any', tick(S.nodes.some(isVessel)),
+    ['Put in the headers, heat exchangers and buffers, if there are any', tick(S.nodes.some(isVessel)),
      'A <strong>low loss header</strong> or a <strong>separating buffer</strong> breaks the job into '
      + 'more than one hydraulic circuit, each with its own pump. Everything past it is sized and '
      + 'costed on its own, and its losses stop there instead of being added to the primary &mdash; '
@@ -6558,6 +6921,9 @@ function stepsDialog() {
      + 'The header sizes itself on the primary flow at 0.4 m/s, and the primary is held above the '
      + 'secondary by a margin you set. Below the secondary and the header mixes the wrong way, so '
      + 'that is flagged on the drawing, in the panel and in Check.<br>'
+     + 'A <strong>plate or shell-and-tube heat exchanger</strong> always separates, and it is two '
+     + 'waters: set the flow and return on each side, and a flow rate if you have one. Heat crosses; '
+     + 'pressure and volume flow do not. The two pump duties are never added.<br>'
      + 'A <strong>two-port buffer</strong> sits in the flow or the return as a piece of the main and '
      + 'changes nothing hydraulically. A four-port one is asked which it is when you place it.'],
     ['Place the loads', tick(done.loads),
@@ -6962,14 +7328,18 @@ function build3D() {
        site and what makes it recognisable from any angle in here. */
     if (isVessel(n)) {
       const sep = isSeparator(n);
-      const tall = n.type === 'llh' ? 1.9 : 1.5;
-      cuboid3D(c, bs * 0.8, bs * 0.8, bs * tall * zk,
+      const hx = n.type === 'hx';
+      const tall = n.type === 'llh' ? 1.9 : hx ? 0.85 : 1.5;
+      cuboid3D(c, bs * (hx ? 1.35 : 0.8), bs * (hx ? 0.7 : 0.8), bs * tall * zk,
         sep ? '#fdf3dd' : '#ffffff', n.reached ? (sep ? '#b07d12' : '#4a5059') : '#bb3b2e')
         .forEach(f => items.push(f));
       if (V3.labels) labels.push({
         at: { X: c.X, Y: c.Y, Z: c.Z + bs * tall * 0.6 * zk },
         text: String(n.name || ''),
-        sub: (n.type === 'llh' && n.shell && n.shell.pipe ? n.shell.pipe.nom + '  ' : '')
+        sub: (hx ? ((hxKind(n) === 'shell' ? 'S&T  ' : 'plate  ')
+                    + fmt(hxPriSup(n), 0) + '/' + fmt(hxPriRet(n), 0)
+                    + ' \u2192 ' + fmt(hxSecSup(n), 0) + '/' + fmt(hxSecRet(n), 0) + '  ')
+                 : (n.type === 'llh' && n.shell && n.shell.pipe ? n.shell.pipe.nom + '  ' : ''))
              + fmt(z, 2) + ' m',
       });
       return;
@@ -7338,6 +7708,7 @@ function applyToolPointer(ev, p) {
   if (tool === 'source')   { addSource(p);   setTool('select'); return; }
   if (tool === 'llh')      { addLLH(p);      setTool('select'); return; }
   if (tool === 'buffer')   { addBuffer(p);   setTool('select'); return; }
+  if (tool === 'hx')       { addHX(p);       setTool('select'); return; }
   if (tool === 'consumer') { addConsumer(p); setTool('select'); return; }
 
   if (tool === 'trace') {

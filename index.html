@@ -1603,10 +1603,10 @@
     <div id="pumpContent" style="display:none">
 
       <!-- Hydraulic separation: one pump per circuit.
-           Only shown when the project has a low loss header or a separating
-           buffer in it. The panel below stays the plantroom pump; this says
-           what else has to be selected and makes it plain that the figures
-           are not to be added together. -->
+           Only shown when the project has a low loss header, a heat
+           exchanger or a separating buffer in it. The panel below stays
+           the plantroom pump; this says what else has to be selected and
+           makes it plain that the figures are not to be added together. -->
       <div id="pumpGroups" style="display:none;margin-bottom:20px"></div>
 
       <!-- Index run breakdown table -->
@@ -2779,13 +2779,17 @@ function rootCircuits()  { return circuits.filter(x => x.parentId === null || x.
 // Guards against a malformed tree looping back on itself.
 /* ============================================================
    HYDRAULIC GROUPS
-   A low loss header or a separating buffer breaks the system into more
-   than one circuit, each with its own pump. Pipe Trace works out which
-   run belongs to which and sends the group with every circuit, so the
-   grouping is read here rather than re-derived from a topology that no
-   longer shows the separation.
+   A low loss header, a heat exchanger or a separating buffer breaks the
+   system into more than one circuit, each with its own pump. Pipe Trace
+   works out which run belongs to which and sends the group with every
+   circuit, so the grouping is read here rather than re-derived from a
+   topology that no longer shows the separation.
 
-   A project without a header has one group, numbered 0, and everything
+   A heat exchanger is two waters: the primary group uses the plant
+   temperatures, the secondary group uses the exchanger's secondary pair.
+   The duties are never added.
+
+   A project without a separator has one group, numbered 0, and everything
    below behaves exactly as it always did.
    ============================================================ */
 function circuitGroup(c) {
@@ -3689,6 +3693,11 @@ function ownDutyKw(c) {
    sum of what is behind it. Walking through it would drop the margin and
    size every primary main for the secondary flow. */
 function separatorDutyKw(c) {
+  /* A heat exchanger writes the duty it is transferring. Prefer that over
+     reconstructing it from the sizer's single ρ/cp, which is the plant
+     mean and not always the primary-side mean. */
+  const hx = parseFloat(c && c.hxKw);
+  if (!isNaN(hx) && hx > 0) return hx;
   const cp = parseFloat(document.getElementById('cp').value) || 4.182;
   const rho = parseFloat(document.getElementById('rho').value) || 999;
   const dT = Math.abs(parseFloat(c.dT) || 0);
@@ -4950,10 +4959,12 @@ function renderPumpGroups(primaryGroup) {
     + '<div class="card-title" style="font-size:11px;margin-bottom:10px">This system has '
     + rows.length + ' hydraulic circuits &mdash; one pump each</div>'
     + '<div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:14px">'
-    + 'A low loss header separates what is either side of it. The primary pump takes the plant to the '
-    + 'header and no further; each secondary pump starts again from it. <strong style="color:var(--ink)">'
-    + 'These duties are not added together</strong> &mdash; each is a machine to select on its own. '
-    + 'The panel below is the primary, and carries the plant-side resistances and the static head.'
+    + 'A low loss header or a heat exchanger separates what is either side of it. The primary pump '
+    + 'takes the plant to that device and no further; each secondary pump starts again from it. '
+    + 'A heat exchanger is two waters &mdash; different temperatures, different flows. '
+    + '<strong style="color:var(--ink)">These duties are not added together</strong> &mdash; each is '
+    + 'a machine to select on its own. The panel below is the primary, and carries the plant-side '
+    + 'resistances and the static head.'
     + '</div>'
     + '<div style="overflow-x:auto"><table class="circuits-table" style="min-width:640px"><thead><tr>'
     + '<th>Circuit</th><th>Index run ends at</th><th class="derived">Flow (l/s)</th>'
@@ -5461,11 +5472,12 @@ function exportPDFReport() {
           + '<td class="n">' + l.toFixed(1) + '</td><td class="n">' + duty.toFixed(1) + '</td>'
           + '<td class="n">' + ((duty * 1000) / (rho * 9.81)).toFixed(2) + '</td></tr>';
       }).join('');
-      sepSection = '<p><strong>This system is hydraulically separated.</strong> A low loss header or '
-        + 'separating buffer divides it into circuits that each need their own pump. The duties below '
-        + 'are not additive &mdash; each is a machine selected on its own. Plant-side resistances and '
-        + 'static head apply to the primary only; a secondary circulates inside the building and sees '
-        + 'neither. The breakdown that follows is the primary.</p>'
+      sepSection = '<p><strong>This system is hydraulically separated.</strong> A low loss header, '
+        + 'heat exchanger or separating buffer divides it into circuits that each need their own pump. '
+        + 'A heat exchanger is two waters: heat crosses, pressure and volume flow do not. The duties '
+        + 'below are not additive &mdash; each is a machine selected on its own. Plant-side resistances '
+        + 'and static head apply to the primary only; a secondary circulates inside the building and '
+        + 'sees neither. The breakdown that follows is the primary.</p>'
         + '<table class="rpt"><thead><tr><th>Circuit</th><th>Index ends at</th><th class="n">Flow l/s</th>'
         + '<th class="n">Pipe kPa</th><th class="n">Terminal kPa</th><th class="n">Duty +' + safetyPct
         + '% kPa</th><th class="n">m head</th></tr></thead><tbody>' + rows + '</tbody></table>';
@@ -5506,6 +5518,16 @@ function exportPDFReport() {
     const llhV = parseFloat(document.getElementById('llhVMax').value)||0.4;
     findings.push(llhCircuits.length+' circuit(s) sized as low loss header(s) to \u2264'+llhV+' m/s: '+escHtml(llhCircuits.map(c=>c.ref).join(', '))+'.');
   }
+  const hxCircuits = circuits.filter(c => c.vesselType === 'hx' && c.isSeparator);
+  if (hxCircuits.length > 0) {
+    findings.push(hxCircuits.length + ' heat exchanger(s) hydraulically separate the system (two waters; duties not added): '
+      + escHtml(hxCircuits.map(c => {
+          const kind = c.vesselKind === 'shell' ? 'S&T' : 'plate';
+          return (c.ref || 'HX') + ' ' + kind
+            + (c.hxPriSup != null ? ' ' + c.hxPriSup + '/' + c.hxPriRet
+              + ' \u2192 ' + c.hxSecSup + '/' + c.hxSecRet : '');
+        }).join(', ')) + '.');
+  }
   const findingsList = findings.map(f=>'<li>'+f+'</li>').join('') || '<li>No circuits populated.</li>';
 
   // Schedule
@@ -5516,7 +5538,7 @@ function exportPDFReport() {
     const stc = r.status==='ok'?'#1f7a4c':'#c74418';
     const instKgM = r.weights.combined_kg_per_m * (1 + upliftPct/100);
     const instKg  = r.weights.combined_kg_total * (1 + upliftPct/100);
-    return '<tr><td>'+escHtml(c.ref)+(c.isIndex?' <span class="tag">INDEX</span>':'')+(c.isLLH?' <span class="tag">LLH</span>':'')+'</td>'
+    return '<tr><td>'+escHtml(c.ref)+(c.isIndex?' <span class="tag">INDEX</span>':'')+(c.isLLH?' <span class="tag">LLH</span>':'')+(c.vesselType==='hx'?' <span class="tag">HX</span>':'')+'</td>'
       + '<td>'+escHtml(MAT_LABEL[c.material])+'</td>'
       + '<td class="n">'+r.kw.toFixed(1)+'</td><td class="n">'+c.dT+'</td><td class="n">'+r.vflow_ls.toFixed(2)+'</td>'
       + '<td class="n"><strong>'+(rec?rec.nom:'\u2014')+'</strong></td><td class="n">'+(rec?rec.id_mm.toFixed(1):'\u2014')+'</td>'
@@ -6011,6 +6033,8 @@ function applyProjectData(data, opts) {
     // Restore circuits (backfill any fields added since the file was written)
     circuits = migrateLengths(data.circuits.map(cc => Object.assign({
       length: 20, fittings: 20, isIndex: false, consumerLoad: 0, isLLH: false, sizeOverride: 0,
+      isSeparator: false, vesselType: '', vesselKind: '', hxKw: 0,
+      hxPriSup: null, hxPriRet: null, hxSecSup: null, hxSecRet: null,
     }, cc)));
     nextId = data.nextId || (circuits.length + 1);
     plantItems = Array.isArray(data.plantItems) ? data.plantItems : [];
