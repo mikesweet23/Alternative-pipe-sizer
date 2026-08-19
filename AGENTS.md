@@ -18,6 +18,7 @@ Source-level checks (no browser):
 node tests/concept-fourpipe-test.mjs
 node tests/concept-pump-snap-test.mjs
 node tests/concept-snap-trace-test.mjs
+node tests/concept-cooler-offload-test.mjs
 ```
 
 Concept is schematic: after tracing a run, type **Installed length** on that run. Check fails with "do not reach" / "no size" when a click near a load did not actually join — finish on the ringed edge of the box, not a free point beside it. Corners lock to 90°/45°; Alt frees one hop.
@@ -27,3 +28,5 @@ Trace opens **Two pipes / Single pipe** as soon as the tool is armed. Hover a ru
 Several chillers or boilers on one header are one primary (duty / assist / standby on the plant). An inline **Pump** (`K`) shows indicative flow, index head and absorbed kW; an inline **Cooler** (`Y`) sits in the line and does not open a new circuit.
 
 A two-port buffer is in the line: click the edge ring to finish, then start again from the far side. The load past it still sits on that pipe. A second run onto the same load (return, or flow through the buffer) is the other leg, not a loop.
+
+A dry cooler with one run is an off-loader (3-port on the return). The branch sizes from reject kW, or from the circuit if that box is empty. It is not another plant load and Check must not say "no load".
