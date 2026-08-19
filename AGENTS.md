@@ -17,10 +17,13 @@ Source-level checks (no browser):
 ```bash
 node tests/concept-fourpipe-test.mjs
 node tests/concept-pump-snap-test.mjs
+node tests/concept-snap-trace-test.mjs
 ```
 
 Concept is schematic: after tracing a run, type **Installed length** on that run. Check fails with "do not reach" / "no size" when a click near a load did not actually join — finish on the ringed edge of the box, not a free point beside it. Corners lock to 90°/45°; Alt frees one hop.
 
+Trace opens **Two pipes / Single pipe** as soon as the tool is armed. Hover a run for branch dots (a pair shows flow and return). Click the edge ring on a load or vessel to connect and drop the pencil. Double-click empty paper to zoom in on that spot. There is no Tee tool and no automatic terminal set.
+
 Several chillers or boilers on one header are one primary (duty / assist / standby on the plant). An inline **Pump** (`K`) shows indicative flow, index head and absorbed kW; an inline **Cooler** (`Y`) sits in the line and does not open a new circuit.
 
-A two-port buffer is in the line: click through it while tracing. The load past it still sits on that pipe. A second run onto the same load (return, or flow through the buffer) is the other leg, not a loop.
+A two-port buffer is in the line: click the edge ring to finish, then start again from the far side. The load past it still sits on that pipe. A second run onto the same load (return, or flow through the buffer) is the other leg, not a loop.
