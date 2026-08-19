@@ -278,22 +278,40 @@
     font-family: 'Azeret Mono', monospace; font-size: 11.5px; color: var(--muted);
   }
 
-  /* the running instruction while a tool is armed */
+  /* the running instruction while a tool is armed
+     left AND right are set so the bar is centred with width:fit-content.
+     left:50% plus a wrap made a tall block over the drawing that swallowed clicks. */
   .hint {
-    position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 7;
+    position: absolute; left: 12px; right: 12px; top: 12px; z-index: 7;
+    width: fit-content; max-width: calc(100% - 24px); margin: 0 auto;
     background: var(--graphite); color: var(--paper); padding: 8px 15px;
     border-radius: 4px; font-size: 12.5px; box-shadow: 0 4px 18px rgba(0,0,0,.25);
-    display: none; align-items: center; gap: 12px; max-width: calc(100% - 24px);
+    display: none; align-items: center; gap: 12px; flex-wrap: wrap;
   }
   .hint.on { display: flex; }
   .hint kbd {
     font-family: 'Azeret Mono', monospace; font-size: 10.5px; background: #3b424e;
     padding: 2px 6px; border-radius: 3px; color: #dfe4ea;
   }
+  .hint .hfin {
+    display: none; background: var(--measure); color: #241a00; border: none;
+    border-radius: 3px; padding: 5px 12px; font-weight: 700; font-size: 12px; white-space: nowrap;
+  }
+  .hint .hfin:hover { background: #eeb43a; }
+  .hint.drawing .hfin { display: inline-block; }
+  .hint.alt .hfin { background: rgba(0,0,0,.25); color: #241a00; }
   .hint .x { background: none; border: none; color: #98a0ad; font-size: 15px; padding: 0 2px; }
   .hint .x:hover { color: #fff; }
   .hint .hopt { display: none; align-items: center; gap: 6px; font-size: 11.5px; color: #cdd3dc; white-space: nowrap; }
   .hint.trace .hopt { display: flex; }
+  .hint.tape .hopt { display: flex; }
+  #hintAngle {
+    font-family: 'Azeret Mono', monospace; font-size: 11.5px; font-weight: 600;
+    background: rgba(255,255,255,.10); border-radius: 3px; padding: 3px 7px; min-width: 56px;
+    justify-content: center;
+  }
+  #hintAngle.free { background: var(--measure); color: #241a00; }
+  .hint.alt #hintAngle.free { background: rgba(0,0,0,.22); color: #241a00; }
   /* while the override key is down, so it is obvious the rules have changed */
   .hint.alt { background: var(--measure); color: #241a00; }
   .hint.alt kbd { background: rgba(0,0,0,.16); color: #241a00; }
@@ -517,6 +535,13 @@
   }
   .segbtn button:hover { background: var(--paper-2); }
   .segbtn button.on { background: var(--measure); color: #241a00; font-weight: 600; }
+  .fld .segbtn { display: inline-flex; vertical-align: middle; text-transform: none; letter-spacing: 0; }
+  .fld .segbtn button { text-transform: none; letter-spacing: 0; height: 26px; padding: 0 8px; font-size: 11px; min-height: 0; }
+  .hpts { display: flex; flex-direction: column; gap: 4px; }
+  .hpt { display: grid; grid-template-columns: 22px 1fr auto 22px; gap: 6px; align-items: center; font-size: 12px; }
+  .hpt .ix { font-family: 'Azeret Mono', monospace; font-size: 10px; color: var(--muted); }
+  .hpt .rise { font-family: 'Azeret Mono', monospace; font-size: 11px; color: var(--ink-soft); }
+  .hpt button { background: none; border: none; color: var(--muted); font-size: 16px; padding: 0; min-height: 0; }
   .three-stage { position: relative; flex: 1; min-height: 0; background: var(--paper-2); }
   #threeCv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
   #threeCv.down { cursor: grabbing; }
@@ -619,8 +644,10 @@
 
       <div class="hint" id="hint">
         <span id="hintTxt"></span>
-        <label class="hopt" title="Corners pull to 90° and 45°. Hold Alt for a free angle.">
+        <label class="hopt" title="On, corners lock to horizontal, vertical and 45°. Off, every corner is a free angle. Hold Alt to flip it for one click.">
           <input type="checkbox" id="orthoChk" checked> Square up <kbd>O</kbd></label>
+        <span class="hopt" id="hintAngle" title="The angle of the leg you are drawing"></span>
+        <button class="hfin" id="hintFin" title="End here (or double-click, or press Enter)">Finish</button>
         <button class="x" id="hintX" title="Cancel">&times;</button>
       </div>
 
@@ -1140,6 +1167,8 @@ const S = {
      along it, as a fraction of the run's length, so it stays where it was put
      when a node is dragged or a corner is added. */
   items: [],                 // { id, type, seg, t, leg, tag, kpa?, note? }
+  /* Plan-only tape measures. Not a pipe, no rise, not on the schedule. */
+  measures: [],              // { id, pts:[{x,y}], name, ref, note }
   nextId: 1,
   index: null,               // the critical path, refreshed by every solve
   /* One hydraulic circuit per pump: the primary, and one below each header or
@@ -1180,6 +1209,8 @@ const S = {
     plantHeight: 1.0,            // default heights above finished floor
     mainHeight: 3.5,
     loadHeight: 2.5,
+    /* How flow is typed and shown. Always stored as l/s. */
+    volUnit: 'lps',              // 'lps' | 'm3h'
   },
   setupDone: false,
 };
@@ -1204,7 +1235,7 @@ let undoSuspended = false;
    loaded cannot turn the new one. */
 function undoSnapshot() {
   return JSON.stringify({
-    nodes: S.nodes, segs: S.segs, items: S.items, nextId: S.nextId,
+    nodes: S.nodes, segs: S.segs, items: S.items, measures: S.measures, nextId: S.nextId,
     imgRot: imgRot(), imgTok: S.img ? S.img.tok : null,
   });
 }
@@ -1226,7 +1257,8 @@ function undo() {
   const step = undoStack.pop();
   if (!step) { toast('Nothing to undo'); return; }
   const d = JSON.parse(step.state);
-  S.nodes = d.nodes; S.segs = d.segs; S.items = d.items || []; S.nextId = d.nextId;
+  S.nodes = d.nodes; S.segs = d.segs; S.items = d.items || [];
+  S.measures = d.measures || []; S.nextId = d.nextId;
   draft = null; sel = null;
   closeInspector();
   refreshUndoBtn();
@@ -1384,27 +1416,36 @@ function portPoint(n, port) {
   return { x: n.x + lx * cs - ly * sn, y: n.y + lx * sn + ly * cs };
 }
 
-/* Where a point on the sheet lands on a component: pulled to the nearest
-   place on its outline, so a pipe stops at the edge rather than running in
-   under the name. */
-function portAt(n, p) {
+/* Where a point on the sheet lands on a component, in the unit's own frame.
+   Resolved against the TRUE footprint, never the zoomed-out legible box —
+   otherwise the connection would slide as you zoomed and every length would
+   move with it. null is the centre: old files, and the centre magnet. */
+function portAt(n, p, opts) {
+  opts = opts || {};
   const h = nodeHalfPx(n);
   if (!h) return null;
   const r = -nodeRot(n) * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
   const dx = p.x - n.x, dy = p.y - n.y;
   const lx = dx * cs - dy * sn, ly = dx * sn + dy * cs;
   let u = clamp(lx / h.hw, -1, 1), v = clamp(ly / h.hh, -1, 1);
-  // whichever edge it is closest to is the one it goes on
-  if ((1 - Math.abs(u)) <= (1 - Math.abs(v))) u = u < 0 ? -1 : 1;
-  else v = v < 0 ? -1 : 1;
+  /* Click in the middle of the box and it is "just connect it". */
+  if (opts.magnet !== false && Math.abs(u) < 0.18 && Math.abs(v) < 0.18) return null;
+  /* Dragging a ring stays on the outline. A click to connect keeps the
+     landing as a fraction of the box, so a stub on the side or the end is
+     where you pointed, not always the centre. */
+  if (opts.edge) {
+    if ((1 - Math.abs(u)) <= (1 - Math.abs(v))) u = u < 0 ? -1 : 1;
+    else v = v < 0 ? -1 : 1;
+  }
   return { u: +u.toFixed(4), v: +v.toFixed(4) };
 }
 
-/* How far p is from the component itself — nothing if it is inside it. Used
-   for snapping, so clicking anywhere on a stretched box connects to it. */
+/* How far p is from the component as drawn — the visible box, so clicking
+   anywhere on a zoomed-out load still picks it up. The landing itself is
+   then resolved on the true footprint. */
 function distToNode(n, p) {
-  const h = nodeHalfPx(n);
-  if (!h) return dist(n, p);
+  if (!n || n.type === 'junction') return n ? dist(n, p) : Infinity;
+  const h = nodeDrawHalf(n);
   const r = -nodeRot(n) * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
   const dx = p.x - n.x, dy = p.y - n.y;
   const lx = Math.abs(dx * cs - dy * sn), ly = Math.abs(dx * sn + dy * cs);
@@ -1428,6 +1469,57 @@ function reseatSeg(sg) {
 function reseatNode(n) {
   if (!n) return;
   S.segs.forEach(sg => { if (sg.a === n.id || sg.b === n.id) reseatSeg(sg); });
+}
+
+/* A plant, load, header or buffer — a casing with a real footprint. Not a
+   tee and not an open end. */
+function isUnitCasing(n) {
+  return n && (n.type === 'source' || n.type === 'consumer' || n.type === 'llh' || n.type === 'buffer');
+}
+function isCardinalLeg(a, b) {
+  return Math.abs(a.x - b.x) < 0.8 || Math.abs(a.y - b.y) < 0.8;
+}
+function squareCorner(from, to) {
+  const dx = Math.abs(to.x - from.x), dy = Math.abs(to.y - from.y);
+  if (dx >= dy) return { x: to.x, y: from.y };
+  return { x: from.x, y: to.y };
+}
+/* Last hop onto a casing stays horizontal or vertical. If the landing is
+   off the last corner, an existing stub is slid or one is inserted so the
+   rest of the run is not pulled off-square. Joints and open ends are left
+   alone. */
+function squareIntoUnit(pts, endIdx, n) {
+  if (!isUnitCasing(n) || !pts || pts.length < 2) return;
+  const atStart = endIdx === 0;
+  const end = pts[endIdx];
+  const prevIdx = atStart ? 1 : pts.length - 2;
+  const prev = pts[prevIdx];
+  if (!prev || isCardinalLeg(prev, end)) return;
+  if (dist(prev, end) < stubPx() * 0.25) return;
+  const backIdx = atStart ? 2 : pts.length - 3;
+  const back = pts[backIdx];
+  if (back && isCardinalLeg(back, prev)) {
+    const slid = squareCorner(back, end);
+    prev.x = slid.x; prev.y = slid.y;
+    return;
+  }
+  pts.splice(atStart ? 1 : pts.length - 1, 0, squareCorner(prev, end));
+}
+/* Put every section's ends back where its units say they are. Called at the
+   start of solve(), so moving, resizing or turning a unit carries its
+   pipework with it. */
+function syncSegEnds() {
+  S.segs.forEach(sg => {
+    if (!sg.pts || sg.pts.length < 2) return;
+    reseatSeg(sg);
+  });
+  if (S.settings.ortho !== false) {
+    S.segs.forEach(sg => {
+      if (!sg.pts || sg.pts.length < 2) return;
+      squareIntoUnit(sg.pts, 0, nodeById(sg.a));
+      squareIntoUnit(sg.pts, sg.pts.length - 1, nodeById(sg.b));
+    });
+  }
 }
 
 function isVessel(n)   { return !!n && (n.type === 'llh' || n.type === 'buffer'); }
@@ -1775,15 +1867,76 @@ function subtreeConsumers(nodeId, seen) {
   return list;
 }
 
-function consumerFlow(n) {
+/* ---------- litres per second and cubic metres per hour ----------
+   Flow is always stored as l/s. The toggle is only how the number is typed
+   and shown. 1 l/s = 3.6 m³/h. */
+const M3H_PER_LPS = 3.6;
+function volUnit() { return S.settings.volUnit === 'm3h' ? 'm3h' : 'lps'; }
+function lpsToVol(lps) { return (parseFloat(lps) || 0) * (volUnit() === 'm3h' ? M3H_PER_LPS : 1); }
+function volToLps(v) { return (parseFloat(v) || 0) / (volUnit() === 'm3h' ? M3H_PER_LPS : 1); }
+function volLabel() { return volUnit() === 'm3h' ? 'm\u00b3/h' : 'l/s'; }
+function fmtVol(lps, d) {
+  const dec = d === undefined ? (volUnit() === 'm3h' ? 0 : 2) : d;
+  return fmt(lpsToVol(lps), dec) + ' ' + volLabel();
+}
+function volToggle() {
+  const u = volUnit();
+  return '<span class="segbtn" role="group" aria-label="Flow volume unit">'
+    + '<button type="button" data-volunit="lps"' + (u === 'lps' ? ' class="on"' : '') + '>l/s</button>'
+    + '<button type="button" data-volunit="m3h"' + (u === 'm3h' ? ' class="on"' : '') + '>m\u00b3/h</button>'
+    + '</span>';
+}
+
+/* A typed rate pins the load. Left at 0 it shares what remains of the plant
+   stream after every pinned load has taken its figure. */
+function consumerIsPinned(n) {
+  if (!n || n.type !== 'consumer') return false;
+  if (n.basis === 'lps') return (parseFloat(n.lps) || 0) > 0;
+  return (parseFloat(n.kw) || 0) > 0;
+}
+function consumerFlowPinned(n) {
   if (!n || n.type !== 'consumer') return 0;
   if (n.basis === 'lps') return parseFloat(n.lps) || 0;
   return flowFromKw(parseFloat(n.kw) || 0, parseFloat(n.dT) || S.settings.dT);
 }
+function plantStreamLps(n) {
+  if (!n || n.type !== 'source') return 0;
+  const typed = parseFloat(n.streamLps);
+  if (!isNaN(typed) && typed > 0) return typed;
+  const kw = parseFloat(n.kw) || 0;
+  if (kw > 0) return flowFromKw(kw, n.dT || S.settings.dT);
+  return 0;
+}
+/* Unpinned loads (and take-offs left at 0) share what is left after anything
+   pinned. Each run then rolls up what it carries — own load plus everything
+   downstream — and is not overwritten with the plant total. Flow and return
+   on a paired run are the same volume twice, not one pot split in half. */
+function sharePlantFlow() {
+  S.nodes.forEach(n => { if (n.type === 'consumer') n.sharedLps = 0; });
+  S.nodes.filter(n => n.type === 'source').forEach(src => {
+    const cons = subtreeConsumers(src.id);
+    const free = cons.filter(n => !consumerIsPinned(n));
+    if (!free.length) return;
+    const pinnedLps = cons.filter(consumerIsPinned).reduce((s, n) => s + consumerFlowPinned(n), 0);
+    const total = plantStreamLps(src);
+    const spare = total > 0 ? Math.max(0, total - pinnedLps) : 0;
+    const per = spare / free.length;
+    free.forEach(n => { n.sharedLps = per; });
+  });
+}
+function consumerFlow(n) {
+  if (!n || n.type !== 'consumer') return 0;
+  if (consumerIsPinned(n)) return consumerFlowPinned(n);
+  return parseFloat(n.sharedLps) || 0;
+}
 function consumerKw(n) {
   if (!n || n.type !== 'consumer') return 0;
-  if (n.basis === 'lps') return kwFromFlow(parseFloat(n.lps) || 0, parseFloat(n.dT) || S.settings.dT);
-  return parseFloat(n.kw) || 0;
+  const dT = parseFloat(n.dT) || S.settings.dT;
+  if (consumerIsPinned(n)) {
+    if (n.basis === 'lps') return kwFromFlow(parseFloat(n.lps) || 0, dT);
+    return parseFloat(n.kw) || 0;
+  }
+  return kwFromFlow(parseFloat(n.sharedLps) || 0, dT);
 }
 
 /* Everything a segment has to carry. */
@@ -1941,9 +2094,12 @@ function fittingCount(sg) {
   return Object.keys(sg.fit.list).reduce((n, k) => n + sg.fit.list[k], 0);
 }
 
-/* Full solve: direct every segment, roll the duty up, size the pipe. */
+/* Full solve: reseat the pipework, direct every segment, share unpinned
+   loads, roll the duty up, size the pipe. */
 function solve() {
+  syncSegEnds();
   const tree = buildTree();
+  sharePlantFlow();
   /* Grouping comes before the runs are costed, because a run's group decides
      which index run it can belong to and which pump it is eventually sized
      against. */
@@ -2279,14 +2435,26 @@ function hitPort(p, tolPx) {
 }
 
 function hitNode(p, tolPx) {
-  const base = (tolPx || 15) / zoom;
+  const k = 1 / zoom;
+  const base = (tolPx || 15) * k;
   let best = null;
   S.nodes.forEach(n => {
-    // a component drawn bigger has to be catchable over the whole of it
-    const tol = base * (isVessel(n) || n.type === 'source' || n.type === 'consumer'
-      ? nodeScale(n) : 1);
-    const d = dist(n, p);
-    if (d < tol && (!best || d < best.d)) best = { d, node: n };
+    if (n.type === 'junction') {
+      const d = dist(n, p);
+      if (d < base && (!best || d < best.d)) best = { d, node: n };
+      return;
+    }
+    /* The visible box, so a zoomed-out load is still catchable over the
+       whole of what is drawn. */
+    const h = nodeDrawHalf(n, k);
+    const r = -nodeRot(n) * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+    const dx = p.x - n.x, dy = p.y - n.y;
+    const lx = Math.abs(dx * cs - dy * sn), ly = Math.abs(dx * sn + dy * cs);
+    const ox = lx - h.hw, oy = ly - h.hh;
+    if (ox < 4 * k && oy < 4 * k) {
+      const d = Math.max(ox, oy);
+      if (!best || d < best.d) best = { d, node: n };
+    }
   });
   return best ? best.node : null;
 }
@@ -2298,6 +2466,136 @@ function hitSeg(p, tolPx) {
     if (r && r.d < tol && (!best || r.d < best.r.d)) best = { seg: s, r };
   });
   return best;
+}
+
+/* ---------- tape measure ----------
+   A plan length you can leave on the sheet, not a pipe. The figure is the
+   polyline on the drawing. It does not include rise, and it must never look
+   as though it does. */
+function measureById(id) { return (S.measures || []).find(m => m.id === id) || null; }
+function measureName(m) { return m ? (m.name || m.ref || 'Tape') : ''; }
+function measureLenM(m) { return S.pxPerM > 0 ? polyLenPx(m.pts) / S.pxPerM : 0; }
+function nextTapeName() {
+  let i = 0;
+  const used = {};
+  (S.measures || []).forEach(m => { used[String(m.name || m.ref || '').toUpperCase()] = true; });
+  do { i++; } while (used[('TAPE ' + i).toUpperCase()]);
+  return 'Tape ' + i;
+}
+function hitMeasure(p, tolPx) {
+  const tol = (tolPx || 10) / zoom;
+  let best = null;
+  (S.measures || []).forEach(m => {
+    const r = nearestOnPoly(m.pts, p);
+    if (r && r.d < tol && (!best || r.d < best.r.d)) best = { measure: m, r };
+  });
+  return best;
+}
+/* Pulls to anything already on the sheet — a unit, a joint, a corner or a
+   run — without cutting a joint into it. A tape is a note, not a connection. */
+function snapMeasureAt(p) {
+  const tol = SNAP_PX / zoom;
+  let best = null;
+  const take = (d, at) => { if (d <= tol && at && (!best || d < best.d)) best = { d, at: { x: at.x, y: at.y } }; };
+  S.nodes.forEach(n => {
+    if (n.type === 'junction') { take(dist(n, p), n); return; }
+    const sn = snapNode(n, p);
+    if (sn && sn.at) take(dist(sn.at, p), sn.at);
+  });
+  S.segs.forEach(sg => {
+    (sg.pts || []).forEach(pt => take(dist(pt, p), pt));
+    const r = nearestOnPoly(sg.pts, p);
+    if (r && r.q) take(r.d, r.q);
+  });
+  (S.measures || []).forEach(m => {
+    (m.pts || []).forEach(pt => take(dist(pt, p), pt));
+  });
+  return best;
+}
+function previewMeasurePoint(p) {
+  const sn = snapMeasureAt(p);
+  if (sn) return sn.at;
+  const prev = draft && draft.pts.length ? draft.pts[draft.pts.length - 1] : null;
+  return orthoPoint(prev, p);
+}
+function finishMeasure() {
+  if (!draft || draft.kind !== 'tape') return false;
+  const pts = dedupePts(draft.pts);
+  draft = null;
+  if (pts.length < 2) { render(); return true; }
+  pushUndo('add a tape measure');
+  if (!S.measures) S.measures = [];
+  const m = { id: nid(), pts, name: '', ref: nextTapeName(), note: '' };
+  S.measures.push(m);
+  select('tape', m.id);
+  return true;
+}
+function finishDraftInPlace() {
+  if (draft && draft.kind === 'tape') return finishMeasure();
+  if (!draft || draft.kind !== 'trace') return false;
+  if (draft.pts.length < 2) { draft = null; render(); return true; }
+  const last = draft.pts[draft.pts.length - 1];
+  const j = addJunction(last);
+  finishTrace(j.id);
+  return true;
+}
+function drawMeasure(g, m, k, live) {
+  const pts = m.pts;
+  if (!pts || pts.length < 2) return;
+  const picked = !live && sel && sel.kind === 'tape' && sel.id === m.id;
+  const ink = 'var(--measure)';
+  if (picked) {
+    g.appendChild(mk('path', { d: pathOf(pts), fill: 'none', stroke: ink,
+      'stroke-width': 8 * k, 'stroke-linecap': 'round', 'stroke-linejoin': 'miter', opacity: .28 }));
+  }
+  g.appendChild(mk('path', { d: pathOf(pts), fill: 'none', stroke: ink,
+    'stroke-width': (live ? 2.2 : 1.8) * k,
+    'stroke-dasharray': live ? (7 * k) + ' ' + (5 * k) : (2.2 * k) + ' ' + (3.2 * k),
+    'stroke-linecap': 'butt', 'stroke-linejoin': 'miter' }));
+  pts.forEach((p, i) => {
+    g.appendChild(mk('circle', { cx: p.x, cy: p.y, r: (i === 0 || i === pts.length - 1 ? 3.4 : 2.6) * k,
+      fill: i === pts.length - 1 && live ? ink : 'var(--white)', stroke: ink, 'stroke-width': 1.5 * k }));
+  });
+  if (!(S.pxPerM > 0)) return;
+  const legs = [];
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const L = dist(a, b) / S.pxPerM;
+    if (L < 0.02) continue;
+    legs.push({ a, b, L, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } });
+  }
+  const total = measureLenM(m);
+  const showLegs = legs.length > 1;
+  legs.forEach(leg => {
+    if (!showLegs || dist(leg.a, leg.b) < 28 * k) return;
+    const lbl = fmt(leg.L, 2) + ' m';
+    const wPx = lbl.length * 6.2 + 10;
+    g.appendChild(mk('rect', { x: leg.mid.x - wPx * k / 2, y: leg.mid.y - 18 * k,
+      width: wPx * k, height: 14 * k, rx: 2 * k, fill: ink, opacity: .92 }));
+    g.appendChild(mk('text', { x: leg.mid.x, y: leg.mid.y - 8 * k, 'text-anchor': 'middle',
+      'font-size': 9.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+      fill: '#241a00' }, lbl));
+  });
+  const last = pts[pts.length - 1];
+  const tot = (m.ref || measureName(m)) + '  ' + fmt(total, 2) + ' m';
+  const tw = tot.length * 6.4 + 12;
+  g.appendChild(mk('rect', { x: last.x + 10 * k, y: last.y - 20 * k, width: tw * k, height: 16 * k,
+    rx: 2 * k, fill: ink }));
+  g.appendChild(mk('text', { x: last.x + 16 * k, y: last.y - 8.5 * k,
+    'font-size': 10.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+    fill: '#241a00' }, tot));
+}
+function updateHintAngle(pts) {
+  const box = el('hintAngle');
+  if (!box || !pts || pts.length < 2) return;
+  const a = pts[pts.length - 2], b = pts[pts.length - 1];
+  let deg = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
+  deg = ((deg % 180) + 180) % 180;
+  const square = Math.abs(deg % 45) < 0.05 || Math.abs(deg % 45 - 45) < 0.05;
+  box.textContent = fmt(deg, 1) + '\u00b0';
+  box.classList.toggle('free', !square);
+  box.title = square ? 'Square: ' + fmt(deg, 0) + '\u00b0 off horizontal'
+                     : 'A free angle \u2014 ' + fmt(deg, 1) + '\u00b0 off horizontal';
 }
 
 /* ---------- where a placed item sits on the plan ----------
@@ -2335,6 +2633,47 @@ function pairOffsetDraw(sg, k) {
   const clear = sg && sg.pipe ? (sg.pipe.od / 1000) * S.pxPerM * 0.8 : 0;
   return Math.max(onScreen, PAIR_REAL_M * S.pxPerM / 2, clear);
 }
+/* True parallel offset: each leg is shifted by a constant, then the offset
+   lines meet at a mitre. Averaging incoming and outgoing headings is what
+   made a pair flare at a corner and pinch back in on the next straight. */
+function lineHit(a1, a2, b1, b2) {
+  const x1 = a1.x, y1 = a1.y, x2 = a2.x, y2 = a2.y;
+  const x3 = b1.x, y3 = b1.y, x4 = b2.x, y4 = b2.y;
+  const den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+  if (Math.abs(den) < 1e-9) return null;
+  const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den;
+  return { x: x1 + t * (x2 - x1), y: y1 + t * (y2 - y1) };
+}
+function offsetPoly(pts, off) {
+  if (Math.abs(off) < 1e-9 || !pts || pts.length < 2)
+    return (pts || []).map(p => ({ x: p.x, y: p.y }));
+  const nrm = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const ux = pts[i + 1].x - pts[i].x, uy = pts[i + 1].y - pts[i].y;
+    const L = Math.hypot(ux, uy) || 1;
+    nrm.push({ x: -uy / L * off, y: ux / L * off });
+  }
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    if (i === 0) { out.push({ x: pts[0].x + nrm[0].x, y: pts[0].y + nrm[0].y }); continue; }
+    if (i === pts.length - 1) {
+      const n = nrm[nrm.length - 1];
+      out.push({ x: pts[i].x + n.x, y: pts[i].y + n.y });
+      continue;
+    }
+    const a1 = { x: pts[i - 1].x + nrm[i - 1].x, y: pts[i - 1].y + nrm[i - 1].y };
+    const a2 = { x: pts[i].x + nrm[i - 1].x, y: pts[i].y + nrm[i - 1].y };
+    const b1 = { x: pts[i].x + nrm[i].x, y: pts[i].y + nrm[i].y };
+    const b2 = { x: pts[i + 1].x + nrm[i].x, y: pts[i + 1].y + nrm[i].y };
+    const hit = lineHit(a1, a2, b1, b2);
+    const far = hit && Math.hypot(hit.x - pts[i].x, hit.y - pts[i].y) > Math.abs(off) * 8;
+    out.push((hit && !far) ? hit : { x: (a2.x + b1.x) / 2, y: (a2.y + b1.y) / 2 });
+  }
+  return out;
+}
+function pathOf(pts) { return (pts || []).map((p, i) => (i ? 'L' : 'M') + p.x + ' ' + p.y).join(' '); }
+function pairLegPts(sg, sign, k) { return offsetPoly(sg.pts, pairOffsetDraw(sg, k) * sign); }
+function pairLegAt(sg, t, sign, k) { return polyAt(pairLegPts(sg, sign, k), t); }
 /* ---------- the control valve at a load ----------
    A 2-port, 3-port or PICV belongs to the terminal rather than to the run, so
    it sits at the load end of its own leg — immediately outside the load box,
@@ -2359,14 +2698,11 @@ function loadStubPos(sg, leg, k) {
   if (!down || down.type !== 'consumer') return null;
   if (!sg.pts || sg.pts.length < 2) return null;
   const kk = (k === undefined) ? 1 / zoom : k;
-  const at = polyAt(sg.pts, loadValveT(sg, kk));
-  let ox = 0, oy = 0;
+  const t = loadValveT(sg, kk);
   if (sg.mode !== 'single' && leg !== 'both') {
-    const off = pairOffsetDraw(sg, kk);
-    const sgn = leg === 'return' ? 1 : -1;
-    ox = sgn * off; oy = sgn * off;
+    return pairLegAt(sg, t, leg === 'return' ? 1 : -1, kk);
   }
-  return { x: at.x + ox, y: at.y + oy, ang: at.ang };
+  return polyAt(sg.pts, t);
 }
 
 function itemPos(it, k) {
@@ -2376,14 +2712,12 @@ function itemPos(it, k) {
     const at = loadStubPos(sg, it.leg, k);
     if (at) return { x: at.x, y: at.y, ang: at.ang, seg: sg };
   }
-  const at = polyAt(sg.pts, it.t);
-  let ox = 0, oy = 0;
   if (sg.mode !== 'single' && it.leg !== 'both') {
-    const off = pairOffsetDraw(sg, k);
-    const s = it.leg === 'return' ? 1 : -1;
-    ox = s * off; oy = s * off;
+    const at = pairLegAt(sg, it.t, it.leg === 'return' ? 1 : -1, k);
+    return { x: at.x, y: at.y, ang: at.ang, seg: sg };
   }
-  return { x: at.x + ox, y: at.y + oy, ang: at.ang, seg: sg };
+  const at = polyAt(sg.pts, it.t);
+  return { x: at.x, y: at.y, ang: at.ang, seg: sg };
 }
 function hitItem(p, tolPx) {
   // at least as big as the symbol is drawn, so a zoomed-in valve stays easy
@@ -2442,22 +2776,26 @@ function render() {
 
     if (picked) {
       g.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--measure)',
-        'stroke-width': pw + 7 * k, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: .5 }));
+        'stroke-width': pw + 7 * k, 'stroke-linecap': 'butt', 'stroke-linejoin': 'miter',
+        'stroke-miterlimit': 2.5, opacity: .5 }));
     }
     if (single) {
       // one pipe: drawn in the colour of the leg it is
       g.appendChild(mk('path', { d, fill: 'none',
         stroke: sg.leg === 'return' ? 'var(--return)' : 'var(--flow)',
-        'stroke-width': pw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
+        'stroke-width': pw, 'stroke-linecap': 'butt', 'stroke-linejoin': 'miter',
+        'stroke-miterlimit': 2.5 }));
     } else {
-      // paired: flow and return drawn as an offset couple
+      /* A pair is two mitred offsets of this section's own centreline.
+         Flow and return stay a pair; they are not translated on the
+         diagonal, and they are not drawn as all the reds then all the blues. */
       const off = pairOffsetDraw(sg, k);
-      g.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--flow)',
-        'stroke-width': pw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
-        transform: 'translate(' + (-off) + ',' + (-off) + ')' }));
-      g.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--return)',
-        'stroke-width': pw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
-        transform: 'translate(' + off + ',' + off + ')' }));
+      g.appendChild(mk('path', { d: pathOf(offsetPoly(sg.pts, -off)), fill: 'none', stroke: 'var(--flow)',
+        'stroke-width': pw, 'stroke-linecap': 'butt', 'stroke-linejoin': 'miter',
+        'stroke-miterlimit': 2.5 }));
+      g.appendChild(mk('path', { d: pathOf(offsetPoly(sg.pts, off)), fill: 'none', stroke: 'var(--return)',
+        'stroke-width': pw, 'stroke-linecap': 'butt', 'stroke-linejoin': 'miter',
+        'stroke-miterlimit': 2.5 }));
     }
 
     if (sg.orphan) {
@@ -2565,6 +2903,7 @@ function render() {
     pts.forEach((p, i) => g.appendChild(mk('circle', { cx: p.x, cy: p.y, r: 3.2 * k,
       fill: i === pts.length - 1 ? 'var(--measure)' : 'var(--white)',
       stroke: 'var(--measure)', 'stroke-width': 1.6 * k })));
+    updateHintAngle(pts);
     if (S.pxPerM > 0 && hoverPt) {
       const run = polyLenPx(pts) / S.pxPerM;
       const lbl = fmt(run, 2) + ' m';
@@ -2575,6 +2914,12 @@ function render() {
         fill: '#241a00' }, lbl));
     }
   }
+  if (draft && draft.kind === 'tape' && draft.pts.length) {
+    const pts = hoverPt ? draft.pts.concat([previewMeasurePoint(hoverPt)]) : draft.pts;
+    drawMeasure(g, { pts, ref: 'Tape' }, k, true);
+    updateHintAngle(pts);
+  }
+  (S.measures || []).forEach(m => drawMeasure(g, m, k, false));
   if (draft && draft.kind === 'calib' && draft.pts.length === 1 && hoverPt) {
     const a = draft.pts[0];
     g.appendChild(mk('line', { x1: a.x, y1: a.y, x2: hoverPt.x, y2: hoverPt.y,
@@ -2583,13 +2928,17 @@ function render() {
 
   // ---- what a click would connect to ----
   if (tool === 'trace' && hoverPt) drawSnap(g, k);
+  if (tool === 'tape' && hoverPt && !(draft && draft.kind === 'tape' && draft.pts.length)) {
+    const q = previewMeasurePoint(hoverPt);
+    g.appendChild(mk('circle', { cx: q.x, cy: q.y, r: 8 * k, fill: 'none',
+      stroke: 'var(--measure)', 'stroke-width': 2 * k }));
+  }
 
   // ---- nodes ----
   S.nodes.forEach(n => {
     const picked = sel && sel.kind === 'node' && sel.id === n.id;
     if (n.type === 'junction') {
-      g.appendChild(mk('circle', { cx: n.x, cy: n.y, r: 4.6 * k, fill: 'var(--white)',
-        stroke: picked ? 'var(--measure)' : 'var(--graphite)', 'stroke-width': (picked ? 3 : 2) * k }));
+      drawJunction(g, n, k, picked);
       return;
     }
     /* A header is drawn as what it is — a tall shell with the primary pair
@@ -2621,7 +2970,7 @@ function render() {
       fill: src ? 'var(--paper)' : 'var(--ink)' }, String(n.name || '').slice(0, 13)));
     const sub = src
       ? (fmt(n.kw, 0) + ' kW')
-      : (fmt(consumerKw(n), 0) + ' kW  ' + fmt(consumerFlow(n), 2) + ' l/s');
+      : (fmt(consumerKw(n), 0) + ' kW  ' + fmtVol(consumerFlow(n)));
     g.appendChild(mk('text', { x: n.x, y: n.y + 9 * k, 'text-anchor': 'middle',
       'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace',
       fill: src ? '#9aa3b1' : 'var(--ink-soft)' }, sub));
@@ -2635,8 +2984,34 @@ function render() {
 
   ov.innerHTML = '';
   ov.appendChild(g);
+  const hbar = el('hint');
+  if (hbar) hbar.classList.toggle('drawing', !!(draft && (draft.kind === 'trace' || draft.kind === 'tape') && draft.pts.length > 1));
   renderStatus();
   autosave();
+}
+
+/* A 3-way joint reads as a T, not only a circle. Two-way stays a circle
+   because it is just a corner that was promoted. */
+function drawJunction(g, n, k, picked) {
+  const ink = picked ? 'var(--measure)' : 'var(--graphite)';
+  const arms = neighbours(n.id);
+  if (arms.length >= 3) {
+    arms.forEach(({ seg }) => {
+      const pts = seg.pts || [];
+      if (pts.length < 2) return;
+      const atA = dist(pts[0], n) <= dist(pts[pts.length - 1], n);
+      const a = atA ? pts[0] : pts[pts.length - 1];
+      const b = atA ? pts[1] : pts[pts.length - 2];
+      const L = dist(a, b) || 1;
+      const len = Math.min(11 * k, L * 0.45);
+      const x2 = n.x + (b.x - a.x) / L * len;
+      const y2 = n.y + (b.y - a.y) / L * len;
+      g.appendChild(mk('line', { x1: n.x, y1: n.y, x2, y2,
+        stroke: ink, 'stroke-width': 2.2 * k, 'stroke-linecap': 'butt' }));
+    });
+  }
+  g.appendChild(mk('circle', { cx: n.x, cy: n.y, r: (arms.length >= 3 ? 3.4 : 4.6) * k,
+    fill: 'var(--white)', stroke: ink, 'stroke-width': (picked ? 3 : 2) * k }));
 }
 
 /* ==========================================================================
@@ -2904,7 +3279,10 @@ function renderStatus() {
       cell('Scale', S.pxPerM > 0 ? fmt(S.pxPerM, 1) + ' px/m' : 'not set', S.pxPerM <= 0)
     + cell('Consumers', String(t.consumers))
     + cell('Load', fmt(t.kw, 0) + ' kW')
-    + cell('Flow', fmt(t.lps, 2) + ' l/s')
+    + cell('Flow', fmtVol(t.lps))
+    + cell('Corners', S.settings.ortho !== false
+        ? (overrideKey ? 'square \u2014 alt' : 'square')
+        : (overrideKey ? 'free \u2014 alt' : 'free'))
     + cell('Route on plan', fmt(t.routeM, 0) + ' m')
     + cell('Pipe installed', fmt(t.pipeM, 0) + ' m')
     /* With a header on the drawing there is more than one pump, so the strip
@@ -2927,6 +3305,7 @@ const TOOLS = [
   { id: 'select',   label: 'Select', key: 'V', icon: 'M4 2l14 8-6 1.6L9.4 18z' },
   { id: 'pan',      label: 'Pan',    key: 'H', icon: 'M10 2v8M6 5v6M14 5v6M3 9c0 5 3 9 7 9s7-4 7-9' },
   { id: 'calib',    label: 'Scale',  key: 'S', icon: 'M2 7h16v6H2zM6 7v4M10 7v6M14 7v4' },
+  { id: 'tape',     label: 'Tape',   key: 'M', icon: 'M3 10h14M5 7v6M10 7v6M15 7v6' },
   { id: 'source',   label: 'Plant',  key: 'P', icon: 'M3 4h14v12H3zM7 8h6v4H7z' },
   { id: 'llh',      label: 'Header', key: 'L', icon: 'M6 2h8v16H6zM6 6h8M6 14h8M2 5h4M2 15h4M14 5h4M14 15h4' },
   { id: 'buffer',   label: 'Buffer', key: 'U', icon: 'M5 5a5 3 0 0110 0v10a5 3 0 01-10 0zM5 5a5 3 0 0010 0' },
@@ -2937,13 +3316,13 @@ const TOOLS = [
 ];
 
 /* Nothing can be placed or traced until the drawing has a scale. */
-const NEEDS_SCALE = ['source', 'llh', 'buffer', 'consumer', 'trace', 'tee', 'valve'];
+const NEEDS_SCALE = ['tape', 'source', 'llh', 'buffer', 'consumer', 'trace', 'tee', 'valve'];
 
 function buildRail() {
   const rail = el('rail');
   rail.innerHTML = '';
   TOOLS.forEach((t, i) => {
-    if (i === 2 || i === 3 || i === 7) rail.appendChild(document.createElement('hr'));
+    if (i === 2 || i === 4 || i === 8) rail.appendChild(document.createElement('hr'));
     const b = document.createElement('button');
     const locked = scaleNeeded() && NEEDS_SCALE.indexOf(t.id) >= 0;
     b.className = 'tool' + (tool === t.id ? ' on' : '');
@@ -2967,8 +3346,11 @@ const HINTS = {
        + 'counted as a made set of two elbows &mdash; or to tee into the middle of a run '
        + 'you have already traced.',
   pan: 'Drag to move around the drawing.',
+  tape: 'Click along the route; click again at a corner to change direction. Same square lock '
+      + 'as trace; <kbd>Alt</kbd> frees one corner. Double-click or Finish to keep it. Plan '
+      + 'metres only &mdash; not a pipe, no rise, not on the schedule.',
   tee: 'Click anywhere along a run to cut a tee into it. The run splits at that point, '
-     + 'and you can trace a branch off it straight away.',
+     + 'and you can trace a branch off it straight away. Shares and roll-up recalculate on their own.',
   valve: 'Pick a valve or a set, then click the run it goes on &mdash; it snaps to the pipe. '
        + 'The choice stays armed, so keep clicking. Drag one along its run with Select.',
 };
@@ -2991,7 +3373,7 @@ function setOverride(on) {
   overrideKey = on;
   const h = el('hint');
   if (h) h.classList.toggle('alt', on);
-  if (tool === 'trace' || tool === 'tee' || draft) render();
+  if (tool === 'trace' || tool === 'tee' || tool === 'tape' || draft) render();
 }
 
 function setTool(t) {
@@ -3007,7 +3389,9 @@ function setTool(t) {
   const h = el('hint');
   if (HINTS[t]) { el('hintTxt').innerHTML = HINTS[t]; h.classList.add('on'); }
   else h.classList.remove('on');
-  h.classList.toggle('trace', t === 'trace');
+  h.classList.toggle('trace', t === 'trace' || t === 'tape');
+  h.classList.toggle('tape', t === 'tape');
+  h.classList.toggle('drawing', !!(draft && draft.pts && draft.pts.length > 1));
   el('orthoChk').checked = !!S.settings.ortho;
   el('vpal').classList.toggle('on', t === 'valve');
   if (t === 'valve') buildValvePalette();
@@ -3290,7 +3674,7 @@ function snapNode(n, p) {
   const port = p ? portAt(n, p) : null;
   const at = portPoint(n, port);
   return { kind: 'node', node: n, at, port, d0: p ? distToNode(n, p) : null,
-           what: nodeWord(n), name: n.name || '' };
+           what: nodeWord(n) + (port ? ' edge' : ''), name: n.name || '' };
 }
 function snapVertex(sg, i) {
   return { kind: 'vertex', seg: sg, i, at: { x: sg.pts[i].x, y: sg.pts[i].y },
@@ -3668,8 +4052,11 @@ function deleteSelected() {
     }
   }
 
-  pushUndo(sel.kind === 'item' ? 'delete a valve' : sel.kind === 'seg' ? 'delete a run' : 'delete a component');
-  if (sel.kind === 'item') {
+  pushUndo(sel.kind === 'item' ? 'delete a valve' : sel.kind === 'seg' ? 'delete a run'
+    : sel.kind === 'tape' ? 'delete a tape measure' : 'delete a component');
+  if (sel.kind === 'tape') {
+    S.measures = (S.measures || []).filter(m => m.id !== sel.id);
+  } else if (sel.kind === 'item') {
     S.items = S.items.filter(it => it.id !== sel.id);
   } else if (sel.kind === 'seg') {
     S.items = S.items.filter(it => it.seg !== sel.id);
@@ -3696,7 +4083,13 @@ function openInspector() {
   if (!sel) { closeInspector(); return; }
   el('body').classList.add('insp');
   const b = el('insBody');
-  if (sel.kind === 'item') {
+  if (sel.kind === 'tape') {
+    const m = measureById(sel.id);
+    if (!m) { closeInspector(); return; }
+    el('insKind').textContent = 'Tape measure';
+    el('insName').textContent = measureName(m);
+    b.innerHTML = tapeForm(m);
+  } else if (sel.kind === 'item') {
     const it = itemById(sel.id);
     if (!it) { closeInspector(); return; }
     const d = valveDef(it.type);
@@ -3728,6 +4121,7 @@ const opts = (obj, cur) => Object.keys(obj)
   .map(k => '<option value="' + k + '"' + (cur === k ? ' selected' : '') + '>' + obj[k] + '</option>').join('');
 
 function sourceForm(n) {
+  const stream = plantStreamLps(n);
   return ''
     + '<label class="fld"><span>Name</span><input data-f="name" value="' + esc(n.name) + '"></label>'
     + '<label class="fld"><span>Plant type</span><select data-f="plant">' + opts(SOURCE_TYPES, n.plant) + '</select></label>'
@@ -3735,12 +4129,15 @@ function sourceForm(n) {
     +   '<label class="fld"><span>Output <em>kW</em></span><input type="number" data-f="kw" step="1" min="0" value="' + (n.kw || '') + '"></label>'
     +   '<label class="fld"><span>&Delta;T <em>K</em></span><input type="number" data-f="dT" step="1" min="1" value="' + (n.dT || S.settings.dT) + '"></label>'
     + '</div>'
+    + '<label class="fld"><span>Stream total <em>' + volLabel() + '</em> ' + volToggle() + '</span>'
+    +   '<input type="number" data-vol="streamLps" step="' + (volUnit() === 'm3h' ? '1' : '0.1') + '" min="0" value="'
+    +   ((parseFloat(n.streamLps) || 0) > 0 ? lpsToVol(n.streamLps).toFixed(volUnit() === 'm3h' ? 1 : 2) : '') + '"></label>'
     + '<label class="fld"><span>Height above finished floor <em>m</em></span>'
     +   '<input type="number" data-f="height" step="0.1" value="' + heightOf(n) + '"></label>'
     + derivedBox([['Connected load', fmt(totals().kw, 0) + ' kW'],
                   ['Installed plant', fmt(totals().plantKw, 0) + ' kW'],
-                  ['Flow at &Delta;T ' + (n.dT || S.settings.dT), fmt(flowFromKw(n.kw || 0, n.dT || S.settings.dT), 2) + ' l/s']])
-    + '<div class="note">Plant is the root of the network. Everything you trace from here hangs off it.</div>'
+                  ['Stream total', fmtVol(stream)]])
+    + '<div class="note">The figure on the plant is the stream total. Unpinned loads (left at 0) share what is left after anything pinned. Flow and return are the same volume twice, not one pot.</div>'
     + placementFields(n)
     + rowBtns();
 }
@@ -3752,11 +4149,14 @@ function consumerForm(n) {
     + '<label class="fld"><span>Name</span><input data-f="name" value="' + esc(n.name) + '"></label>'
     + '<label class="fld"><span>Rated by</span><select data-f="basis">'
     +   '<option value="kw"' + (byKw ? ' selected' : '') + '>Duty in kW</option>'
-    +   '<option value="lps"' + (byKw ? '' : ' selected') + '>Flow in l/s</option></select></label>'
+    +   '<option value="lps"' + (byKw ? '' : ' selected') + '>Flow (' + volLabel() + ')</option></select></label>'
     + '<div class="row2">'
-    +   '<label class="fld"><span>' + (byKw ? 'Duty <em>kW</em>' : 'Flow <em>l/s</em>') + '</span>'
-    +     '<input type="number" data-f="' + (byKw ? 'kw' : 'lps') + '" step="' + (byKw ? '1' : '0.1') + '" min="0" value="'
-    +     ((byKw ? n.kw : n.lps) || '') + '"></label>'
+    +   '<label class="fld"><span>' + (byKw ? 'Duty <em>kW</em>' : 'Flow <em>' + volLabel() + '</em> ' + volToggle()) + '</span>'
+    +     (byKw
+          ? '<input type="number" data-f="kw" step="1" min="0" value="' + (n.kw || '') + '">'
+          : '<input type="number" data-vol="lps" step="' + (volUnit() === 'm3h' ? '1' : '0.1') + '" min="0" value="'
+            + ((parseFloat(n.lps) || 0) > 0 ? lpsToVol(n.lps).toFixed(volUnit() === 'm3h' ? 1 : 2) : '') + '">')
+    +     '</label>'
     +   '<label class="fld"><span>&Delta;T <em>K</em></span><input type="number" data-f="dT" step="1" min="1" value="' + (n.dT || S.settings.dT) + '"></label>'
     + '</div>'
     + '<label class="fld"><span>Coil pressure drop <em>kPa</em></span>'
@@ -3766,10 +4166,12 @@ function consumerForm(n) {
     +   '<input type="number" data-f="height" step="0.1" value="' + heightOf(n) + '"></label>'
     + derivedBox([
         ['Duty', fmt(consumerKw(n), 1) + ' kW'],
-        ['Flow', fmt(consumerFlow(n), 2) + ' l/s'],
+        ['Flow', fmtVol(consumerFlow(n))],
+        ['Share', consumerIsPinned(n) ? 'pinned to the typed rate' : 'unpinned \u2014 shares what is left'],
         ['Fed by', feed ? esc(feed.ref) + ' (' + (feed.pipe ? feed.pipe.nom : 'unsized') + ')'
                         : '<span style="color:var(--alarm)">nothing yet</span>'],
       ])
+    + '<div class="note">Leave the rate at 0 to share what remains of the plant stream after anything pinned. Type a figure to pin this load; the rest re-share.</div>'
     + (n.reached ? '' : '<div class="note bad">Not connected to plant. Trace a run to it, '
         + 'or it will be left out of the export.</div>')
     + (feed
@@ -3835,15 +4237,16 @@ function llhForm(n) {
     +   '<option value="flow"' + (n.primaryBasis === 'flow' ? ' selected' : '') + '>A figure I will give</option>'
     + '</select></label>'
     + (n.primaryBasis === 'flow'
-        ? '<label class="fld"><span>Primary flow <em>l/s</em></span>'
-          + '<input type="number" data-f="primaryLps" step="0.01" value="' + (n.primaryLps || 0) + '"></label>'
+        ? '<label class="fld"><span>Primary flow <em>' + volLabel() + '</em> ' + volToggle() + '</span>'
+          + '<input type="number" data-vol="primaryLps" step="' + (volUnit() === 'm3h' ? '1' : '0.01') + '" value="'
+          + lpsToVol(n.primaryLps || 0).toFixed(volUnit() === 'm3h' ? 1 : 2) + '"></label>'
         : '<label class="fld"><span>Margin over secondary <em>%</em></span>'
           + '<input type="number" data-f="marginPct" step="1" value="' + sepMarginPct(n) + '"></label>')
     + flag
     + '<table class="mini">'
-    +   '<tr><td>Secondary, from the drawing</td><td class="n">' + fmt(s.secondaryLps, 2) + ' l/s</td>'
+    +   '<tr><td>Secondary, from the drawing</td><td class="n">' + fmtVol(s.secondaryLps) + '</td>'
     +     '<td class="n">' + fmt(s.secondaryKw, 1) + ' kW</td></tr>'
-    +   '<tr><td>Primary, carried by the runs above</td><td class="n">' + fmt(s.primaryLps, 2) + ' l/s</td>'
+    +   '<tr><td>Primary, carried by the runs above</td><td class="n">' + fmtVol(s.primaryLps) + '</td>'
     +     '<td class="n">' + fmt(s.secondaryKw, 1) + ' kW</td></tr>'
     +   (dTsec > 0 ? '<tr><td>&Delta;T across it</td><td class="n">' + fmt(dTsec, 1) + ' K sec</td>'
     +     '<td class="n">' + fmt(dTpri, 1) + ' K pri</td></tr>' : '')
@@ -4089,12 +4492,50 @@ function kwToDT(kw, lps) {
 
 function junctionForm(n) {
   const legs = neighbours(n.id).length;
+  const outs = S.segs.filter(s => s.up === n.id && !s.orphan);
+  const q = outs.reduce((t, s) => t + (s.lps || 0), 0);
   return '<div class="note">A tee where ' + legs + ' run' + (legs === 1 ? '' : 's') + ' meet. '
-    + 'Drag it to tidy the layout, or delete it to remove the branch.</div>'
+    + 'A T-piece splits the flow: each leg carries what it serves, not the full plant figure. '
+    + 'Pin a load to a typed rate when the rooms are not even; the rest re-share.</div>'
     + '<label class="fld"><span>Label</span><input data-f="name" value="' + esc(n.name || '') + '"></label>'
     + '<label class="fld"><span>Height above finished floor <em>m</em></span>'
     +   '<input type="number" data-f="height" step="0.1" value="' + heightOf(n) + '"></label>'
+    + derivedBox([
+        ['Runs meeting here', String(legs)],
+        ['On from it', fmtVol(q)],
+      ])
     + rowBtns();
+}
+
+function tapeForm(m) {
+  const total = measureLenM(m);
+  const legs = [];
+  for (let i = 1; i < (m.pts || []).length; i++) {
+    const a = m.pts[i - 1], b = m.pts[i];
+    legs.push(S.pxPerM > 0 ? dist(a, b) / S.pxPerM : 0);
+  }
+  let html = '<label class="fld"><span>Name <em>blank uses ' + esc(m.ref || 'Tape') + '</em></span>'
+    + '<input data-f="name" value="' + esc(m.name || '') + '" placeholder="' + esc(m.ref || '') + '"></label>';
+  html += '<div class="fld"><span>Corners on the plan</span><div class="hpts">'
+    + (m.pts || []).map((p, i) => {
+        const prev = i > 0 ? fmt(legs[i - 1], 2) + ' m from last' : 'start';
+        return '<div class="hpt"><span class="ix">' + (i + 1) + '</span>'
+          + '<span></span>'
+          + '<span class="rise">' + prev + '</span>'
+          + (i > 0 && i < m.pts.length - 1
+              ? '<button type="button" data-tapedel="' + i + '" title="Remove this corner">&times;</button>'
+              : '<span></span>')
+          + '</div>';
+      }).join('')
+    + '</div></div>';
+  html += derivedBox([
+    ['<b>Plan length</b>', '<b>' + fmt(total, 2) + ' m</b>'],
+    ['Legs', String(legs.length)],
+  ]);
+  html += '<label class="fld"><span>Note</span><input data-f="note" value="' + esc(m.note || '') + '"></label>';
+  html += '<div class="note">The plan length only &mdash; the polyline on the drawing. It is not a pipe, '
+    + 'and it does not include rise. Use Trace when the length has to go on the schedule.</div>';
+  return html + rowBtns(false);
 }
 
 function segForm(sg) {
@@ -4333,9 +4774,37 @@ function rowBtns(dup) {
 }
 
 function wireInspector() {
+  el('insBody').querySelectorAll('[data-volunit]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      S.settings.volUnit = btn.getAttribute('data-volunit') === 'm3h' ? 'm3h' : 'lps';
+      render(); openInspector();
+    });
+  });
+  el('insBody').querySelectorAll('[data-vol]').forEach(inp => {
+    inp.addEventListener('change', () => {
+      const obj = sel.kind === 'item' ? itemById(sel.id)
+                : sel.kind === 'tape' ? measureById(sel.id)
+                : sel.kind === 'node' ? nodeById(sel.id) : segById(sel.id);
+      if (!obj) return;
+      obj[inp.getAttribute('data-vol')] = volToLps(inp.value);
+      render(); openInspector();
+    });
+  });
+  el('insBody').querySelectorAll('[data-tapedel]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const m = measureById(sel && sel.id);
+      if (!m || !m.pts) return;
+      const i = parseInt(btn.getAttribute('data-tapedel'), 10);
+      if (!(i > 0) || i >= m.pts.length - 1) return;
+      pushUndo('drop a tape corner');
+      m.pts.splice(i, 1);
+      render(); openInspector();
+    });
+  });
   el('insBody').querySelectorAll('[data-f]').forEach(inp => {
     inp.addEventListener('change', () => {
       const obj = sel.kind === 'item' ? itemById(sel.id)
+                : sel.kind === 'tape' ? measureById(sel.id)
                 : sel.kind === 'node' ? nodeById(sel.id) : segById(sel.id);
       if (!obj) return;
       const f = inp.dataset.f;
@@ -4365,7 +4834,7 @@ function wireInspector() {
          any figure typed against the old one — it no longer means anything. */
       if (sel.kind === 'item' && (f === 'type' || f === 'basis')) delete obj.kpa;
       if (f === 'basis' || f === 'mode') openInspector();
-      if (sel.kind !== 'item') el('insName').textContent = obj.name || obj.ref || '\u2014';
+      if (sel.kind !== 'item') el('insName').textContent = obj.name || obj.ref || measureName(obj) || '\u2014';
       render(); openInspector();
     });
   });
@@ -5499,11 +5968,11 @@ function projectBundle(withImg) {
     app: 'adi-pipe-trace', schema: 1,
     ref: S.ref, engineer: S.engineer, date: S.date,
     img: withImg ? imgForSave() : null, pxPerM: S.pxPerM, calib: S.calib,
-    nodes: S.nodes, segs: S.segs, items: S.items,
+    nodes: S.nodes, segs: S.segs, items: S.items, measures: S.measures || [],
     nextId: S.nextId, settings: S.settings,
   }));
   out.nodes.forEach(n => {
-    ['feedSeg','reached','flowLps','dutyKw','shell','hgroup','subGroup'].forEach(kk => delete n[kk]);
+    ['feedSeg','reached','flowLps','sharedLps','dutyKw','shell','hgroup','subGroup'].forEach(kk => delete n[kk]);
   });
   out.segs.forEach(s => { ['up','down','parentSeg','depth','orphan','kw','lps','nCons','runM','lenM',
     'pipe','hydM','fit','fitPa','nFit','straightKpa','fitKpa','valveKpa','nValves','dropKpa','equivPct',
@@ -5635,8 +6104,9 @@ function loadProject(data) {
   S.nodes = data.nodes || []; S.segs = data.segs || [];
   /* Files written before valves could be placed simply have none. */
   S.items = (data.items || []).filter(it => it && VALVE_LIB[it.type]);
+  S.measures = (data.measures || []).filter(m => m && m.pts && m.pts.length >= 2);
   S.nodes.forEach(n => { if (n.type === 'consumer') n.valve = migrateValveType(n.valve); });
-  S.nextId = data.nextId || (S.nodes.length + S.segs.length + S.items.length + 1);
+  S.nextId = data.nextId || (S.nodes.length + S.segs.length + S.items.length + (S.measures || []).length + 1);
   /* Corners lock by default now. A file written before that carries the old
      default of `ortho: false`, which is not a decision anybody made — so it is
      dropped and the current default stands. Anything saved since says so with
@@ -5750,8 +6220,9 @@ function turnTakeoff(deg, cOld, cNew) {
   const T = turnAbout(deg, cOld, cNew);
   S.nodes.forEach(n => { const q = T(n); n.x = q.x; n.y = q.y; });
   S.segs.forEach(sg => { if (sg.pts) sg.pts = sg.pts.map(T); });
+  (S.measures || []).forEach(m => { if (m.pts) m.pts = m.pts.map(T); });
   if (S.calib && S.calib.a && S.calib.b) { S.calib.a = T(S.calib.a); S.calib.b = T(S.calib.b); }
-  if (draft && draft.pts) draft.pts = draft.pts.map(T);   // mid-trace survives a rotation
+  if (draft && draft.pts) draft.pts = draft.pts.map(T);   // mid-trace and mid-tape survive a rotation
 }
 
 /* Rotate to an absolute angle, measured clockwise from the sheet as loaded.
@@ -6027,7 +6498,9 @@ function stepsDialog() {
     ['Set the scale \u2014 before anything else', tick(done.scale),
      'Pick two points a known distance apart \u2014 a grid line, a bay, a dimension already on the drawing \u2014 '
      + 'and type the real figure. Every length after that comes off the drawing, so nothing can be placed '
-     + 'or traced until it is set. Load a drawing and this is what you are asked for first.'],
+     + 'or traced until it is set. Load a drawing and this is what you are asked for first. '
+     + '<strong>Tape</strong> (<kbd>M</kbd>) is a ruler after that: plan metres only, not a pipe, '
+     + 'no rise, not on the schedule.'],
     ['Place the plant, and give it a height', tick(done.plant),
      'The boiler, CHP, chiller or heat pump. Its height above finished floor is the datum the risers are measured from.'],
     ['Put in the headers and buffers, if there are any', tick(S.nodes.some(isVessel)),
@@ -6042,8 +6515,10 @@ function stepsDialog() {
      + 'A <strong>two-port buffer</strong> sits in the flow or the return as a piece of the main and '
      + 'changes nothing hydraulically. A four-port one is asked which it is when you place it.'],
     ['Place the loads', tick(done.loads),
-     'Duty in kW or flow in l/s, \u0394T, coil pressure drop, control valve and height. '
-     + 'Duplicate one and drag the copy for repeated units.'],
+     'Duty in kW or flow in l/s (toggle m\u00b3/h on the plant and on a load \u2014 stored as l/s either way), '
+     + '\u0394T, coil pressure drop, control valve and height. Leave a load at 0 to share what remains of the '
+     + 'plant stream after anything pinned. Duplicate one and drag the copy for repeated units. '
+     + 'A pipe joins the box where you land it, not always the centre, and the last hop stays square.'],
     ['Trace the runs', tick(done.traced),
      'Start on a component, click each corner, finish on another component. Whatever the click will '
      + 'connect to is ringed and named before you click it, and a branch can only leave from a '
@@ -6320,20 +6795,35 @@ function hop3D(poly, extra) {
     poly.slice(bi));
 }
 
-/* flow and return as an offset couple, the way they are drawn on the plan */
+/* Same mitre offset as the plan, in XY; Z is copied from the centreline.
+   Averaging headings is what flared a pair at a corner. */
 function offsetPoly3D(poly, off) {
-  const n = poly.length, out = [];
-  for (let i = 0; i < n; i++) {
-    let dx = 0, dy = 0;
-    const add = (a, b) => {
-      const ux = b.X - a.X, uy = b.Y - a.Y, L = Math.hypot(ux, uy);
-      if (L > 1e-6) { dx += ux / L; dy += uy / L; }
-    };
-    if (i > 0) add(poly[i - 1], poly[i]);
-    if (i < n - 1) add(poly[i], poly[i + 1]);
-    let L = Math.hypot(dx, dy);
-    if (L < 1e-6) { dx = 1; dy = 0; L = 1; }
-    out.push({ X: poly[i].X - (dy / L) * off, Y: poly[i].Y + (dx / L) * off, Z: poly[i].Z });
+  if (Math.abs(off) < 1e-9 || !poly || poly.length < 2) return poly;
+  const nrm = [];
+  for (let i = 0; i < poly.length - 1; i++) {
+    const ux = poly[i + 1].X - poly[i].X, uy = poly[i + 1].Y - poly[i].Y;
+    const L = Math.hypot(ux, uy) || 1;
+    nrm.push({ x: -uy / L * off, y: ux / L * off });
+  }
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    if (i === 0) {
+      out.push({ X: poly[0].X + nrm[0].x, Y: poly[0].Y + nrm[0].y, Z: poly[0].Z });
+      continue;
+    }
+    if (i === poly.length - 1) {
+      const n = nrm[nrm.length - 1];
+      out.push({ X: poly[i].X + n.x, Y: poly[i].Y + n.y, Z: poly[i].Z });
+      continue;
+    }
+    const a1 = { x: poly[i - 1].X + nrm[i - 1].x, y: poly[i - 1].Y + nrm[i - 1].y };
+    const a2 = { x: poly[i].X + nrm[i - 1].x, y: poly[i].Y + nrm[i - 1].y };
+    const b1 = { x: poly[i].X + nrm[i].x, y: poly[i].Y + nrm[i].y };
+    const b2 = { x: poly[i + 1].X + nrm[i].x, y: poly[i + 1].Y + nrm[i].y };
+    const hit = lineHit(a1, a2, b1, b2);
+    const far = hit && Math.hypot(hit.x - poly[i].X, hit.y - poly[i].Y) > Math.abs(off) * 8;
+    const q = (hit && !far) ? hit : { x: (a2.x + b1.x) / 2, y: (a2.y + b1.y) / 2 };
+    out.push({ X: q.x, Y: q.y, Z: poly[i].Z });
   }
   return out;
 }
@@ -6382,11 +6872,18 @@ function build3D() {
     const single = sg.mode === 'single';
     if (single) {
       items.push({ t: 'line', pts: poly, w: lw,
-        c: sg.leg === 'return' ? '#2471a3' : '#c0392b', seg: sg.id });
+        c: sg.leg === 'return' ? '#2471a3' : '#c0392b', seg: sg.id, bundle: sg.id, leg: 0,
+        centre: poly });
     } else {
+      /* Each section's offset is local to its own centreline. Both legs of
+         this pair are tagged with the same bundle so the painter keeps them
+         together — drawing all the reds then all the blues is what made two
+         pairs that meet look like a stack of one colour and then the other. */
       const off = Math.max(0.12, od / 1000 * 1.5);
-      items.push({ t: 'line', pts: offsetPoly3D(poly, -off), w: lw, c: '#c0392b', seg: sg.id });
-      items.push({ t: 'line', pts: offsetPoly3D(poly, off), w: lw, c: '#2471a3', seg: sg.id });
+      items.push({ t: 'line', pts: offsetPoly3D(poly, -off), w: lw, c: '#c0392b',
+        seg: sg.id, bundle: sg.id, leg: 0, centre: poly });
+      items.push({ t: 'line', pts: offsetPoly3D(poly, off), w: lw, c: '#2471a3',
+        seg: sg.id, bundle: sg.id, leg: 1, centre: poly });
     }
     if (sg.orphan) items.push({ t: 'line', pts: poly, w: 1.4, c: '#bb3b2e', dash: [4, 4] });
     poly.forEach(p => { if (p.Z > zMax) zMax = p.Z; if (p.Z < zMin) zMin = p.Z; });
@@ -6516,7 +7013,8 @@ function draw3D() {
     pts.forEach((p, i) => { const q = screen3D(p); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
     ctx.strokeStyle = c; ctx.lineWidth = w;
     ctx.setLineDash(dash || []);
-    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.lineJoin = 'miter'; ctx.lineCap = 'butt';
+    ctx.miterLimit = 2.5;
     ctx.stroke();
     ctx.setLineDash([]);
   };
@@ -6524,14 +7022,17 @@ function draw3D() {
   // the floor first, always behind
   m.ground.forEach(it => stroke(it.pts, it.c, it.w, it.dash));
 
-  // then everything else, furthest away first
+  /* Furthest away first, but a pair is sorted as one bundle: depth is taken
+     from the centreline, then the legs of that section. Sorting each offset
+     stroke on its own mean depth is what bunched all of one colour. */
   const sorted = m.items.slice();
   sorted.forEach(it => {
+    const src = it.centre || it.pts;
     let d = 0;
-    it.pts.forEach(p => { d += proj3D(p).d; });
-    it._d = d / it.pts.length;
+    src.forEach(p => { d += proj3D(p).d; });
+    it._d = d / src.length;
   });
-  sorted.sort((a, b) => b._d - a._d);
+  sorted.sort((a, b) => (b._d - a._d) || ((a.bundle || 0) - (b.bundle || 0)) || ((a.leg || 0) - (b.leg || 0)));
 
   sorted.forEach(it => {
     if (it.t === 'line') { stroke(it.pts, it.c, it.w, it.dash); return; }
@@ -6705,6 +7206,8 @@ sc.addEventListener('pointerdown', ev => {
       select('node', n.id);
       return;
     }
+    const tm = hitMeasure(p);
+    if (tm) { select('tape', tm.measure.id); return; }
     const h = hitSeg(p);
     if (h) { select('seg', h.seg.id); return; }
     sel = null; closeInspector();
@@ -6737,6 +7240,14 @@ sc.addEventListener('pointerdown', ev => {
     if (!draft) draft = { kind: 'calib', pts: [] };
     draft.pts.push(p);
     if (draft.pts.length === 2) { const [a, b] = draft.pts; draft = null; askScale(a, b); }
+    render();
+    return;
+  }
+
+  if (tool === 'tape') {
+    const q = previewMeasurePoint(p);
+    if (!draft) draft = { kind: 'tape', pts: [] };
+    draft.pts.push({ x: q.x, y: q.y });
     render();
     return;
   }
@@ -6793,7 +7304,7 @@ sc.addEventListener('pointermove', ev => {
     const d = drag.port;
     const n = nodeById(d.nodeId);
     if (n) {
-      const port = portAt(n, p);
+      const port = portAt(n, p, { edge: true, magnet: false });
       if (port) {
         if (d.end === 'a') d.seg.aPort = port; else d.seg.bPort = port;
         reseatSeg(d.seg);
@@ -6829,7 +7340,7 @@ sc.addEventListener('pointermove', ev => {
   }
   // the trace and valve tools show what a click would do, so they track the
   // cursor whether or not anything is under way
-  if (draft || tool === 'trace' || tool === 'valve' || tool === 'tee') {
+  if (draft || tool === 'trace' || tool === 'valve' || tool === 'tee' || tool === 'tape') {
     setOverride(ev.altKey);
     hoverPt = toDwg(ev); render();
   }
@@ -6845,11 +7356,14 @@ sc.addEventListener('pointercancel', endPointer);
 
 sc.addEventListener('dblclick', ev => {
   if (!S.img) return;
+  if (draft && finishDraftInPlace()) return;
   const p = toDwg(ev);
   const it = hitItem(p);
   if (it) { select('item', it.id); return; }
   const n = hitNode(p);
   if (n) { select('node', n.id); return; }
+  const tm = hitMeasure(p);
+  if (tm) { select('tape', tm.measure.id); return; }
   const h = hitSeg(p);
   if (h) select('seg', h.seg.id);
 });
@@ -6870,6 +7384,9 @@ sc.addEventListener('wheel', ev => {
    KEYBOARD
    ========================================================================== */
 document.addEventListener('keydown', ev => {
+  /* Register Alt on every keydown, not only on the Alt key or on mouse
+     move — otherwise the first free-angle click is missed. */
+  setOverride(ev.altKey);
   const typing = /^(INPUT|SELECT|TEXTAREA)$/.test((ev.target.tagName || ''));
   if (typing) {
     if (ev.key === 'Escape') ev.target.blur();
@@ -6895,12 +7412,8 @@ document.addEventListener('keydown', ev => {
     if (draft) { draft = null; render(); return; }
     setTool('select'); return;
   }
-  if (ev.key === 'Enter' && draft && draft.kind === 'trace') {
-    // stop here and leave a tee, so a spur can be picked up later
-    if (draft.pts.length < 2) { draft = null; render(); return; }
-    const last = draft.pts[draft.pts.length - 1];
-    const j = addJunction(last);
-    finishTrace(j.id);
+  if (ev.key === 'Enter' && draft) {
+    finishDraftInPlace();
     return;
   }
   if ((ev.key === 'Delete' || ev.key === 'Backspace') && sel) { ev.preventDefault(); deleteSelected(); return; }
@@ -7004,6 +7517,7 @@ el('bSched').addEventListener('click', () => {
 el('bSchedClose').addEventListener('click', () => el('drawer').classList.remove('on'));
 el('insClose').addEventListener('click', closeInspector);
 el('hintX').addEventListener('click', () => setTool('select'));
+el('hintFin').addEventListener('click', () => { finishDraftInPlace(); });
 
 el('zRot').addEventListener('click', rotateDialog);
 el('zIn').addEventListener('click', () => setZoom(zoom * 1.2));
@@ -7032,8 +7546,8 @@ document.addEventListener('drop', e => {
   } else loadDrawingFile(f);
 });
 
-window.addEventListener('keydown', e => { if (e.key === 'Alt') setOverride(true); });
-window.addEventListener('keyup',   e => { if (e.key === 'Alt') setOverride(false); });
+window.addEventListener('keydown', e => { setOverride(e.altKey); });
+window.addEventListener('keyup',   e => { setOverride(e.altKey); });
 window.addEventListener('blur',    () => setOverride(false));
 
 window.addEventListener('resize', () => {

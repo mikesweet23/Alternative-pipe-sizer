@@ -465,7 +465,8 @@ adding the coil at the end. Both tools therefore agree, and `traceMeta` carries
 `indexTerminal`, `indexKpa` and `indexRuns` so the figure can be checked.
 
 Pipe Trace has its own separate save format, `app: 'adi-pipe-trace'`, holding
-the drawing, the scale and the traced geometry. That never goes to the sizer.
+the drawing, the scale, the traced geometry and any tape measures
+(`measures`). That never goes to the sizer.
 
 ---
 
@@ -512,9 +513,11 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   have to stay square to the sheet, the 3D check and the export then carry on
   in drawing coordinates knowing nothing about it. Rotation preserves
   distance, so `pxPerM` is untouched and the calibration line is turned with
-  the rest, still lying on the dimension it was taken from. Placed valves hold
-  a run and a fraction along it rather than a point, so they need nothing
-  doing to them.
+  the rest, still lying on the dimension it was taken from. Tape measures turn
+  with the nodes, the run polylines and both calibration points — miss one and
+  lengths still look plausible while plant sits in the wrong rooms. Placed
+  valves hold a run and a fraction along it rather than a point, so they need
+  nothing doing to them.
   Every turn is re-rendered from **the image as it was loaded**, never from
   the last rotated copy — nudging a scan straight a degree at a time would
   otherwise soften it a little more each pass and grow its corners every time.
@@ -545,7 +548,17 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   the way.** Corners are one of the two constraints it lifts. Over a run
   already traced it cuts a tee exactly where the cursor is rather than being
   pulled to the nearest corner. The hint bar turns amber while it is held. The
-  Tee tool does the same cut without holding anything.
+  Tee tool does the same cut without holding anything. Register Alt on every
+  `keydown`, not only on the Alt key or on mouse move — otherwise the first
+  free-angle click is missed. The live angle badge (`#hintAngle`) goes
+  accent-coloured when the leg is not a multiple of 45°. The hint bar is
+  `left` and `right` set with `width: fit-content` so it can wrap to two rows
+  without becoming a tall block that swallows clicks on the drawing.
+- **Tape (`M`) is a ruler, not a pipe.** After the scale is set. Click along
+  the route; the same square lock as trace; Alt frees one corner. Plan metres
+  only — no rise, not on the schedule, not drawn in 3D. Persist in
+  `S.measures`, undo, rotate with the sheet. Snap to a unit, joint or run
+  without cutting a joint.
 - **Three things become real size when you zoom in**, and all three have to, or
   a valve set stays unreadable no matter how far you go in: the symbols
   (`valveDrawScale()`, true size 0.30 m), the gap between the flow and return
@@ -596,7 +609,41 @@ the drawing, the scale and the traced geometry. That never goes to the sizer.
   25× — identical to four decimal places.
   Splitting, merging and re-wiring all carry the outer ports with the piece
   that still reaches the component (`reseatSeg()`, `reseatNode()` put the
-  polyline ends back on their ports whenever anything moves).
+  polyline ends back on their ports whenever anything moves). `syncSegEnds()`
+  runs at the start of every `solve()`, so moving, resizing or turning a unit
+  carries its pipework with it without anything else having to remember.
+  `null` is the centre — old files, and the centre magnet (`|u|,|v| < 0.18`).
+  Resolve the landing against the **true** footprint (`nodeHalfPx`), never the
+  zoomed-out legible box (`nodeDrawHalf`). Hit-testing uses the drawn box so
+  you can click what you see.
+- **The last hop onto a casing stays on the square.** After ends are snapped
+  to the unit, `squareIntoUnit()` keeps that last leg horizontal or vertical
+  when the corner lock is on: it slides an existing stub or inserts one so
+  the rest of the run is not pulled off-square. Casings only (plant, load,
+  header, buffer) — not tees or open ends.
+- **A pair runs true — on the plan and in 3D.** Offset each leg by a constant,
+  then mitre the offset lines where they meet (`offsetPoly` / `offsetPoly3D`).
+  Do not average incoming and outgoing headings, and do not
+  `translate(±off,±off)` the whole centreline — that flared at corners and
+  pinched back in. Strokes use a mitre join. A flow/return pair belongs to
+  **that section**. When two pairs meet and then run on together you should
+  still read two pairs, not all the reds and then all the blues. Draw and
+  sort 3D strokes section by section (bundle depth from the centreline, then
+  the legs of that section), never by colour across the whole model. The
+  same two colours on the plan, in 3D, in the legend and on both reports:
+  flow `#c0392b`, return `#2471a3`.
+- **A T-piece splits the flow.** The figure on the plant is the stream total
+  (`streamLps`, or flow from the typed kW). A load with a typed kW or l/s is
+  pinned; left at 0 it shares what remains after anything pinned.
+  `sharePlantFlow()` writes `sharedLps` on the unpinned loads, then each run
+  rolls up own load plus everything downstream (`segDuty` / `nodeDemand`).
+  Do not overwrite a section with the plant total. Flow and return are the
+  same volume twice, not one pot. A 3-way joint is drawn as a T, not only a
+  circle. Cut one in later with the Tee tool or Alt-while-tracing; shares
+  recalculate on their own.
+- **Flow is stored as l/s.** `settings.volUnit` is `'lps'` or `'m3h'` — how
+  the number is typed and shown. 1 l/s = 3.6 m³/h. Same toggle on the plant
+  and on a load. Do not store two units.
 - **A placed valve lies along its run, and can be turned off it.** `rot` on
   the item is an offset *relative to the run*, not a bearing, so a valve still
   swings round with its pipework when a node is dragged; `flip` mirrors it,
@@ -901,8 +948,26 @@ fluid basis has moved with them.
 12. Trace something, then **rotate the drawing** a quarter turn: the trace has
     to still sit on the pipework it was traced from, and Route on plan, Pipe
     installed and Scale in the status strip must not move by a millimetre —
-    rotation cannot change a distance. `Ctrl`+`Z` puts both the sheet and the
-    trace back together.
+    rotation cannot change a distance. Tape measures turn with it. `Ctrl`+`Z`
+    puts both the sheet and the take-off back together.
+
+### If you touched connections, pairs, tape or sharing
+
+15. Trace onto the corner of a load: ring at the stub; last hop on 90°; the
+    pair of lines stay parallel through corners. Move and turn the unit and
+    the pipe comes with it.
+16. **3D:** two separate pairs that then run together must still read as pairs
+    (flow-with-return, flow-with-return). You must not see all of one colour
+    bunched and then all of the other.
+17. Tee to two equal outlets: each shows half; pin one and the other re-shares;
+    the main is the sum.
+18. Cut a T-piece into a run already traced and branch a third; shares
+    readjust. A 3-way joint reads as a T, not only a circle.
+19. Tape three corners of a room, Finish, Delete; save and reopen — the tape
+    comes back. Tape and place/trace tools stay disabled until the scale is
+    set.
+20. Toggle l/s ↔ m³/h: 111 l/s reads 400 m³/h. The stored number does not
+    change.
 
 ---
 
