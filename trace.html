@@ -4598,9 +4598,15 @@ function drawPipeDots(g, k, p) {
   pack.dots.forEach(dot => {
     const on = picked && picked.at && dist(picked.at, dot.at) < 0.5;
     const col = dot.leg === 'return' ? 'var(--return)' : 'var(--flow)';
-    g.appendChild(mk('circle', { cx: dot.at.x, cy: dot.at.y, r: (on ? 7.5 : 5.5) * k,
-      fill: 'var(--white)', stroke: col, 'stroke-width': (on ? 2.6 : 2) * k }));
-    g.appendChild(mk('circle', { cx: dot.at.x, cy: dot.at.y, r: 2.2 * k, fill: col }));
+    g.appendChild(mk('circle', { cx: dot.at.x, cy: dot.at.y, r: (on ? 9 : 7.2) * k,
+      fill: 'var(--white)', stroke: col, 'stroke-width': (on ? 2.8 : 2.2) * k }));
+    g.appendChild(mk('circle', { cx: dot.at.x, cy: dot.at.y, r: 2.4 * k, fill: col }));
+    if (pack.dots.length > 1) {
+      const tag = dot.leg === 'return' ? 'R' : 'F';
+      g.appendChild(mk('text', { x: dot.at.x + 11 * k, y: dot.at.y + 3.5 * k,
+        'font-size': 10 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 700,
+        fill: col }, tag));
+    }
   });
 }
 
