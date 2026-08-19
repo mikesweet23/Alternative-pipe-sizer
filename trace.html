@@ -1605,7 +1605,21 @@ function isUnitCasing(n) {
 }
 function isPassThrough(n) {
   return n && (n.type === 'pump' || n.type === 'drycooler'
-            || (n.type === 'buffer' && n.ports === 2));
+            || (n.type === 'buffer' && !isSeparator(n)));
+}
+/* A 2-port buffer, pump or dry cooler is a piece of the main. Clicking one
+   while tracing finishes the run onto it and keeps the pencil down so the
+   next hop is the run out the other side — that is how a flow pipe goes
+   through a buffer and still carries the load on the far side. */
+function isInLineVessel(n) {
+  return n && (n.type === 'pump' || n.type === 'drycooler'
+            || (n.type === 'buffer' && n.ports !== 4));
+}
+function oppositePort(n, port) {
+  if (!n) return null;
+  if (!port) return portFacing(n, null, n);
+  return { u: +(-(parseFloat(port.u) || 0)).toFixed(4),
+           v: +(-(parseFloat(port.v) || 0)).toFixed(4) };
 }
 function plantRole(n) {
   return (n && SOURCE_ROLES[n.dutyRole]) ? n.dutyRole : 'duty';
@@ -2047,7 +2061,12 @@ function assignLoadFeed(n, seg, fromId) {
     if (n) n.feedSeg = seg.id;
     return true;
   }
-  if (!isFourPipe(n)) { n.feedSeg = seg.id; return true; }
+  if (!isFourPipe(n)) {
+    /* A second run onto the same load is the other leg — the return, or
+       the flow through a buffer — not a new feed. Keep the first. */
+    if (n.feedSeg == null) n.feedSeg = seg.id;
+    return true;
+  }
   let svc = seg.service === 'cool' || seg.service === 'heat' ? seg.service : null;
   const heatTaken = n.feedSeg != null && !sameId(n.feedSeg, seg.id);
   const coolTaken = n.feedSegCool != null && !sameId(n.feedSegCool, seg.id);
@@ -2087,6 +2106,14 @@ function buildTree() {
           seg.up = cur.id; seg.down = other; seg.orphan = false;
           seg.parentSeg = cur.seg; seg.depth = cur.depth;
           n.reached = true;
+        } else if (n && n.type === 'consumer') {
+          /* A second run onto a load is the other leg of the same circuit —
+             typically the return, or the flow through an in-line buffer —
+             not a loop. Both legs carry the same duty. */
+          seg.up = cur.id; seg.down = other; seg.orphan = false;
+          seg.parentSeg = cur.seg; seg.depth = cur.depth;
+          n.reached = true;
+          assignLoadFeed(n, seg, cur.id);
         } else if (n && (isVessel(n) || isPassThrough(n) || n.type === 'source'
                      || n.type === 'junction')) {
           /* A second chiller onto the same header is duty / assist / standby,
@@ -2112,10 +2139,11 @@ function buildTree() {
   S.segs.forEach(seg => {
     if (!seg.orphan) return;
     const na = nodeById(seg.a), nb = nodeById(seg.b);
-    const load = (na && isFourPipe(na)) ? na : (nb && isFourPipe(nb)) ? nb : null;
+    const load = (na && na.type === 'consumer') ? na : (nb && nb.type === 'consumer') ? nb : null;
     const other = load && (load.id === seg.a ? nb : na);
     if (!load || !other || !other.reached) return;
-    if (!assignLoadFeed(load, seg, other.id)) return;
+    if (isFourPipe(load) && !assignLoadFeed(load, seg, other.id)) return;
+    if (!isFourPipe(load)) assignLoadFeed(load, seg, other.id);
     seg.up = other.id;
     seg.down = load.id;
     seg.orphan = false;
@@ -3923,7 +3951,7 @@ const HINTS = {
   hx: 'Click where the heat exchanger sits. It always separates the circuits. Drag empty paper to pan.',
   pump: 'Click where the inline pump sits. Trace a run in and a run out. Indicative duty comes from the flow and the index head.',
   drycooler: 'Click where the dry cooler sits, usually on the return. Set the heat rejected and the leaving temperature.',
-  trace: 'Start on a ringed point. Click corners; finish on another point. In Concept, type the installed length on the run.',
+  trace: 'Start on a ringed point. Click corners; finish on another point. A buffer, pump or dry cooler is in the line — click through it and the load still rides on the pipe. In Concept, type the installed length on the run.',
   pan: 'Drag to move around the drawing. Space also pans in any tool.',
   tape: 'Click along the route; click a corner to turn. Plan metres only.',
   tee: 'Click along a run to cut a tee, then trace a branch off it.',
@@ -4515,6 +4543,16 @@ function finishTrace(endNode, endPort) {
              : (startN && isFourPipe(startN)) ? startN : null;
   if (four) pickLoadService(sg, four, afterService);
   else afterService();
+}
+
+function continueThrough(n, inPort, mode, leg) {
+  if (!isInLineVessel(n)) return;
+  const startPort = oppositePort(n, inPort);
+  const at0 = portPoint(n, startPort) || { x: n.x, y: n.y };
+  draft = { kind: 'trace', startNode: n.id, startPort,
+            pts: [{ x: at0.x, y: at0.y }],
+            mode: mode || 'pair', leg: leg || 'flow' };
+  toast('Through ' + (n.name || 'the vessel') + ' — carry on; the load still sits on this pipe');
 }
 
 /* A 4-pipe load takes two runs. The first free side is inferred from the
@@ -6684,6 +6722,7 @@ function buildSizerProject() {
     S.segs.filter(s => s.up === nodeId).forEach(sg => {
       const down = nodeById(sg.down);
       const isCons = down && down.type === 'consumer';
+      const isPrimaryFeed = isCons && (sameId(down.feedSeg, sg.id) || sameId(down.feedSegCool, sg.id));
       /* A run with nothing downstream carries no flow, so the sizer has
          nothing to size it from and reports it as an error. It is a stub left
          by a trace that stopped in mid air, and it is left out rather than
@@ -6694,11 +6733,11 @@ function buildSizerProject() {
       const single = sg.mode === 'single';
       const c = {
         id: cid,
-        ref: isCons
+        ref: isPrimaryFeed
           ? ((down.name || sg.ref) + (isFourPipe(down)
               ? (sg.service === 'cool' ? ' (cooling)' : ' (heating)') : ''))
           : sg.ref,
-        circuitType: isCons ? 'consumer' : 'main',
+        circuitType: isPrimaryFeed ? 'consumer' : 'main',
         parentId: parentCircuit,
         material: sg.material || S.settings.material,
         // the installed length: route on the plan plus any riser
@@ -6710,10 +6749,10 @@ function buildSizerProject() {
         fittingsMode: 'counted',
         fittingSchedule: singleLegSchedule(sg),
         fittings: Math.round(sg.equivPct) || 20,
-        dT: isCons
+        dT: isPrimaryFeed
           ? (parseFloat(loadSide(down, sg.service).dT) || dTnow) : dTnow,
         // the coil plus any valve on this run that holds a set differential
-        consumerLoad: isCons
+        consumerLoad: isPrimaryFeed
           ? +((parseFloat(loadSide(down, sg.service).coilKpa) || 0) + terminalValveKpa(sg)).toFixed(2) : 0,
         sizeOverride: sg.step || 0,
         // the critical path worked out here, ticked ready in the sizer
@@ -6731,10 +6770,10 @@ function buildSizerProject() {
           tag: it.tag, type: it.type, leg: it.leg, qty: itemQty(it, sg),
           fixedKpa: valveIsFixed(it) ? valveKpaOf(it) : 0,
         })),
-        traceCoilKpa: isCons ? (parseFloat(loadSide(down, sg.service).coilKpa) || 0) : 0,
+        traceCoilKpa: isPrimaryFeed ? (parseFloat(loadSide(down, sg.service).coilKpa) || 0) : 0,
         traceValveKpa: +(terminalValveKpa(sg)).toFixed(2),
       };
-      if (isCons) {
+      if (isPrimaryFeed) {
         const side = isFourPipe(down) ? segService(sg) : 'heat';
         const obj = loadSide(down, side);
         if (obj.basis === 'lps') { c.mode = 'fromFlow'; c.lps = +consumerFlow(down, side).toFixed(3); c.kw = 0; }
@@ -6750,6 +6789,13 @@ function buildSizerProject() {
         c.needsAuthority = valveNeedsAuthority(vt);
         c.fourPipe = !!isFourPipe(down);
         c.fourPipeSide = isFourPipe(down) ? side : '';
+      } else if (isCons) {
+        /* Other leg of the same load — the return, or the flow through a
+           buffer. Same rate, not a second terminal. */
+        const side = isFourPipe(down) ? segService(sg) : 'heat';
+        c.mode = 'fromFlow';
+        c.lps = +consumerFlow(down, side).toFixed(3);
+        c.kw = 0;
       } else {
         c.mode = 'fromChildren'; c.kw = 0; c.lps = 0;
       }
@@ -8593,7 +8639,9 @@ function applyToolPointer(ev, p) {
           draft.pts.push(squareCorner(prev, at));
         }
         draft.pts.push({ x: at.x, y: at.y });
+        const keepMode = draft.mode, keepLeg = draft.leg;
         finishTrace(node.id, endPort);
+        if (isInLineVessel(node)) continueThrough(node, endPort, keepMode, keepLeg);
         return;
       }
     }

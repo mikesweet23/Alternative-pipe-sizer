@@ -61,6 +61,15 @@ ok(/function drawInline/.test(trace),
 ok(/type !== 'drycooler'/.test(trace) && /dryCoolerKpaOn/.test(trace),
   'in-line dry cooler drop is split across the runs that meet it');
 
+ok(/function continueThrough/.test(trace) && /function isInLineVessel/.test(trace),
+  'tracing through a buffer, pump or cooler keeps the pencil down');
+ok(/second run onto a load is the other leg/.test(trace),
+  'a second run onto a load (flow through a buffer) is not a loop');
+ok(/if \(n\.feedSeg == null\) n\.feedSeg = seg\.id/.test(trace),
+  'the first feed onto a 2-pipe load is kept when the other leg arrives');
+ok(/isPrimaryFeed/.test(trace) && /Other leg of the same load/.test(trace),
+  'export does not invent a second consumer for the other leg');
+
 if (failed) {
   console.error('\n' + failed + ' check(s) failed');
   process.exit(1);

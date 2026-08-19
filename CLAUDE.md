@@ -312,6 +312,20 @@ the terminal rather than a blast-off on the return.
 
 Neither is a separator. Trace a run in and a run out.
 
+### Going through a buffer
+
+A two-port buffer is a piece of the main. The load past it is still on that
+pipe. Clicking the buffer while tracing **finishes the run onto it and keeps
+the pencil down** (`continueThrough`) so the next hop is the run out the
+other side.
+
+A second run onto a load that is already reached — the return, or the flow
+through a buffer when the return already got there — is the other leg of the
+same circuit, not a loop. `buildTree()` directs it so both legs carry the
+duty. `nodeDemand` still counts the load once at the plant. Export treats
+only `feedSeg` / `feedSegCool` as the consumer circuit; the other leg is a
+main with the same flow.
+
 ### Load kinds
 
 A consumer has a `kind` (`load`, `ahu`, `fcu`, `rad`, `drycooler`, `plate`,
