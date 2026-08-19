@@ -2820,6 +2820,31 @@ function hydraulicGroups() {
 }
 function hasSeparation() { return circuits.some(isSeparatorCircuit); }
 
+/* The flow that group's pump has to move — the whole circuit, not the
+   index branch. Two mains leaving a header or an HX would otherwise quote
+   only the heavier one, which is the index-run convention and the wrong
+   figure for selecting the machine. Prefer the separator's declared flows
+   (primary above it, secondary below it); fall back to the largest index
+   circuit if a project has no vessel figures. */
+function groupPumpLps(g) {
+  const openedBy = circuits.find(c => isSeparatorCircuit(c) && c.opensGroup === g.id);
+  if (openedBy) {
+    const q = parseFloat(openedBy.secondaryLps || openedBy.hxSecLps);
+    if (q > 0) return q;
+  }
+  const endsHere = circuits.filter(c => isSeparatorCircuit(c) && circuitGroup(c) === g.id);
+  if (endsHere.length) {
+    const q = Math.max.apply(null, endsHere.map(c => parseFloat(c.primaryLps || c.lps) || 0));
+    if (q > 0) return q;
+  }
+  let best = 0;
+  circuits.filter(c => c.isIndex && circuitGroup(c) === g.id).forEach(c => {
+    const r = calculateCircuit(c);
+    if (!r.error && r.vflow_ls > best) best = r.vflow_ls;
+  });
+  return best;
+}
+
 /* The path back to whatever pumps this circuit. In a plain system that is
    the plant, and this is what it has always been. Past a header it is the
    header: the walk stops there, because carrying on would add a secondary's
@@ -4934,15 +4959,15 @@ function renderPumpGroups(primaryGroup) {
 
   const rows = groups.map(g => {
     const idx = circuits.filter(c => c.isIndex && circuitGroup(c) === g.id);
-    let pipe = 0, load = 0, lps = 0, terminal = '';
+    let pipe = 0, load = 0, terminal = '';
     idx.forEach(c => {
       const r = calculateCircuit(c);
       if (r.error) return;
       pipe += (r.recommended ? r.pipeLoss_kPa : 0);
       load += (r.consumerLoad || 0) + separatorKpa(c);
-      if (r.vflow_ls > lps) lps = r.vflow_ls;
       if ((r.consumerLoad || 0) > 0 || isSeparatorCircuit(c)) terminal = c.ref;
     });
+    const lps = groupPumpLps(g);
     if (!terminal && idx.length) terminal = idx[idx.length - 1].ref;
     const total = pipe + load;
     const duty = total * (1 + safetyPct / 100);
@@ -5457,15 +5482,15 @@ function exportPDFReport() {
       const rows = hydraulicGroups().map(g => {
         const idx = circuits.filter(c => c.isIndex && circuitGroup(c) === g.id);
         if (!idx.length) return '';
-        let p = 0, l = 0, q = 0, term = '';
+        let p = 0, l = 0, term = '';
         idx.forEach(c => {
           const r = calculateCircuit(c);
           if (r.error) return;
           p += (r.recommended ? r.pipeLoss_kPa : 0);
           l += (r.consumerLoad || 0) + separatorKpa(c);
-          if (r.vflow_ls > q) q = r.vflow_ls;
           if ((r.consumerLoad || 0) > 0 || isSeparatorCircuit(c)) term = c.ref;
         });
+        const q = groupPumpLps(g);
         const duty = (p + l) * (1 + safetyPct / 100);
         return '<tr><td>' + escHtml(g.label) + '</td><td>' + escHtml(term) + '</td>'
           + '<td class="n">' + q.toFixed(2) + '</td><td class="n">' + p.toFixed(1) + '</td>'
