@@ -279,16 +279,33 @@
   }
 
   /* the running instruction while a tool is armed
-     left AND right are set so the bar is centred with width:fit-content.
-     left:50% plus a wrap made a tall block over the drawing that swallowed clicks. */
+     Docked top-right so it does not sit over the middle of a fitted sheet
+     (where a newly placed plant usually lands). Not full-width: a wrap that
+     spanned the board swallowed clicks and blocked panning. × hides the tip
+     and leaves the tool armed. */
   .hint {
-    position: absolute; left: 12px; right: 12px; top: 12px; z-index: 7;
-    width: fit-content; max-width: calc(100% - 24px); margin: 0 auto;
-    background: var(--graphite); color: var(--paper); padding: 8px 15px;
+    position: absolute; right: 12px; left: auto; top: 12px; z-index: 7;
+    width: fit-content; max-width: min(420px, calc(100% - 24px)); margin: 0;
+    background: var(--graphite); color: var(--paper); padding: 8px 12px;
     border-radius: 4px; font-size: 12.5px; box-shadow: 0 4px 18px rgba(0,0,0,.25);
-    display: none; align-items: center; gap: 12px; flex-wrap: wrap;
+    display: none; align-items: center; gap: 10px; flex-wrap: wrap;
+    pointer-events: auto;
   }
   .hint.on { display: flex; }
+  .hint.min { max-width: none; padding: 5px 8px; gap: 8px; flex-wrap: nowrap; }
+  .hint.min #hintTxt, .hint.min #hintMore { display: none; }
+  .hint .hmore, .hint .hshow {
+    background: none; border: none; color: #cdd3dc; font-size: 11.5px;
+    font-weight: 600; padding: 2px 4px; text-decoration: underline; cursor: pointer;
+  }
+  .hint .hmore:hover, .hint .hshow:hover { color: #fff; }
+  .hint .hshow { display: none; }
+  .hint.min .hshow { display: inline; }
+  .hint .xmin {
+    background: none; border: none; color: #98a0ad; font-size: 16px; line-height: 1;
+    padding: 0 2px; cursor: pointer;
+  }
+  .hint .xmin:hover { color: #fff; }
   .hint kbd {
     font-family: 'Azeret Mono', monospace; font-size: 10.5px; background: #3b424e;
     padding: 2px 6px; border-radius: 3px; color: #dfe4ea;
@@ -316,7 +333,8 @@
   .hint.alt { background: var(--measure); color: #241a00; }
   .hint.alt kbd { background: rgba(0,0,0,.16); color: #241a00; }
   .hint.alt .hopt { color: #3d2c00; }
-  .hint.alt .x { color: #6b5000; }
+  .hint.alt .x, .hint.alt .xmin { color: #6b5000; }
+  .hint.alt .hmore, .hint.alt .hshow { color: #3d2c00; }
   .hint .hopt input { width: 15px; height: 15px; margin: 0; }
 
   /* ---- valve palette ---- */
@@ -644,11 +662,13 @@
 
       <div class="hint" id="hint">
         <span id="hintTxt"></span>
+        <button type="button" class="hmore" id="hintMore" hidden>More</button>
         <label class="hopt" title="On, corners lock to horizontal, vertical and 45°. Off, every corner is a free angle. Hold Alt to flip it for one click.">
           <input type="checkbox" id="orthoChk" checked> Square up <kbd>O</kbd></label>
         <span class="hopt" id="hintAngle" title="The angle of the leg you are drawing"></span>
         <button class="hfin" id="hintFin" title="End here (or double-click, or press Enter)">Finish</button>
-        <button class="x" id="hintX" title="Cancel">&times;</button>
+        <button type="button" class="hshow" id="hintShow" title="Show the tip again">Tip</button>
+        <button type="button" class="xmin" id="hintX" title="Hide this tip — the tool stays armed">&times;</button>
       </div>
 
       <div class="vpal" id="vpal">
@@ -3337,23 +3357,54 @@ function buildRail() {
 }
 
 const HINTS = {
-  calib: 'Click two points a known distance apart on the drawing, then type the real dimension.',
-  source: 'Click where the plant sits.',
-  consumer: 'Click where the load sits. Double-click any component to edit it.',
-  trace: 'Start on the ringed point. Click to add corners &mdash; every corner becomes a '
-       + 'point you can branch from later. Finish on another component, tee or corner. '
-       + 'Corners pull to 90&deg; and 45&deg;; hold <kbd>Alt</kbd> for a free angle, '
-       + 'counted as a made set of two elbows &mdash; or to tee into the middle of a run '
-       + 'you have already traced.',
-  pan: 'Drag to move around the drawing.',
-  tape: 'Click along the route; click again at a corner to change direction. Same square lock '
-      + 'as trace; <kbd>Alt</kbd> frees one corner. Double-click or Finish to keep it. Plan '
-      + 'metres only &mdash; not a pipe, no rise, not on the schedule.',
-  tee: 'Click anywhere along a run to cut a tee into it. The run splits at that point, '
-     + 'and you can trace a branch off it straight away. Shares and roll-up recalculate on their own.',
-  valve: 'Pick a valve or a set, then click the run it goes on &mdash; it snaps to the pipe. '
-       + 'The choice stays armed, so keep clicking. Drag one along its run with Select.',
+  calib: 'Click two points a known distance apart, then type the real dimension.',
+  source: 'Click where the plant sits. Drag empty paper to pan.',
+  consumer: 'Click where the load sits. Drag empty paper to pan.',
+  llh: 'Click where the header sits. Drag empty paper to pan.',
+  buffer: 'Click where the buffer sits. Drag empty paper to pan.',
+  trace: 'Start on a ringed point. Click corners; finish on another point.',
+  pan: 'Drag to move around the drawing. Space also pans in any tool.',
+  tape: 'Click along the route; click a corner to turn. Plan metres only.',
+  tee: 'Click along a run to cut a tee, then trace a branch off it.',
+  valve: 'Pick a valve or a set, then click the pipe. Drag empty paper to pan.',
 };
+const HINTS_MORE = {
+  trace: 'Every corner becomes a point you can branch from later. Corners pull to 90&deg; '
+       + 'and 45&deg;; hold <kbd>Alt</kbd> for a free angle, counted as a made set of two '
+       + 'elbows &mdash; or to tee into the middle of a run already traced. '
+       + 'Space-drag or shift-drag pans without leaving Trace. &times; hides this tip.',
+  tape: 'Same square lock as trace; <kbd>Alt</kbd> frees one corner. Double-click or Finish '
+       + 'to keep it. Not a pipe, no rise, not on the schedule. Space-drag to pan.',
+};
+
+/* The tip sits on the drawing. Hiding it must not cancel the tool — that is
+   what dumped people back on Select when they only wanted the box out of the
+   way so they could pan or pick up a plant sitting underneath it. */
+let hintMin = false, hintLong = false;
+function syncHint() {
+  const h = el('hint');
+  if (!h) return;
+  const more = el('hintMore');
+  if (!HINTS[tool]) {
+    h.classList.remove('on', 'min', 'trace', 'tape', 'drawing');
+    return;
+  }
+  const text = hintLong && HINTS_MORE[tool] ? HINTS[tool] + ' ' + HINTS_MORE[tool] : HINTS[tool];
+  el('hintTxt').innerHTML = text;
+  if (more) {
+    more.hidden = !HINTS_MORE[tool];
+    more.textContent = hintLong ? 'Less' : 'More';
+  }
+  h.classList.add('on');
+  h.classList.toggle('min', hintMin);
+  h.classList.toggle('trace', tool === 'trace' || tool === 'tape');
+  h.classList.toggle('tape', tool === 'tape');
+  h.classList.toggle('drawing', !!(draft && (draft.kind === 'trace' || draft.kind === 'tape') && draft.pts.length > 1));
+  const oc = el('orthoChk');
+  if (oc) oc.checked = !!S.settings.ortho;
+}
+function hideHint() { hintMin = true; syncHint(); }
+function showHint() { hintMin = false; syncHint(); }
 
 /* ---------- the override key ----------
    One key, one meaning: ignore the constraint that is in the way. While
@@ -3384,15 +3435,10 @@ function setTool(t) {
   }
   tool = t;
   draft = null; hoverPt = null;
+  hintLong = false;
   buildRail();
-  el('scroller').className = (t === 'pan' ? 'pan' : '');
-  const h = el('hint');
-  if (HINTS[t]) { el('hintTxt').innerHTML = HINTS[t]; h.classList.add('on'); }
-  else h.classList.remove('on');
-  h.classList.toggle('trace', t === 'trace' || t === 'tape');
-  h.classList.toggle('tape', t === 'tape');
-  h.classList.toggle('drawing', !!(draft && draft.pts && draft.pts.length > 1));
-  el('orthoChk').checked = !!S.settings.ortho;
+  syncPanCursor();
+  syncHint();
   el('vpal').classList.toggle('on', t === 'valve');
   if (t === 'valve') buildValvePalette();
   render();
@@ -7160,6 +7206,33 @@ function view3D(v) {
    ========================================================================== */
 let drag = null;      // dragging a node
 let panning = null;
+let pendingPan = null; // empty-paper press: drag pans, click still does the tool
+let spacePan = false;
+
+function syncPanCursor() {
+  const scroller = el('scroller');
+  if (!scroller) return;
+  const grab = tool === 'pan' || spacePan || !!panning;
+  scroller.classList.toggle('pan', grab);
+  scroller.classList.toggle('down', !!panning);
+}
+function beginPan(ev) {
+  panning = { sx: ev.clientX, sy: ev.clientY, l: sc.scrollLeft, t: sc.scrollTop };
+  pendingPan = null;
+  syncPanCursor();
+  sc.setPointerCapture(ev.pointerId);
+}
+function drawingHit(p) {
+  return !!(hitItem(p) || hitPort(p) || hitNode(p) || hitMeasure(p) || hitSeg(p));
+}
+/* Mid-trace / mid-tape / mid-scale a click on paper is a point, not a pan.
+   Everywhere else, a drag on empty paper pans and a click still does the tool
+   — so a plant under the old full-width tip can be reached once the tip is
+   hidden, and the sheet can be moved without switching to Pan. */
+function canPendingPan() {
+  if (draft && (draft.kind === 'trace' || draft.kind === 'tape' || draft.kind === 'calib')) return false;
+  return tool !== 'pan';
+}
 
 const sc = el('scroller');
 
@@ -7168,12 +7241,22 @@ sc.addEventListener('pointerdown', ev => {
   setOverride(ev.altKey);
   const p = toDwg(ev);
 
-  if (tool === 'pan' || ev.button === 1 || ev.shiftKey) {
-    panning = { sx: ev.clientX, sy: ev.clientY, l: sc.scrollLeft, t: sc.scrollTop };
-    sc.classList.add('down');
+  if (tool === 'pan' || ev.button === 1 || ev.shiftKey || spacePan) {
+    beginPan(ev);
+    return;
+  }
+
+  if (canPendingPan() && !drawingHit(p)) {
+    pendingPan = { sx: ev.clientX, sy: ev.clientY, l: sc.scrollLeft, t: sc.scrollTop,
+                   p: { x: p.x, y: p.y }, button: ev.button };
     sc.setPointerCapture(ev.pointerId);
     return;
   }
+
+  applyToolPointer(ev, p);
+});
+
+function applyToolPointer(ev, p) {
 
   if (tool === 'select') {
     /* Valves are tested before nodes and runs: they are small, they sit on
@@ -7290,9 +7373,17 @@ sc.addEventListener('pointerdown', ev => {
     draft.pts.push(orthoPoint(draft.pts[draft.pts.length - 1], p));
     render();
   }
-});
+}
 
 sc.addEventListener('pointermove', ev => {
+  if (pendingPan && !panning) {
+    const dx = ev.clientX - pendingPan.sx, dy = ev.clientY - pendingPan.sy;
+    if (Math.hypot(dx, dy) > 6) {
+      panning = { sx: pendingPan.sx, sy: pendingPan.sy, l: pendingPan.l, t: pendingPan.t };
+      pendingPan = null;
+      syncPanCursor();
+    }
+  }
   if (panning) {
     sc.scrollLeft = panning.l - (ev.clientX - panning.sx);
     sc.scrollTop  = panning.t - (ev.clientY - panning.sy);
@@ -7347,7 +7438,13 @@ sc.addEventListener('pointermove', ev => {
 });
 
 function endPointer(ev) {
-  if (panning) { panning = null; sc.classList.remove('down'); }
+  if (pendingPan && !panning) {
+    const held = pendingPan;
+    pendingPan = null;
+    applyToolPointer(ev, held.p);
+  }
+  if (panning) { panning = null; }
+  syncPanCursor();
   if (drag) { if (drag.moved) openInspector(); drag = null; }
   try { sc.releasePointerCapture(ev.pointerId); } catch (e) {}
 }
@@ -7411,6 +7508,11 @@ document.addEventListener('keydown', ev => {
     if (el('modal').classList.contains('on')) { closeModal(); return; }
     if (draft) { draft = null; render(); return; }
     setTool('select'); return;
+  }
+  if (ev.code === 'Space' || ev.key === ' ') {
+    ev.preventDefault();
+    if (!spacePan) { spacePan = true; syncPanCursor(); }
+    return;
   }
   if (ev.key === 'Enter' && draft) {
     finishDraftInPlace();
@@ -7516,8 +7618,13 @@ el('bSched').addEventListener('click', () => {
 });
 el('bSchedClose').addEventListener('click', () => el('drawer').classList.remove('on'));
 el('insClose').addEventListener('click', closeInspector);
-el('hintX').addEventListener('click', () => setTool('select'));
+el('hint').addEventListener('pointerdown', ev => ev.stopPropagation());
+el('hint').addEventListener('click', ev => ev.stopPropagation());
+el('hintX').addEventListener('click', ev => { ev.preventDefault(); hideHint(); });
+el('hintShow').addEventListener('click', ev => { ev.preventDefault(); showHint(); });
+el('hintMore').addEventListener('click', ev => { ev.preventDefault(); hintLong = !hintLong; syncHint(); });
 el('hintFin').addEventListener('click', () => { finishDraftInPlace(); });
+el('orthoChk').addEventListener('click', ev => ev.stopPropagation());
 
 el('zRot').addEventListener('click', rotateDialog);
 el('zIn').addEventListener('click', () => setZoom(zoom * 1.2));
@@ -7547,8 +7654,11 @@ document.addEventListener('drop', e => {
 });
 
 window.addEventListener('keydown', e => { setOverride(e.altKey); });
-window.addEventListener('keyup',   e => { setOverride(e.altKey); });
-window.addEventListener('blur',    () => setOverride(false));
+window.addEventListener('keyup',   e => {
+  setOverride(e.altKey);
+  if (e.code === 'Space' || e.key === ' ') { spacePan = false; syncPanCursor(); }
+});
+window.addEventListener('blur',    () => { setOverride(false); spacePan = false; syncPanCursor(); });
 
 window.addEventListener('resize', () => {
   if (S.img) render();

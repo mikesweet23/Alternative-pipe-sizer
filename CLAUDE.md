@@ -551,9 +551,12 @@ the drawing, the scale, the traced geometry and any tape measures
   Tee tool does the same cut without holding anything. Register Alt on every
   `keydown`, not only on the Alt key or on mouse move — otherwise the first
   free-angle click is missed. The live angle badge (`#hintAngle`) goes
-  accent-coloured when the leg is not a multiple of 45°. The hint bar is
-  `left` and `right` set with `width: fit-content` so it can wrap to two rows
-  without becoming a tall block that swallows clicks on the drawing.
+  accent-coloured when the leg is not a multiple of 45°. The hint bar is a
+  short card docked **top-right**, not a full-width banner over the drawing.
+  × **hides the tip and leaves the tool armed** — it must not switch to
+  Select. Tip brings it back. More opens the longer note. Drag empty paper
+  to pan, or hold Space / Shift, or use the middle button; a plant under the
+  old banner can then be picked up with Select (`V`) without fighting the box.
 - **Tape (`M`) is a ruler, not a pipe.** After the scale is set. Click along
   the route; the same square lock as trace; Alt frees one corner. Plan metres
   only — no rise, not on the schedule, not drawn in 3D. Persist in
