@@ -1990,6 +1990,7 @@ function inferCoolFromNode(nodeId) {
   }
   return false;
 }
+function sameId(a, b) { return a != null && b != null && Number(a) === Number(b); }
 function assignLoadFeed(n, seg, fromId) {
   if (!n || n.type !== 'consumer') {
     if (n) n.feedSeg = seg.id;
@@ -1997,16 +1998,16 @@ function assignLoadFeed(n, seg, fromId) {
   }
   if (!isFourPipe(n)) { n.feedSeg = seg.id; return true; }
   let svc = seg.service === 'cool' || seg.service === 'heat' ? seg.service : null;
+  const heatTaken = n.feedSeg != null && !sameId(n.feedSeg, seg.id);
+  const coolTaken = n.feedSegCool != null && !sameId(n.feedSegCool, seg.id);
   if (!svc) {
-    const heatTaken = n.feedSeg != null && n.feedSeg !== seg.id;
-    const coolTaken = n.feedSegCool != null && n.feedSegCool !== seg.id;
     if (heatTaken && !coolTaken) svc = 'cool';
     else if (coolTaken && !heatTaken) svc = 'heat';
     else if (heatTaken && coolTaken) return false;
     else svc = inferCoolFromNode(fromId) ? 'cool' : 'heat';
   }
-  if (svc === 'cool' && n.feedSegCool != null && n.feedSegCool !== seg.id) return false;
-  if (svc === 'heat' && n.feedSeg != null && n.feedSeg !== seg.id) return false;
+  if (svc === 'cool' && coolTaken) return false;
+  if (svc === 'heat' && heatTaken) return false;
   seg.service = svc;
   if (svc === 'cool') n.feedSegCool = seg.id;
   else n.feedSeg = seg.id;
@@ -2046,6 +2047,25 @@ function buildTree() {
         q.push({ id: other, seg: seg.id, depth: cur.depth + 1 });
     });
   }
+  /* A second circuit onto a 4-pipe load can sit as an orphan if the load
+     was already reached by the first run and the BFS never came back. Any
+     leftover that still touches the load, whose other end has been reached,
+     is the other service — attach it. */
+  S.segs.forEach(seg => {
+    if (!seg.orphan) return;
+    const na = nodeById(seg.a), nb = nodeById(seg.b);
+    const load = (na && isFourPipe(na)) ? na : (nb && isFourPipe(nb)) ? nb : null;
+    const other = load && (load.id === seg.a ? nb : na);
+    if (!load || !other || !other.reached) return;
+    if (!assignLoadFeed(load, seg, other.id)) return;
+    seg.up = other.id;
+    seg.down = load.id;
+    seg.orphan = false;
+    const feed = other.feedSeg != null ? segById(other.feedSeg) : null;
+    seg.parentSeg = feed ? feed.id : null;
+    seg.depth = feed ? (feed.depth || 0) + 1 : 0;
+    load.reached = true;
+  });
   return { roots, orphans: S.segs.filter(s => s.orphan) };
 }
 
@@ -4110,6 +4130,17 @@ function snapAt(p, skipId) {
 
   const h = hitSeg(p, 12);
   if (!h) return null;
+  /* Tracing the second circuit of a 4-pipe load: the first run lies on the
+     way to the plant, so a click meant for the plant lands on that pipe and
+     cuts a tee. Jump through to the far end instead — that is the plant or
+     the header the cooling circuit is trying to reach. */
+  if (skipId && (h.seg.a === skipId || h.seg.b === skipId)) {
+    const startN = nodeById(skipId);
+    if (startN && isFourPipe(startN)) {
+      const far = nodeById(h.seg.a === skipId ? h.seg.b : h.seg.a);
+      if (far) return Object.assign(snapNode(far, p), { d: 0, pulled: true });
+    }
+  }
   /* Holding the override key, or turning the rule off in Pipe & basis, cuts
      the tee exactly where the cursor is. This is how you go back along a run
      that is already traced and branch off the middle of it. */
@@ -4213,17 +4244,24 @@ function finishTrace(endNode, endPort) {
    plant (a chiller prefers cooling); if both sides are still free and the
    plant is not a chiller, it is asked. */
 function pickLoadService(sg, load, then) {
-  const others = S.segs.filter(s => s.id !== sg.id && (s.a === load.id || s.b === load.id));
-  const used = {};
-  others.forEach(s => { used[s.service === 'cool' ? 'cool' : 'heat'] = true; });
-  if (used.heat && used.cool) {
+  /* Occupancy is the feeds the tree actually assigned, not "every segment
+     that happens to touch the box". A leftover orphan or a paired-looking
+     label used to count as the other side and refuse the real cooling run. */
+  buildTree();
+  const heatTaken = load.feedSeg != null && !sameId(load.feedSeg, sg.id);
+  const coolTaken = load.feedSegCool != null && !sameId(load.feedSegCool, sg.id);
+  if (heatTaken && coolTaken) {
     S.segs = S.segs.filter(s => s.id !== sg.id);
     toast('Both sides of ' + (load.name || 'this load') + ' already have a run');
     render();
     return;
   }
-  if (used.heat && !used.cool) { sg.service = 'cool'; then(); return; }
-  if (used.cool && !used.heat) { sg.service = 'heat'; then(); return; }
+  /* The tree may have inferred a service on this new run. Drop that when
+     the other side is still free: a second run is forced onto the free
+     side, and the first run is still asked (unless a chiller is upstream). */
+  if (heatTaken && !coolTaken) { sg.service = 'cool'; then(); return; }
+  if (coolTaken && !heatTaken) { sg.service = 'heat'; then(); return; }
+  delete sg.service;
   const otherId = sg.a === load.id ? sg.b : sg.a;
   if (inferCoolFromNode(otherId)) { sg.service = 'cool'; then(); return; }
   modal('Heating or cooling?',
@@ -5159,7 +5197,9 @@ function segForm(sg) {
     +   (S.concept ? ' <em style="color:var(--muted)">type it — there is no drawing to measure</em>' : '')
     +   '</span><input type="number" data-f="lengthOverride" step="0.1" min="0" value="'
     +   ((parseFloat(sg.lengthOverride) || 0) > 0 ? sg.lengthOverride : '') + '"></label>'
-    + (nodeById(sg.down) && isFourPipe(nodeById(sg.down))
+    + ((nodeById(sg.down) && isFourPipe(nodeById(sg.down)))
+        || (nodeById(sg.a) && isFourPipe(nodeById(sg.a)))
+        || (nodeById(sg.b) && isFourPipe(nodeById(sg.b)))
         ? '<label class="fld"><span>Service on this 4-pipe load</span><select data-f="service">'
           + '<option value="heat"' + (sg.service !== 'cool' ? ' selected' : '') + '>Heating</option>'
           + '<option value="cool"' + (sg.service === 'cool' ? ' selected' : '') + '>Cooling</option>'
@@ -5432,6 +5472,18 @@ function wireInspector() {
     });
   });
   el('insBody').querySelectorAll('[data-f]').forEach(inp => {
+    /* Write the typed length as the keys go in. Rebuilding the inspector
+       here would steal the caret, which is why the change handler used to
+       be the only write — and why a click onto the sheet could lose 25 m. */
+    if (inp.getAttribute('data-f') === 'lengthOverride') {
+      inp.addEventListener('input', () => {
+        const obj = inspectorTarget(inp);
+        if (!obj) return;
+        const v = parseFloat(inp.value);
+        if (!(v > 0) || inp.value.trim() === '') delete obj.lengthOverride;
+        else obj.lengthOverride = v;
+      });
+    }
     inp.addEventListener('change', () => {
       const node = sel.kind === 'node' ? nodeById(sel.id) : null;
       const obj = inspectorTarget(inp);
@@ -8116,7 +8168,7 @@ function applyToolPointer(ev, p) {
       return;
     }
     // a click on anything already there closes the run onto it
-    const sn = snapAt(p);
+    const sn = snapAt(p, draft.startNode);
     if (sn) {
       if (sn.kind === 'node' && sn.node.id === draft.startNode) {
         toast('That is where this run started'); return;

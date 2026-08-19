@@ -264,8 +264,16 @@ The inspector shows Heating / Cooling tabs. Each side gets its own feed
 consumer circuit, named `"Load (heating)"` / `"Load (cooling)"`.
 
 A second run into a 4-pipe load is not a loop. `buildTree()` assigns it to
-the unused service. A chiller upstream prefers cooling; otherwise the first
-free side is asked.
+the unused service, including a leftover that still touches the load after
+the first run already reached it. Occupancy is `feedSeg` / `feedSegCool`,
+not “every segment that happens to touch the box” — a dangling orphan must
+not refuse the real cooling run.
+
+The first circuit lies on the way to the plant, so a click meant for the
+plant would otherwise land on that pipe and cut a tee. Tracing from a
+4-pipe load jumps through the existing feed to its far end.
+
+A chiller upstream prefers cooling; otherwise the first free side is asked.
 
 ### Concept mode
 

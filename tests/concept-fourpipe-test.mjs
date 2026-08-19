@@ -56,6 +56,14 @@ ok(/4-pipe/.test(trace) && /data-loadtab="heat"/.test(trace) && /data-loadtab="c
   'load inspector has heating and cooling tabs');
 ok(/function pickLoadService/.test(trace),
   'tracing onto a 4-pipe load asks which service');
+ok(/Occupancy is the feeds the tree actually assigned/.test(trace),
+  '4-pipe occupancy uses assigned feeds, not every touching segment');
+ok(/second circuit onto a 4-pipe load/.test(trace),
+  'buildTree attaches a leftover second circuit after the BFS');
+ok(/snapAt\(p, draft\.startNode\)/.test(trace),
+  'finishing a trace skips the node it started on');
+ok(/Jump through to the far end/.test(trace),
+  'a 4-pipe second run snaps through the first circuit to the plant');
 ok(/\(cooling\)/.test(trace) && /fourPipeSide/.test(trace),
   'export names the two sides and tags fourPipeSide');
 
