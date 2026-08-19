@@ -285,6 +285,32 @@ nothing to measure. Click a run and the inspector focuses that box. That is
 how a concept design gets concept pipe sizes before a layout exists.
 `/` opens Trace so that is the first thing you see.
 
+### Tracing: two pipes or one, dots on a run, edge rings
+
+Arming **Trace** opens Two pipes / Single pipe (flow) / Single pipe (return)
+immediately. That choice is `settings.traceMode` / `traceLeg` and goes on the
+draft.
+
+There is **no Tee tool**. Hover a run and dots appear on the pipe you can
+branch from: a pair shows flow and return; a single pipe shows one. Click a
+dot to start or finish from that pipe. A single-pipe trace can snap to one
+leg of a pair.
+
+The connection ring sits on the **drawn** outline of a load or vessel. Click
+it to join and **release** — the pencil drops. Do not keep a hop going after
+that click.
+
+**Double-click empty paper** zooms in on that spot (Shift-double-click zooms
+out). Then a pair can be picked as two pipes. Ctrl-wheel still zooms toward
+the cursor.
+
+Valves are **not** dropped when a run reaches a load. Place them from the
+palette, or Fit the terminal set on the load. The palette has a 3-port
+control valve, a **3-port mixing valve** (`ctrl3Mix` / 3MV) and a **3-port
+diverting valve** (`ctrl3Div` / 3DV). A load arrangement can be 3-port
+diverting or 3-port mixing (`threePort` / `threePortMix`); the simulator
+knows both.
+
 ### Several plants on one header
 
 Duty / assist / standby lives on the plant (`dutyRole`). Plants that share a
@@ -315,9 +341,8 @@ Neither is a separator. Trace a run in and a run out.
 ### Going through a buffer
 
 A two-port buffer is a piece of the main. The load past it is still on that
-pipe. Clicking the buffer while tracing **finishes the run onto it and keeps
-the pencil down** (`continueThrough`) so the next hop is the run out the
-other side.
+pipe. Clicking the edge ring on the buffer **finishes the run and drops the
+pencil** — no extra hop. Start again from the far edge for the run out.
 
 A second run onto a load that is already reached — the return, or the flow
 through a buffer when the return already got there — is the other leg of the
@@ -645,10 +670,8 @@ the drawing, the scale, the traced geometry and any tape measures
   anything with it, so an old take-off opens locked and a deliberate free-form
   project stays free.
 - **Alt is the override key, and it means one thing: ignore the constraint in
-  the way.** Corners are one of the two constraints it lifts. Over a run
-  already traced it cuts a tee exactly where the cursor is rather than being
-  pulled to the nearest corner. The hint bar turns amber while it is held. The
-  Tee tool does the same cut without holding anything. Register Alt on every
+  the way.** Corners are the constraint it lifts. Branching is the hover-dot
+  on a run (a pair shows flow and return). There is no Tee tool. Register Alt on every
   `keydown`, not only on the Alt key or on mouse move — otherwise the first
   free-angle click is missed. The live angle badge (`#hintAngle`) goes
   accent-coloured when the leg is not a multiple of 45°. The hint bar is a
@@ -752,7 +775,7 @@ the drawing, the scale, the traced geometry and any tape measures
   rolls up own load plus everything downstream (`segDuty` / `nodeDemand`).
   Do not overwrite a section with the plant total. Flow and return are the
   same volume twice, not one pot. A 3-way joint is drawn as a T, not only a
-  circle. Cut one in later with the Tee tool or Alt-while-tracing; shares
+  circle. Cut one in later by clicking a hover-dot on a run; shares
   recalculate on their own.
 - **Flow is stored as l/s.** `settings.volUnit` is `'lps'` or `'m3h'` — how
   the number is typed and shown. 1 l/s = 3.6 m³/h. Same toggle on the plant
@@ -765,12 +788,9 @@ the drawing, the scale, the traced geometry and any tape measures
   isolating valves face each other across the pair and the strainer faces the
   regulating valve. Staggering the legs put one leg's symbols in the other's
   gaps, which is exactly where they overlap when you zoom in to read them.
-- **A run traced to a load fits its own terminal set**, matched to the load's
-  control arrangement via `setForValveType()`, standing `setOffsetM` off the
-  coil at `setSpacingM` centres — both real metres, not screen pixels, which
-  is what makes zoom work. `VALVE_SETS[].items` are listed **in the order they
-  are met walking down the run**, away from plant; get that order wrong and
-  the automatic fit comes out back to front.
+- **Valves are placed afterwards**, from the palette or Fit the terminal set
+  on the load. A run does not drop a set on its own. `VALVE_SETS[].items` are
+  listed **in the order they are met walking down the run**, away from plant.
 - **The control valve belongs to the terminal, not to the run.** A 2-port,
   3-port or PICV carries `atLoad: true`: it is drawn on a short stub off the
   load rather than in the line with the isolating valves, and it only appears

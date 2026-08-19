@@ -61,8 +61,8 @@ ok(/function drawInline/.test(trace),
 ok(/type !== 'drycooler'/.test(trace) && /dryCoolerKpaOn/.test(trace),
   'in-line dry cooler drop is split across the runs that meet it');
 
-ok(/function continueThrough/.test(trace) && /function isInLineVessel/.test(trace),
-  'tracing through a buffer, pump or cooler keeps the pencil down');
+ok(/function isInLineVessel/.test(trace) && !/function continueThrough/.test(trace),
+  'an in-line vessel finishes and drops the pencil — no extra hop');
 ok(/second run onto a load is the other leg/.test(trace),
   'a second run onto a load (flow through a buffer) is not a loop');
 ok(/if \(n\.feedSeg == null\) n\.feedSeg = seg\.id/.test(trace),
