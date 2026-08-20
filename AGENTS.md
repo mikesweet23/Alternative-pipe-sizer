@@ -19,11 +19,12 @@ node tests/concept-fourpipe-test.mjs
 node tests/concept-pump-snap-test.mjs
 node tests/concept-snap-trace-test.mjs
 node tests/concept-cooler-offload-test.mjs
+node tests/concept-section-height-test.mjs
 ```
 
 Concept is schematic: after tracing a run, type **Installed length** on that run. Check fails with "do not reach" / "no size" when a click near a load did not actually join — finish on the ringed edge of the box, not a free point beside it. Corners lock to 90°/45°; Alt frees one hop.
 
-Trace opens **Two pipes / Single pipe** as soon as the tool is armed. Hover a run for branch dots (a pair shows flow and return). Click the edge ring on a load or vessel to connect and drop the pencil. Double-click empty paper to zoom in on that spot. There is no Tee tool and no automatic terminal set.
+Trace opens **Two pipes / Single pipe** as soon as the tool is armed. Hover a run for branch dots (a pair shows flow and return). Click the edge ring on a load or vessel to connect and drop the pencil. Double-click empty paper to zoom in on that spot. There is no Tee tool and no automatic terminal set. Set **Height** in the hint bar before a click to start a riser — each point on the run has its own, the same as AC Trace, and 3D check draws them. Click a run to edit the list, or Level / Set all.
 
 Several chillers or boilers on one header are one primary (duty / assist / standby on the plant). An inline **Pump** (`K`) shows indicative flow, index head and absorbed kW; an inline **Cooler** (`Y`) sits in the line and does not open a new circuit.
 
