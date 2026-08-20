@@ -1653,6 +1653,66 @@ function isPassThrough(n) {
   return n && (n.type === 'pump' || n.type === 'drycooler'
             || (n.type === 'buffer' && !isSeparator(n)));
 }
+/* A dry cooler with one run is an off-loader: the circuit can be diverted
+   onto it (a 3-port on the return is the usual case). It is not a broken
+   in-line, and it is not another heating load — the heat is already in the
+   water. The branch is sized from the reject duty, or from the circuit if
+   that box is still empty. Two or more runs means it sits in the line. */
+function coolerRunCount(n) {
+  if (!n) return 0;
+  return S.segs.filter(s => s.a === n.id || s.b === n.id).length;
+}
+function isOffloader(n) {
+  return !!(n && n.type === 'drycooler' && coolerRunCount(n) <= 1);
+}
+function coolerRejectKw(n) { return Math.max(0, parseFloat(n && n.rejectKw) || 0); }
+function coolerDT(n) {
+  const v = parseFloat(n && n.dT);
+  return (v > 0) ? v : (S.settings.dT || 20);
+}
+function coolerOwnLps(n) {
+  const kw = coolerRejectKw(n);
+  return kw > 0 ? flowFromKw(kw, coolerDT(n)) : 0;
+}
+/* Flow on the circuit this stub left. Walk toward loads and stop at
+   the plant or a header — going the other way around the pair would
+   count the same load twice. A tee itself carries nothing, so asking
+   nodeDemand at the join is not enough. */
+function circuitLpsFrom(nodeId, fromId, seen) {
+  seen = seen || new Set();
+  if (nodeId == null || nodeId === fromId || seen.has(nodeId)) return 0;
+  seen.add(nodeId);
+  const n = nodeById(nodeId);
+  if (!n || isOffloader(n)) return 0;
+  if (n.type === 'consumer') return nodeDemand(nodeId).lps || 0;
+  if (n.type === 'source' || isSeparator(n)) return 0;
+  let tot = 0;
+  S.segs.forEach(s => {
+    const oth = s.a === nodeId ? s.b : (s.b === nodeId ? s.a : null);
+    if (oth == null || oth === fromId) return;
+    tot += circuitLpsFrom(oth, nodeId, seen);
+  });
+  return tot;
+}
+function coolerCircuitLps(n) {
+  const feed = S.segs.find(s => s.a === n.id || s.b === n.id);
+  if (!feed) return 0;
+  const jid = (feed.up !== null && feed.up !== undefined)
+    ? feed.up
+    : (feed.a === n.id ? feed.b : feed.a);
+  if (jid == null || jid === n.id) return 0;
+  const rolled = nodeDemand(jid).lps || 0;
+  if (rolled > 0) return rolled;
+  return circuitLpsFrom(jid, n.id);
+}
+function coolerSegDuty(sg) {
+  const n = nodeById(sg && sg.down);
+  if (!isOffloader(n)) return null;
+  const own = coolerOwnLps(n);
+  const lps = own > 0 ? own : coolerCircuitLps(n);
+  const kw = own > 0 ? coolerRejectKw(n) : kwFromFlow(lps, coolerDT(n));
+  return { kw, lps, n: lps > 0 ? 1 : 0, sizeLps: lps, offload: true };
+}
 /* A 2-port buffer, pump or dry cooler is a piece of the main. The load
    past it still sits on that pipe. Clicking one finishes the run onto the
    edge ring and drops the pencil — start again from the far side. */
@@ -1837,6 +1897,7 @@ function nodeDemand(nodeId, seen, service) {
   }
   S.segs.forEach(s => {
     if (s.up !== nodeId || s.down === null || s.down === undefined) return;
+    if (isOffloader(nodeById(s.down))) return;
     const d = nodeDemand(s.down, seen, s.service);
     kw += d.kw; lps += d.lps; cnt += d.n;
   });
@@ -1850,6 +1911,7 @@ function sepSecondary(n) {
   let kw = 0, lps = 0, cnt = 0;
   S.segs.forEach(s => {
     if (s.up !== n.id || s.down === null || s.down === undefined) return;
+    if (isOffloader(nodeById(s.down))) return;
     const d = nodeDemand(s.down);
     kw += d.kw; lps += d.lps; cnt += d.n;
   });
@@ -2436,6 +2498,8 @@ function plantFeedShare(sg) {
 }
 function segDuty(sg) {
   if (sg.down === null || sg.down === undefined) return { kw: 0, lps: 0, n: 0 };
+  const off = coolerSegDuty(sg);
+  if (off) return off;
   const sh = plantFeedShare(sg);
   if (sh) return sh;
   const d = nodeDemand(sg.down, null, sg.service);
@@ -4025,7 +4089,7 @@ const HINTS = {
   buffer: 'Click where the buffer sits. Drag empty paper to pan.',
   hx: 'Click where the heat exchanger sits. It always separates the circuits. Drag empty paper to pan.',
   pump: 'Click where the inline pump sits. Trace a run in and a run out. Indicative duty comes from the flow and the index head.',
-  drycooler: 'Click where the dry cooler sits, usually on the return. Set the heat rejected and the leaving temperature.',
+  drycooler: 'Click where the dry cooler sits. In the line, or branched off the return with a 3-port as an off-loader. Set the heat rejected — the branch sizes from that duty, or from the circuit if the box is empty.',
   trace: 'Pick two pipes or a single pipe, then start on an edge ring or a dot on a run. Click the ring on a load or vessel to connect and release. Hover a pair for flow and return dots. Double-click empty paper to zoom in there.',
   pan: 'Drag to move around the drawing. Space also pans in any tool.',
   tape: 'Click along the route; click a corner to turn. Plan metres only.',
@@ -5168,19 +5232,40 @@ function pumpForm(n) {
     + rowBtns();
 }
 function drycoolerForm(n) {
-  const thru = S.segs.filter(s => s.a === n.id || s.b === n.id).length;
+  const thru = coolerRunCount(n);
+  const off = isOffloader(n);
+  const own = coolerOwnLps(n);
+  const circuit = off ? coolerCircuitLps(n) : 0;
+  const sized = own > 0 ? own : circuit;
   return ''
-    + '<div class="note">Sits in the line &mdash; typically the return &mdash; and knocks heat off before the plant. It does not open a new circuit. Leaving temperature is the return the plant then sees; it does not rewrite the project \u0394T.</div>'
+    + (off
+        ? '<div class="note">Off-loader &mdash; the circuit can be diverted onto this cooler, usually by a 3-port on the return. It is not another load on the plant: the heat is already in the water. The branch sizes from the reject duty, or from the circuit if that box is empty.</div>'
+        : '<div class="note">Sits in the line &mdash; typically the return &mdash; and knocks heat off before the plant. It does not open a new circuit. Leaving temperature is the return the plant then sees; it does not rewrite the project \u0394T.</div>')
     + '<label class="fld"><span>Name</span><input data-f="name" value="' + esc(n.name || '') + '"></label>'
     + '<label class="fld"><span>Heat rejected <em>kW</em></span>'
     +   '<input type="number" data-f="rejectKw" min="0" step="1" value="' + (n.rejectKw || '') + '"></label>'
+    + '<label class="fld"><span>&Delta;T on this cooler <em>K</em></span>'
+    +   '<input type="number" data-f="dT" min="1" step="1" value="'
+    +   ((parseFloat(n.dT) || 0) > 0 ? n.dT : '') + '" placeholder="' + fmt(S.settings.dT, 0) + ' project"></label>'
     + '<label class="fld"><span>Leaves at <em>\u00b0C</em></span>'
     +   '<input type="number" data-f="leaveTemp" step="0.5" value="'
     +   (n.leaveTemp == null || n.leaveTemp === '' ? '' : n.leaveTemp) + '" placeholder="return after cooler"></label>'
     + '<label class="fld"><span>Own drop <em>kPa</em></span>'
     +   '<input type="number" data-f="kpa" min="0" step="0.5" placeholder="8 assumed" value="'
     +   (n.kpa === '' || n.kpa == null ? '' : n.kpa) + '"></label>'
-    + (thru < 2 ? '<div class="note warn">In-line &mdash; trace a run in and a run out. On a paired run, switch that run to a single return if the cooler is only on the return.</div>' : '')
+    + (off && sized > 0
+        ? '<div class="note">Branch flow <strong>' + fmtVol(sized) + '</strong>'
+          + (own > 0
+              ? ' from ' + fmt(coolerRejectKw(n), 0) + ' kW at ' + fmt(coolerDT(n), 0) + ' K.'
+              : ' &mdash; no reject duty typed, so the branch takes the circuit (' + fmtVol(circuit) + ').')
+          + '</div>'
+        : '')
+    + (off && sized <= 0
+        ? '<div class="note warn">Type the heat rejected, or connect the cooler to a circuit that already carries a load, so this branch has a flow to size from.</div>'
+        : '')
+    + (!off && thru < 2
+        ? '<div class="note">In-line &mdash; trace a run in and a run out. On a paired run, switch that run to a single return if the cooler is only on the return. One run only is an off-loader, sized from the reject duty.</div>'
+        : '')
     + '<label class="fld"><span>Height above finished floor <em>m</em></span>'
     +   '<input type="number" data-f="height" step="0.1" value="' + heightOf(n) + '"></label>'
     + placementFields(n)
@@ -5776,7 +5861,10 @@ function segForm(sg) {
         ['Route on the plan', fmt(sg.runM, 2) + ' m'],
         ['Riser between ends', fmt(sg.fit.rise, 2) + ' m'],
         ['Pipe needed', fmt(sg.hydM, 2) + ' m' + (single ? '' : ' (flow + return)')],
-        ['Carries', fmt(sg.kw, 1) + ' kW to ' + sg.nCons + ' load' + (sg.nCons === 1 ? '' : 's')],
+        ['Carries', isOffloader(nodeById(sg.down))
+          ? (fmt(sg.kw, 1) + ' kW off-loader'
+            + (coolerOwnLps(nodeById(sg.down)) > 0 ? '' : ' (circuit)'))
+          : (fmt(sg.kw, 1) + ' kW to ' + sg.nCons + ' load' + (sg.nCons === 1 ? '' : 's'))],
         ['Design flow', fmt(sg.lps, 2) + ' l/s'],
         ['Size', p ? p.nom + (p.auto !== p.nom ? ' <span class="chip warn">stepped</span>' : '') : '\u2014'],
         ['Velocity', p ? fmt(p.v, 2) + ' m/s ' + velChip(p) : '\u2014'],
@@ -6287,13 +6375,14 @@ function auditTrace() {
     tiny.length + ' run' + (tiny.length === 1 ? '' : 's') + ' under 250 mm long, which is a slip '
     + 'of the mouse rather than a length of pipe.', true);
 
-  const loosePass = S.nodes.filter(n => (n.type === 'pump' || n.type === 'drycooler')
+  const loosePass = S.nodes.filter(n => n.type === 'pump'
     && S.segs.filter(s => s.a === n.id || s.b === n.id).length < 2);
   if (loosePass.length) add('pass', 'warn',
     loosePass.map(n => n.name).join(', ') + (loosePass.length === 1 ? ' is' : ' are')
     + ' in-line \u2014 trace a run in and a run out.', false);
 
-  const noLoad = S.segs.filter(s => !s.orphan && (s.nCons || 0) === 0 && !plantOnSeg(s));
+  const noLoad = S.segs.filter(s => !s.orphan && (s.nCons || 0) === 0
+    && !plantOnSeg(s) && !isOffloader(nodeById(s.down)));
   if (noLoad.length) add('noload', 'warn',
     noLoad.length + ' run' + (noLoad.length === 1 ? '' : 's') + ' with no load downstream ('
     + noLoad.map(s => s.ref).join(', ') + '). Nothing flows through them, so they have no size.',
@@ -6672,7 +6761,8 @@ function renderPipeSchedule() {
       + '<td style="padding-left:' + (9 + r.depth * 14) + 'px">' + esc(sg.ref)
       +   (r.isCons ? ' <span class="chip ok">' + esc(r.down.name) + '</span>' : '')
       +   (sg.isIndex ? ' <span class="chip warn">index</span>' : '')
-      +   (!r.orphan && (sg.nCons || 0) === 0 ? ' <span class="chip bad">no load</span>' : '')
+      +   (isOffloader(r.down) ? ' <span class="chip">off-loader</span>' : '')
+      +   (!r.orphan && (sg.nCons || 0) === 0 && !isOffloader(r.down) ? ' <span class="chip bad">no load</span>' : '')
       +   (r.orphan ? ' <span class="chip bad">not connected</span>' : '') + '</td>'
       + '<td class="n">' + (p ? p.nom : '\u2014') + '</td>'
       + '<td class="n">' + fmt(sg.runM, 1) + '</td>'
@@ -6870,8 +6960,11 @@ function buildSizerProject() {
       /* A run with nothing downstream carries no flow, so the sizer has
          nothing to size it from and reports it as an error. It is a stub left
          by a trace that stopped in mid air, and it is left out rather than
-         sent across to fail. */
-      if (!isCons && (sg.nCons || 0) === 0) { dropped.push(sg.ref); return; }
+         sent across to fail. An off-loader is not a load, but it does have
+         a flow — its own reject duty, or the circuit's — so it must cross. */
+      if (!isCons && (sg.nCons || 0) === 0 && !(isOffloader(down) && (sg.lps || sg.sizeLps))) {
+        dropped.push(sg.ref); return;
+      }
       const cid = next++;
       idOf[sg.id] = cid;
       const single = sg.mode === 'single';
@@ -6940,6 +7033,13 @@ function buildSizerProject() {
         c.mode = 'fromFlow';
         c.lps = +consumerFlow(down, side).toFixed(3);
         c.kw = 0;
+      } else if (isOffloader(down)) {
+        /* Diverted off-loader — size the branch, do not add heat at the plant. */
+        c.mode = 'fromFlow';
+        c.lps = +(sg.lps || 0).toFixed(3);
+        c.kw = 0;
+        c.isBypass = true;
+        c.offload = true;
       } else {
         c.mode = 'fromChildren'; c.kw = 0; c.lps = 0;
       }

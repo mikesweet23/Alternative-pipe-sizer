@@ -330,13 +330,17 @@ that circuit's index head: `P = Q (m³/s) × Δp (kPa) / η`. Not a selection �
 paste a real curve in the simulator when you have one. Fit the existing
 `pumpSet` on the run if you want isolations and a strainer on the drawing.
 
-**Dry cooler** (`Y`) also sits in the line, typically the return. Heat
-rejected and leaving temperature are recorded; assumed 8 kPa until a product
-is picked; the drop is split across the runs that meet it. It does not open
-a new circuit. A load can also be *called* a dry cooler (`kind`) when it is
-the terminal rather than a blast-off on the return.
+**Dry cooler** (`Y`) can sit in the line or hang off the return as an
+**off-loader**. One run into it is the 3-port diverting case: the circuit can
+be sent there when needed. That branch is sized from the heat rejected (at
+the cooler's ΔT, or the project's), or from the circuit flow if the reject
+box is empty. It is **not** another load on the plant — `nodeDemand` does not
+add it up — so Check must not call the branch "no load". Two or more runs
+means it is in the line; assumed 8 kPa until a product is picked, split
+across the runs that meet it. A load can also be *called* a dry cooler
+(`kind`) when it is the terminal rather than a blast-off on the return.
 
-Neither is a separator. Trace a run in and a run out.
+An in-line cooler still wants a run in and a run out. An off-loader does not.
 
 ### Going through a buffer
 
@@ -1098,6 +1102,15 @@ fluid basis has moved with them.
 14. **Break the flow rule on purpose.** Set the header's primary flow below the
     secondary and confirm it is called out in three places: on the drawing
     under the header, in the header panel, and in Check.
+
+### If you touched the dry cooler
+
+15. Hang a cooler off the **return** with one run (the 3-port off-loader).
+    Set reject kW: the branch gets a size and Check does **not** say "no
+    load". The plant run's kW must not go up — the heat was already in the
+    water. Clear the reject box: the branch then takes the circuit flow.
+    Two runs into the cooler is still in-line; that case still wants in
+    and out.
 
 ### If you touched the sheet rotation
 
