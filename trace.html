@@ -347,7 +347,19 @@
   .hint.alt .hopt { color: #3d2c00; }
   .hint.alt .x, .hint.alt .xmin { color: #6b5000; }
   .hint.alt .hmore, .hint.alt .hshow { color: #3d2c00; }
-  .hint .hopt input { width: 15px; height: 15px; margin: 0; }
+  .hint .hopt input[type=checkbox] { width: 15px; height: 15px; margin: 0; }
+  /* the height the next section will be traced at — the one thing that has to
+     be changeable without leaving the trace, the same as AC Trace */
+  .hint .hgt {
+    display: flex; align-items: center; gap: 5px; background: rgba(255,255,255,.10);
+    border-radius: 3px; padding: 2px 4px 2px 7px;
+  }
+  .hint .hgt input {
+    width: 58px; background: #2b3240; border: 1px solid #3f4756; color: #fff;
+    border-radius: 3px; padding: 3px 5px; font-family: 'Azeret Mono', monospace; font-size: 11.5px;
+  }
+  .hint.tape .hgt { display: none; }
+  .hint.alt .hgt input { background: rgba(0,0,0,.22); border-color: rgba(255,255,255,.3); }
 
   /* ---- valve palette ---- */
   .vpal {
@@ -594,8 +606,13 @@
   .fld .segbtn button { text-transform: none; letter-spacing: 0; height: 26px; padding: 0 8px; font-size: 11px; min-height: 0; }
   .hpts { display: flex; flex-direction: column; gap: 4px; }
   .hpt { display: grid; grid-template-columns: 22px 1fr auto 22px; gap: 6px; align-items: center; font-size: 12px; }
-  .hpt .ix { font-family: 'Azeret Mono', monospace; font-size: 10px; color: var(--muted); }
-  .hpt .rise { font-family: 'Azeret Mono', monospace; font-size: 11px; color: var(--ink-soft); }
+  .hpt:nth-child(odd) { background: var(--paper-2); }
+  .hpt .ix { font-family: 'Azeret Mono', monospace; font-size: 10px; color: var(--muted); text-align: center; }
+  .hpt input {
+    width: 100%; padding: 4px 6px; border: 1px solid var(--rule-2); border-radius: 3px;
+    font-family: 'Azeret Mono', monospace; font-size: 11.5px; min-height: 28px; background: var(--white);
+  }
+  .hpt .rise { font-family: 'Azeret Mono', monospace; font-size: 11px; color: var(--ink-soft); text-align: right; }
   .hpt button { background: none; border: none; color: var(--muted); font-size: 16px; padding: 0; min-height: 0; }
   .three-stage { position: relative; flex: 1; min-height: 0; background: var(--paper-2); }
   #threeCv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
@@ -705,6 +722,9 @@
         <label class="hopt" title="On, corners lock to horizontal, vertical and 45°. Off, every corner is a free angle. Hold Alt to flip it for one click.">
           <input type="checkbox" id="orthoChk" checked> Square up <kbd>O</kbd></label>
         <span class="hopt" id="hintAngle" title="The angle of the leg you are drawing"></span>
+        <span class="hgt hopt" title="The height the next section is traced at. Change it before clicking the next point and that point starts a riser.">
+          Height <input type="number" id="hgtIn" step="0.1"> m
+        </span>
         <button class="hfin" id="hintFin" title="End here (or double-click, or press Enter)">Finish</button>
         <button type="button" class="hshow" id="hintShow" title="Show the tip again">Tip</button>
         <button type="button" class="xmin" id="hintX" title="Hide this tip — the tool stays armed">&times;</button>
@@ -1409,8 +1429,12 @@ function refreshUndoBtn() {
 
 /* ---------- geometry ---------- */
 /* Height above finished floor. The drawing is a plan, so risers and drops
-   are invisible on it — taking a height at each component is what recovers
-   the vertical pipe and the elbows that go with it. */
+   are invisible on it. A run's points each carry their own height — the same
+   model as AC Trace — so a main can sit at 3.5 m while the plant is at 1 m
+   and a coil at 2.5 m. Where two consecutive points differ there is a riser
+   at that point. A component still has its own height: the connection on
+   and off the pipe is the vertical between the unit and the first / last
+   point of the run. */
 function heightOf(n) {
   if (!n) return 0;
   const v = parseFloat(n.height);
@@ -1420,6 +1444,83 @@ function heightOf(n) {
        : (n.type === 'llh' || n.type === 'buffer' || n.type === 'hx'
           || n.type === 'pump' || n.type === 'drycooler') ? S.settings.plantHeight
        : S.settings.mainHeight;
+}
+function defaultPipeHeight() {
+  const v = parseFloat(S.settings.mainHeight);
+  return isNaN(v) ? 3.5 : v;
+}
+/* The height the next click will be traced at. Changing it before a click
+   is what starts a riser, without leaving the tool. */
+let traceHeight = defaultPipeHeight();
+function setTraceHeight(v) {
+  const n = parseFloat(v);
+  if (!isNaN(n)) traceHeight = n;
+  const inp = el('hgtIn');
+  if (inp && document.activeElement !== inp) inp.value = fmt(traceHeight, 2);
+}
+/* The height of point i of a run: its own if it has one, otherwise the
+   run's default, otherwise the height the old node-only model would have
+   drawn this pipe at — so a file written before point heights still looks
+   the same in 3D and still counts the same riser. */
+function inferredSegHeight(sg) {
+  const up = nodeById(sg && sg.up != null ? sg.up : (sg ? sg.a : null));
+  const dn = nodeById(sg && sg.down != null ? sg.down : (sg ? sg.b : null));
+  if (dn && dn.type === 'consumer') return up ? heightOf(up) : defaultPipeHeight();
+  if (dn) return heightOf(dn);
+  return up ? heightOf(up) : defaultPipeHeight();
+}
+function vertexH(sg, i) {
+  const p = sg && sg.pts && sg.pts[i];
+  if (p && p.h !== undefined && p.h !== null && !isNaN(parseFloat(p.h))) return parseFloat(p.h);
+  const r = parseFloat(sg && sg.height);
+  if (!isNaN(r)) return r;
+  return inferredSegHeight(sg);
+}
+function heightsOf(sg) { return (sg && sg.pts ? sg.pts : []).map((p, i) => vertexH(sg, i)); }
+function keepH(old, neu) {
+  if (old && old.h !== undefined && old.h !== null && !isNaN(parseFloat(old.h)))
+    neu.h = parseFloat(old.h);
+  return neu;
+}
+function ptAt(x, y, h) {
+  const q = { x: x, y: y };
+  if (h !== undefined && h !== null && !isNaN(parseFloat(h))) q.h = parseFloat(h);
+  return q;
+}
+/* Mid-span on a run sits at the height of the leg it is on — the pipe
+   travels at the previous vertex until it rises at the next. nearestOnPoly
+   reports i as the end of that leg. */
+function heightAtHit(sg, hit) {
+  if (!sg || !sg.pts || !sg.pts.length) return defaultPipeHeight();
+  if (hit && hit.i != null) return vertexH(sg, Math.max(0, hit.i - 1));
+  return vertexH(sg, 0);
+}
+function heightAtSnap(sn) {
+  if (!sn) return traceHeight;
+  if (sn.kind === 'vertex' && sn.seg) return vertexH(sn.seg, sn.i);
+  if ((sn.kind === 'dot' || sn.kind === 'run') && sn.seg) return heightAtHit(sn.seg, sn.r);
+  return traceHeight;
+}
+/* The vertical metres in a run, walking it in the direction it is fed:
+   the connection up on to the pipe at the start, every change of height
+   along it, and the drop on to the unit at the end. extraRise over an
+   obstruction is still counted once (up is the hop; the fittings add
+   the four elbows). */
+function riseBreakdown(sg) {
+  const up = nodeById(sg.up != null ? sg.up : sg.a);
+  const dn = nodeById(sg.down != null ? sg.down : sg.b);
+  let hs = heightsOf(sg);
+  if (sg.up != null && sg.up === sg.b) hs = hs.slice().reverse();
+  const start = (up && hs.length) ? Math.abs(hs[0] - heightOf(up)) : 0;
+  let mid = 0;
+  for (let i = 1; i < hs.length; i++) mid += Math.abs(hs[i] - hs[i - 1]);
+  const end = (dn && hs.length) ? Math.abs(heightOf(dn) - hs[hs.length - 1]) : 0;
+  const extra = Math.abs(parseFloat(sg.extraRise) || 0);
+  const verts = (start > 0.01 ? 1 : 0) + (end > 0.01 ? 1 : 0)
+    + hs.slice(1).filter((h, i) => Math.abs(h - hs[i]) > 0.01).length;
+  return { start, mid, end, extra, total: start + mid + end,
+           verts, hi: hs.length ? Math.max.apply(null, hs) : 0,
+           lo: hs.length ? Math.min.apply(null, hs) : 0 };
 }
 
 /* ==========================================================================
@@ -1634,8 +1735,8 @@ function segEndPoint(sg, end) {
    component moves, turns or changes size under them. */
 function reseatSeg(sg) {
   const a = segEndPoint(sg, 'a'), b = segEndPoint(sg, 'b');
-  if (a && sg.pts.length) sg.pts[0] = { x: a.x, y: a.y };
-  if (b && sg.pts.length > 1) sg.pts[sg.pts.length - 1] = { x: b.x, y: b.y };
+  if (a && sg.pts.length) sg.pts[0] = keepH(sg.pts[0], { x: a.x, y: a.y });
+  if (b && sg.pts.length > 1) sg.pts[sg.pts.length - 1] = keepH(sg.pts[sg.pts.length - 1], { x: b.x, y: b.y });
 }
 function reseatNode(n) {
   if (!n) return;
@@ -1735,8 +1836,9 @@ function isCardinalLeg(a, b) {
 }
 function squareCorner(from, to) {
   const dx = Math.abs(to.x - from.x), dy = Math.abs(to.y - from.y);
-  if (dx >= dy) return { x: to.x, y: from.y };
-  return { x: from.x, y: to.y };
+  const h = (from && from.h !== undefined) ? from.h
+          : (to && to.h !== undefined) ? to.h : undefined;
+  return dx >= dy ? ptAt(to.x, from.y, h) : ptAt(from.x, to.y, h);
 }
 /* Last hop onto a casing stays horizontal or vertical. If the landing is
    off the last corner, an existing stub is slid or one is inserted so the
@@ -2584,8 +2686,9 @@ function cornerAngles(pts) {
 
 function segFittings(sg) {
   const up = nodeById(sg.up), down = nodeById(sg.down);
-  const rise = (up && down) ? Math.abs(heightOf(down) - heightOf(up)) : 0;
-  const extra = Math.abs(parseFloat(sg.extraRise) || 0);
+  const br = riseBreakdown(sg);
+  const rise = br.total;
+  const extra = br.extra;
   const corners = Math.max(0, (sg.pts ? sg.pts.length : 2) - 2);
 
   const f = {};
@@ -2601,8 +2704,8 @@ function segFittings(sg) {
     add(c.type, c.n);
     cornerMix[c.kind]++;
   });
-  if (rise > 0.01)  add(bend, 2);           // up and back to horizontal
-  if (extra > 0.01) add(bend, 4);           // over an obstruction and back down
+  if (br.verts > 0) add(bend, br.verts * 2);  // each height change is up (or down) and back to horizontal
+  if (extra > 0.01) add(bend, 4);             // over an obstruction and back down
 
   // tee where this run leaves its parent
   if (up && up.type === 'junction') add('teeBranch', 1);
@@ -3553,23 +3656,29 @@ function render() {
       const sn = snapAt(hoverPt, draft.startNode);
       const prev = draft.pts[draft.pts.length - 1];
       const land = unitLanding(sn, prev);
-      if (land && prev && !isCardinalLeg(prev, land.at)) extra = [squareCorner(prev, land.at), land.at];
+      if (land && prev && !isCardinalLeg(prev, land.at))
+        extra = [squareCorner(prev, land.at), ptAt(land.at.x, land.at.y, traceHeight)];
     }
     const pts = extra.length ? draft.pts.concat(extra) : draft.pts;
     const d = pts.map((p, i) => (i ? 'L' : 'M') + p.x + ' ' + p.y).join(' ');
     g.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--measure)', 'stroke-width': 2.4 * k,
       'stroke-dasharray': (8 * k) + ' ' + (5 * k), 'stroke-linecap': 'round' }));
-    pts.forEach((p, i) => g.appendChild(mk('circle', { cx: p.x, cy: p.y, r: 3.2 * k,
-      fill: i === pts.length - 1 ? 'var(--measure)' : 'var(--white)',
-      stroke: 'var(--measure)', 'stroke-width': 1.6 * k })));
+    pts.forEach((p, i) => {
+      const h = p.h !== undefined ? p.h : traceHeight;
+      const prevH = i > 0 ? (pts[i - 1].h !== undefined ? pts[i - 1].h : traceHeight) : h;
+      const step = i > 0 && Math.abs(h - prevH) > 0.005;
+      g.appendChild(mk('circle', { cx: p.x, cy: p.y, r: (step ? 4.4 : 3.2) * k,
+        fill: i === pts.length - 1 ? 'var(--measure)' : (step ? 'var(--measure)' : 'var(--white)'),
+        stroke: 'var(--measure)', 'stroke-width': 1.6 * k }));
+    });
     updateHintAngle(pts);
     if (S.pxPerM > 0 && hoverPt) {
       const run = polyLenPx(pts) / S.pxPerM;
-      const lbl = fmt(run, 2) + ' m';
+      const lbl = fmt(run, 2) + ' m  @ ' + fmt(traceHeight, 2) + ' m';
       g.appendChild(mk('rect', { x: hoverPt.x + 12 * k, y: hoverPt.y - 22 * k,
-        width: (lbl.length * 7.2 + 14) * k, height: 18 * k, rx: 2 * k, fill: 'var(--measure)' }));
+        width: (lbl.length * 6.6 + 14) * k, height: 18 * k, rx: 2 * k, fill: 'var(--measure)' }));
       g.appendChild(mk('text', { x: hoverPt.x + 19 * k, y: hoverPt.y - 9 * k,
-        'font-size': 11.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+        'font-size': 11 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
         fill: '#241a00' }, lbl));
     }
   }
@@ -4090,7 +4199,7 @@ const HINTS = {
   hx: 'Click where the heat exchanger sits. It always separates the circuits. Drag empty paper to pan.',
   pump: 'Click where the inline pump sits. Trace a run in and a run out. Indicative duty comes from the flow and the index head.',
   drycooler: 'Click where the dry cooler sits. In the line, or branched off the return with a 3-port as an off-loader. Set the heat rejected — the branch sizes from that duty, or from the circuit if the box is empty.',
-  trace: 'Pick two pipes or a single pipe, then start on an edge ring or a dot on a run. Click the ring on a load or vessel to connect and release. Hover a pair for flow and return dots. Double-click empty paper to zoom in there.',
+  trace: 'Pick two pipes or a single pipe, then start on an edge ring or a dot on a run. Click the ring on a load or vessel to connect and release. Set <b>Height</b> before a click to start a riser. Hover a pair for flow and return dots.',
   pan: 'Drag to move around the drawing. Space also pans in any tool.',
   tape: 'Click along the route; click a corner to turn. Plan metres only.',
   valve: 'Pick a valve or a set, then click the pipe. Drag empty paper to pan.',
@@ -4098,7 +4207,10 @@ const HINTS = {
 const HINTS_MORE = {
   trace: 'Every corner becomes a point you can branch from later. Corners pull to 90&deg; '
        + 'and 45&deg;; hold <kbd>Alt</kbd> for a free angle, counted as a made set of two '
-       + 'elbows. Hover a run to branch from a dot on that pipe &mdash; a pair shows '
+       + 'elbows. The <b>Height</b> box is the height of the next section &mdash; change it '
+       + 'before a click and that point starts a riser, the same as AC Trace. '
+       + '<kbd>[</kbd> and <kbd>]</kbd> nudge it 0.1&nbsp;m while Trace is armed. '
+       + 'Hover a run to branch from a dot on that pipe &mdash; a pair shows '
        + 'flow and return. Space-drag or shift-drag pans without leaving Trace. '
        + 'Double-click empty paper to zoom in on that spot. &times; hides this tip.',
   tape: 'Same square lock as trace; <kbd>Alt</kbd> frees one corner. Double-click or Finish '
@@ -4170,6 +4282,7 @@ function setTool(t) {
   el('vpal').classList.toggle('on', t === 'valve');
   if (t === 'valve') buildValvePalette();
   syncTracePalette();
+  setTraceHeight(traceHeight);
   render();
 }
 
@@ -4424,17 +4537,16 @@ function addDryCooler(p) {
 /* A tee takes the height of the run it sits on, not the default main height.
    Taking the default was quietly inventing a riser at every tee, and the
    extra elbows and metres went straight through to the sizer. */
-function junctionHeightOn(sg) {
-  const up = nodeById(sg && sg.up != null ? sg.up : (sg ? sg.a : null));
-  const dn = nodeById(sg && sg.down != null ? sg.down : (sg ? sg.b : null));
-  // a run into a terminal is at the high level until it drops at the terminal
-  if (dn && dn.type === 'consumer') return up ? heightOf(up) : S.settings.mainHeight;
-  if (dn) return heightOf(dn);
-  return up ? heightOf(up) : S.settings.mainHeight;
+function junctionHeightOn(sg, hit) {
+  if (sg && hit) return heightAtHit(sg, hit);
+  if (sg && sg.pts && sg.pts.length) return vertexH(sg, 0);
+  return inferredSegHeight(sg);
 }
-function addJunction(p, onSeg) {
+function addJunction(p, onSeg, hit) {
+  const fromPt = (p && p.h !== undefined && !isNaN(parseFloat(p.h))) ? parseFloat(p.h) : null;
   const n = { id: nid(), type: 'junction', x: p.x, y: p.y, name: 'Tee',
-    height: onSeg ? junctionHeightOn(onSeg) : S.settings.mainHeight };
+    height: fromPt != null ? fromPt
+          : (onSeg ? junctionHeightOn(onSeg, hit) : defaultPipeHeight()) };
   S.nodes.push(n);
   return n;
 }
@@ -4478,15 +4590,17 @@ function splitSegment(sg, hit) {
   if (na && dist(hit.q, na) < minPx) return na;
   if (nb && dist(hit.q, nb) < minPx) return nb;
   return keepingItemsInPlace(() => {
-    const j = addJunction({ x: hit.q.x, y: hit.q.y }, sg);
-    const before = sg.pts.slice(0, hit.i).concat([{ x: hit.q.x, y: hit.q.y }]);
-    const after = [{ x: hit.q.x, y: hit.q.y }].concat(sg.pts.slice(hit.i));
+    const h = heightAtHit(sg, hit);
+    const cut = ptAt(hit.q.x, hit.q.y, h);
+    const j = addJunction(cut, sg, hit);
+    const before = sg.pts.slice(0, hit.i).concat([cut]);
+    const after = [ptAt(cut.x, cut.y, h)].concat(sg.pts.slice(hit.i));
     /* The far end's connection point goes with the piece that still reaches
         it; this piece now ends at the new tee and has none. */
     const tail = { id: nid(), a: j.id, b: sg.b, pts: after,
       mode: sg.mode, leg: sg.leg, material: sg.material, step: sg.step,
       bPort: sg.bPort || null,
-      ref: sg.ref || 'Run', extraRise: 0 };
+      ref: sg.ref || 'Run', extraRise: 0, height: sg.height };
     sg.pts = before; sg.b = j.id; delete sg.bPort;
     S.segs.push(tail);
     return j;
@@ -4501,11 +4615,11 @@ function promoteVertex(sg, i) {
   if (i >= sg.pts.length - 1) return nodeById(sg.b);
   return keepingItemsInPlace(() => {
     const v = sg.pts[i];
-    const j = addJunction({ x: v.x, y: v.y }, sg);
+    const j = addJunction(ptAt(v.x, v.y, vertexH(sg, i)), sg);
     const tail = { id: nid(), a: j.id, b: sg.b, pts: sg.pts.slice(i),
       mode: sg.mode, leg: sg.leg, material: sg.material, step: sg.step,
       bPort: sg.bPort || null,
-      ref: sg.ref || 'Run', extraRise: 0 };
+      ref: sg.ref || 'Run', extraRise: 0, height: sg.height };
     sg.pts = sg.pts.slice(0, i + 1);
     sg.b = j.id; delete sg.bPort;
     S.segs.push(tail);
@@ -4678,13 +4792,13 @@ function drawPipeDots(g, k, p) {
    locked to horizontal, vertical or 45 degrees from the last point unless the
    lock is turned off or Alt is held for a free angle. */
 function orthoPoint(prev, p) {
-  if (!prev || !orthoNow()) return { x: p.x, y: p.y };
+  if (!prev || !orthoNow()) return ptAt(p.x, p.y, traceHeight);
   const dx = p.x - prev.x, dy = p.y - prev.y;
   const ax = Math.abs(dx), ay = Math.abs(dy);
-  if (ax > ay * 2.4142) return { x: p.x, y: prev.y };
-  if (ay > ax * 2.4142) return { x: prev.x, y: p.y };
+  if (ax > ay * 2.4142) return ptAt(p.x, prev.y, traceHeight);
+  if (ay > ax * 2.4142) return ptAt(prev.x, p.y, traceHeight);
   const m = (ax + ay) / 2;
-  return { x: prev.x + (dx < 0 ? -m : m), y: prev.y + (dy < 0 ? -m : m) };
+  return ptAt(prev.x + (dx < 0 ? -m : m), prev.y + (dy < 0 ? -m : m), traceHeight);
 }
 
 /* Where the next point would land: on the snap if there is one, otherwise
@@ -4704,7 +4818,8 @@ function previewPoint(p) {
   const prev = draft && draft.pts.length ? draft.pts[draft.pts.length - 1] : null;
   if (sn) {
     const land = unitLanding(sn, prev);
-    return land ? { x: land.at.x, y: land.at.y } : { x: sn.at.x, y: sn.at.y };
+    const at = land ? land.at : sn.at;
+    return ptAt(at.x, at.y, traceHeight);
   }
   return orthoPoint(prev, p);
 }
@@ -4713,7 +4828,7 @@ function dedupePts(pts) {
   const out = [];
   pts.forEach(p => {
     const last = out[out.length - 1];
-    if (!last || dist(last, p) > 0.4) out.push({ x: p.x, y: p.y });
+    if (!last || dist(last, p) > 0.4) out.push(ptAt(p.x, p.y, p.h));
   });
   return out;
 }
@@ -5823,6 +5938,57 @@ function tapeForm(m) {
   return html + rowBtns(false);
 }
 
+/* Every point on the run, so a height can be set on a section without
+   inventing a tee. Same list as AC Trace: change one, Level, or Set all. */
+function heightPointsBox(sg) {
+  const up = nodeById(sg.up != null ? sg.up : sg.a);
+  const hs = heightsOf(sg);
+  return '<div class="fld"><span>Height of each point <em>metres above finished floor</em></span>'
+    + '<div class="hpts">'
+    + (sg.pts || []).map((p, i) => {
+        const prev = i > 0 ? hs[i - 1] : null;
+        const d = prev === null ? '' : (hs[i] - prev);
+        const riseTxt = prev === null ? (up ? 'from ' + esc(up.name || nodeWord(up)) : 'start')
+          : (Math.abs(d) < 0.005 ? 'level' : (d > 0 ? '\u2191 ' : '\u2193 ') + fmt(Math.abs(d), 2) + ' m');
+        return '<div class="hpt"><span class="ix">' + (i + 1) + '</span>'
+          + '<input type="number" step="0.05" data-hp="' + i + '" value="' + fmt(hs[i], 2) + '">'
+          + '<span class="rise">' + riseTxt + '</span>'
+          + (i > 0 && i < sg.pts.length - 1
+              ? '<button type="button" data-hpdel="' + i + '" title="Remove this corner">&times;</button>'
+              : '<span></span>')
+          + '</div>';
+      }).join('')
+    + '</div>'
+    + '<div style="display:flex;gap:8px;margin-top:6px">'
+    + '<button class="btn ghost sm" type="button" id="fLevel">Level the whole run</button>'
+    + '<button class="btn ghost sm" type="button" id="fSetAll">Set all to\u2026</button></div>'
+    + '<div class="note">Change the height before the next click while tracing, or type it here. '
+    + 'A difference between two points is a riser at that corner, and it shows in 3D check.</div></div>';
+}
+
+function segDerivedRows(sg, single, p) {
+  const r = riseBreakdown(sg);
+  const rows = [['Route on the plan', fmt(sg.runM, 2) + ' m']];
+  if (r.start > 0.005) rows.push(['Rise at the start', fmt(r.start, 2) + ' m']);
+  if (r.mid > 0.005) rows.push(['Rise along the run', fmt(r.mid, 2) + ' m']);
+  if (r.end > 0.005) rows.push(['Drop at the end', fmt(r.end, 2) + ' m']);
+  rows.push(['Riser (one way)', fmt((sg.fit && sg.fit.rise) || r.total, 2) + ' m']);
+  rows.push(['Pipe needed', fmt(sg.hydM, 2) + ' m' + (single ? '' : ' (flow + return)')]);
+  rows.push(['Carries', isOffloader(nodeById(sg.down))
+    ? (fmt(sg.kw, 1) + ' kW off-loader'
+      + (coolerOwnLps(nodeById(sg.down)) > 0 ? '' : ' (circuit)'))
+    : (fmt(sg.kw, 1) + ' kW to ' + sg.nCons + ' load' + (sg.nCons === 1 ? '' : 's'))]);
+  rows.push(['Design flow', fmt(sg.lps, 2) + ' l/s']);
+  rows.push(['Size', p ? p.nom + (p.auto !== p.nom ? ' <span class="chip warn">stepped</span>' : '') : '\u2014']);
+  rows.push(['Velocity', p ? fmt(p.v, 2) + ' m/s ' + velChip(p) : '\u2014']);
+  rows.push(['Gradient', p ? fmt(p.paPerM, 0) + ' Pa/m' : '\u2014']);
+  rows.push(['Straight pipe', fmt(sg.straightKpa, 2) + ' kPa']);
+  rows.push(['Fittings', fmt(sg.fitKpa, 2) + ' kPa <span class="chip">' + fmt(sg.equivPct, 0) + '% equiv</span>']);
+  if (sg.valveKpa > 0) rows.push(['Valves holding a differential', fmt(sg.valveKpa, 2) + ' kPa']);
+  rows.push(['Run loss', '<strong>' + fmt(sg.dropKpa, 2) + ' kPa</strong>']);
+  return rows;
+}
+
 function segForm(sg) {
   const single = sg.mode === 'single';
   const p = sg.pipe;
@@ -5842,6 +6008,7 @@ function segForm(sg) {
     +   [-2,-1,0,1,2].map(v => '<option value="' + v + '"' + ((sg.step || 0) === v ? ' selected' : '') + '>'
         + (v === 0 ? 'Automatic' : (v > 0 ? '+' + v + ' size' : v + ' size') + (Math.abs(v) > 1 ? 's' : '')) + '</option>').join('')
     +   '</select></label>'
+    + heightPointsBox(sg)
     + '<label class="fld"><span>Extra rise and drop within the run <em>m</em>'
     +   ' <em style="color:var(--muted)">over an obstruction</em></span>'
     +   '<input type="number" data-f="extraRise" step="0.1" min="0" value="' + (sg.extraRise || '') + '"></label>'
@@ -5857,23 +6024,7 @@ function segForm(sg) {
           + '<option value="cool"' + (sg.service === 'cool' ? ' selected' : '') + '>Cooling</option>'
           + '</select></label>'
         : '')
-    + derivedBox([
-        ['Route on the plan', fmt(sg.runM, 2) + ' m'],
-        ['Riser between ends', fmt(sg.fit.rise, 2) + ' m'],
-        ['Pipe needed', fmt(sg.hydM, 2) + ' m' + (single ? '' : ' (flow + return)')],
-        ['Carries', isOffloader(nodeById(sg.down))
-          ? (fmt(sg.kw, 1) + ' kW off-loader'
-            + (coolerOwnLps(nodeById(sg.down)) > 0 ? '' : ' (circuit)'))
-          : (fmt(sg.kw, 1) + ' kW to ' + sg.nCons + ' load' + (sg.nCons === 1 ? '' : 's'))],
-        ['Design flow', fmt(sg.lps, 2) + ' l/s'],
-        ['Size', p ? p.nom + (p.auto !== p.nom ? ' <span class="chip warn">stepped</span>' : '') : '\u2014'],
-        ['Velocity', p ? fmt(p.v, 2) + ' m/s ' + velChip(p) : '\u2014'],
-        ['Gradient', p ? fmt(p.paPerM, 0) + ' Pa/m' : '\u2014'],
-        ['Straight pipe', fmt(sg.straightKpa, 2) + ' kPa'],
-        ['Fittings', fmt(sg.fitKpa, 2) + ' kPa <span class="chip">' + fmt(sg.equivPct, 0) + '% equiv</span>'],
-      ].concat(sg.valveKpa > 0
-        ? [['Valves holding a differential', fmt(sg.valveKpa, 2) + ' kPa']] : [])
-       .concat([['Run loss', '<strong>' + fmt(sg.dropKpa, 2) + ' kPa</strong>']]))
+    + derivedBox(segDerivedRows(sg, single, p))
     + placedValvesBox(sg)
     + fittingsBox(sg)
     + (sg.orphan ? '<div class="note bad">This run does not reach the plant. '
@@ -6200,6 +6351,60 @@ function wireInspector() {
       render(); openInspector();
     });
   });
+  /* Point heights on a run — same handlers as AC Trace. Written on change
+     so a half-typed figure is not snatched by a rebuild. */
+  if (sel.kind === 'seg') {
+    const sgH = segById(sel.id);
+    el('insBody').querySelectorAll('[data-hp]').forEach(inp => {
+      inp.addEventListener('change', () => {
+        if (!sgH || !sgH.pts) return;
+        const i = parseInt(inp.dataset.hp, 10);
+        const v = parseFloat(inp.value);
+        if (isNaN(v) || !sgH.pts[i]) return;
+        pushUndo('change a point height');
+        sgH.pts[i].h = v;
+        render(); openInspector();
+      });
+    });
+    el('insBody').querySelectorAll('[data-hpdel]').forEach(b => {
+      b.addEventListener('click', () => {
+        if (!sgH || !sgH.pts || sgH.pts.length <= 2) { toast('A run needs both its ends'); return; }
+        const i = parseInt(b.dataset.hpdel, 10);
+        pushUndo('remove a corner');
+        sgH.pts.splice(i, 1);
+        render(); openInspector();
+      });
+    });
+    const lvl = el('fLevel');
+    if (lvl) lvl.addEventListener('click', () => {
+      if (!sgH || !sgH.pts) return;
+      pushUndo('level the run');
+      const h = vertexH(sgH, 0);
+      sgH.pts.forEach(p => { p.h = h; });
+      sgH.height = h;
+      render(); openInspector();
+      toast('Every point on ' + (sgH.ref || 'this run') + ' set to ' + fmt(h, 2) + ' m');
+    });
+    const setAll = el('fSetAll');
+    if (setAll) setAll.addEventListener('click', () => {
+      if (!sgH) return;
+      modal('Set every point on ' + esc(sgH.ref || 'this run'),
+          '<label class="fld"><span>Height above finished floor <em>metres</em></span>'
+        + '<input type="number" id="saH" step="0.05" value="' + fmt(vertexH(sgH, 0), 2) + '" autofocus></label>'
+        + '<div style="display:flex;gap:8px;margin-top:12px">'
+        + '<button class="btn go" id="saOk">Set</button>'
+        + '<button class="btn ghost" id="saNo">Cancel</button></div>');
+      el('saOk').addEventListener('click', () => {
+        const v = parseFloat(el('saH').value);
+        if (isNaN(v)) { toast('Enter a height'); return; }
+        pushUndo('set the run height');
+        sgH.pts.forEach(p => { p.h = v; });
+        sgH.height = v;
+        closeModal(true); render(); openInspector();
+      });
+      el('saNo').addEventListener('click', () => closeModal(true));
+    });
+  }
   wirePlacementButtons();
   const pumpSetBtn = el('insPumpSet');
   if (pumpSetBtn) pumpSetBtn.addEventListener('click', fitPumpSet);
@@ -6444,8 +6649,8 @@ function rewireNode(fromId, toId) {
   const to = nodeById(toId);
   if (!to) return;
   S.segs.forEach(s => {
-    if (s.a === fromId) { s.a = toId; delete s.aPort; s.pts[0] = { x: to.x, y: to.y }; }
-    if (s.b === fromId) { s.b = toId; delete s.bPort; s.pts[s.pts.length - 1] = { x: to.x, y: to.y }; }
+    if (s.a === fromId) { s.a = toId; delete s.aPort; s.pts[0] = keepH(s.pts[0], { x: to.x, y: to.y }); }
+    if (s.b === fromId) { s.b = toId; delete s.bPort; s.pts[s.pts.length - 1] = keepH(s.pts[s.pts.length - 1], { x: to.x, y: to.y }); }
   });
   S.nodes = S.nodes.filter(n => n.id !== fromId);
 }
@@ -7584,6 +7789,7 @@ function loadProject(data) {
   const st = Object.assign({}, data.settings || {});
   if (!(st.angleLockRev >= 2)) delete st.ortho;
   Object.assign(S.settings, st);
+  setTraceHeight(S.settings.mainHeight);
   if (data.img) { S.img = data.img; showDrawing(); }
   else if (S.concept) startConcept();
   sel = null; closeInspector();
@@ -7689,7 +7895,7 @@ function rotatedBox(w, h, deg) {
    where it was on the pipework. */
 function turnAbout(deg, cOld, cNew) {
   const r = deg * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
-  return p => ({
+  return p => keepH(p, {
     x: cNew.x + (p.x - cOld.x) * cs - (p.y - cOld.y) * sn,
     y: cNew.y + (p.x - cOld.x) * sn + (p.y - cOld.y) * cs,
   });
@@ -8065,7 +8271,9 @@ function stepsDialog() {
      + 'component, a tee or a corner already traced &mdash; so a run cannot end up joined a few '
      + 'centimetres away from where it looks joined. A square corner is one 90&deg; elbow, a 45 is '
      + 'one 45&deg; elbow, and any other angle is counted as a made set of two. Every height '
-     + 'difference becomes a riser with an elbow at each end.<br>'
+     + 'difference becomes a riser with an elbow at each end. Set the next section&rsquo;s height '
+     + 'in the hint bar before you click, or on the run afterwards &mdash; each point carries its '
+     + 'own, the same as AC Trace, and 3D check draws them.<br>'
      + 'Corners <strong>pull to 90&deg; and 45&deg;</strong> as you go, because that is how pipework '
      + 'nearly always runs. Hold <kbd>Alt</kbd> for a free angle: the corner lands exactly where the '
      + 'cursor is and is counted as a made set of two elbows. <kbd>O</kbd>, or the switch in the hint '
@@ -8090,7 +8298,8 @@ function stepsDialog() {
      + 'what it can without guessing.'],
     ['Check the heights in 3D', tick(false),
      'The plan cannot show a riser. 3D check lifts the network off the sheet so the plant, the mains '
-     + 'and the drops can be seen at their real heights. Read-only — come back to the plan to change anything.'],
+     + 'and the drops can be seen at their real heights &mdash; a section set to 3.5&nbsp;m sits at 3.5&nbsp;m, '
+     + 'not at the plant. Read-only — come back to the plan to change a point height.'],
     ['Check the schedule, then send it on', tick(false),
      'The schedule shows size, velocity, gradient and the fittings counted off the geometry, with the '
      + 'index run marked and written out at the bottom. Send to Sizer opens the sizer with the '
@@ -8103,8 +8312,9 @@ function stepsDialog() {
         + '<div style="color:var(--ink-soft);font-size:12.5px;margin-top:2px">' + st[2] + '</div></li>').join('')
     + '</ol>'
     + '<div class="note">Worth knowing: the drawing is a plan, so nothing vertical shows on it. '
-    + 'Heights are how the risers and their elbows get counted \u2014 set one on the plant and on anything '
-    + 'at a different level, and the rest follows.</div>'
+    + 'Heights are how the risers and their elbows get counted \u2014 each point on a run has its own, '
+    + 'and each plant or load has one too. Change the box in the hint bar before a click to start a '
+    + 'riser; 3D check is where you read them.</div>'
     + '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'
     + '<button class="btn go" id="stGo">' + (S.setupDone ? 'Close' : 'Set the pipe basis') + '</button>'
     + (S.setupDone ? '' : '<button class="btn ghost" onclick="closeModal()">Later</button>') + '</div>');
@@ -8253,6 +8463,7 @@ function projectDialog() {
     s.plantHeight = parseFloat(el('pHp').value) || 0;
     s.mainHeight = parseFloat(el('pHm').value) || 0;
     s.loadHeight = parseFloat(el('pHl').value) || 0;
+    setTraceHeight(s.mainHeight);
     S.setupDone = true;
     closeModal(); render();
     toast(MAT_LABEL[s.material] + ', ' + CONDITION_LABEL[s.condition].toLowerCase()
@@ -8296,25 +8507,26 @@ function world3D() {
 }
 function w3(W, p, z) { return { X: (p.x - W.cx) / W.s, Y: (p.y - W.cy) / W.s, Z: z }; }
 
-/* A run drawn the way it is actually installed: the drop to a terminal
-   happens at the terminal, everything else rises as it leaves its parent. */
+/* A run drawn the way it is installed: it leaves its parent at the height
+   of its first point, changes height wherever the points do, and drops on
+   to the unit at the end. Same walk as AC Trace, so a main at 3.5 m with
+   a plant at 1 m and a coil at 2.5 m reads as three heights, not one. */
 function segPoly3D(sg, W) {
-  const upN = nodeById(sg.up != null ? sg.up : sg.a);
-  const dnN = nodeById(sg.down != null ? sg.down : sg.b);
-  const pts = sg.pts.slice();
-  if (sg.up != null && sg.up === sg.b) pts.reverse();
+  let pts = sg.pts.slice();
+  let hs = heightsOf(sg);
+  if (sg.up != null && sg.up === sg.b) { pts = pts.slice().reverse(); hs = hs.slice().reverse(); }
   if (pts.length < 2) return [];
-  const zUp = upN ? heightOf(upN) : S.settings.mainHeight;
-  const zDn = dnN ? heightOf(dnN) : S.settings.mainHeight;
-  const dropAtEnd = !!(dnN && dnN.type === 'consumer');
-  let poly = [];
-  if (dropAtEnd) {
-    pts.forEach(p => poly.push(w3(W, p, zUp)));
-    if (Math.abs(zDn - zUp) > 0.01) poly.push(w3(W, pts[pts.length - 1], zDn));
-  } else {
-    if (Math.abs(zDn - zUp) > 0.01) poly.push(w3(W, pts[0], zUp));
-    pts.forEach(p => poly.push(w3(W, p, zDn)));
+  const up = nodeById(sg.up != null ? sg.up : sg.a);
+  const dn = nodeById(sg.down != null ? sg.down : sg.b);
+
+  const poly = [];
+  if (up && Math.abs(heightOf(up) - hs[0]) > 0.005) poly.push(w3(W, pts[0], heightOf(up)));
+  for (let i = 0; i < pts.length; i++) {
+    if (i > 0 && Math.abs(hs[i] - hs[i - 1]) > 0.005) poly.push(w3(W, pts[i], hs[i - 1]));
+    poly.push(w3(W, pts[i], hs[i]));
   }
+  if (dn && Math.abs(heightOf(dn) - hs[hs.length - 1]) > 0.005)
+    poly.push(w3(W, pts[pts.length - 1], heightOf(dn)));
   return hop3D(poly, Math.abs(parseFloat(sg.extraRise) || 0));
 }
 
@@ -8626,7 +8838,9 @@ function draw3D() {
 function legend3D() {
   const m = V3.model;
   if (!m) return;
-  const hs = S.nodes.map(n => heightOf(n));
+  const hs = [];
+  S.nodes.forEach(n => hs.push(heightOf(n)));
+  S.segs.forEach(sg => heightsOf(sg).forEach(h => hs.push(h)));
   const lo = hs.length ? Math.min.apply(null, hs) : 0;
   const hi = hs.length ? Math.max.apply(null, hs) : 0;
   const risers = S.segs.filter(s => s.fit && s.fit.rise > 0.01).length;
@@ -8851,7 +9065,9 @@ function applyToolPointer(ev, p) {
         : { x: node.x, y: node.y };
       const mode = (sn.kind === 'dot' && sn.mode) ? sn.mode : currentTraceMode();
       const leg = (sn.kind === 'dot' && sn.leg) ? sn.leg : currentTraceLeg();
-      draft = { kind: 'trace', startNode: node.id, startPort, pts: [{ x: at0.x, y: at0.y }],
+      const h0 = heightAtSnap(sn);
+      if (sn.kind === 'vertex' || sn.kind === 'dot' || sn.kind === 'run') setTraceHeight(h0);
+      draft = { kind: 'trace', startNode: node.id, startPort, pts: [ptAt(at0.x, at0.y, h0)],
                 mode, leg };
       render();
       return;
@@ -8875,7 +9091,7 @@ function applyToolPointer(ev, p) {
         if (isUnitCasing(node) && orthoNow() && prev && at && !isCardinalLeg(prev, at)) {
           draft.pts.push(squareCorner(prev, at));
         }
-        draft.pts.push({ x: at.x, y: at.y });
+        draft.pts.push(ptAt(at.x, at.y, traceHeight));
         finishTrace(node.id, endPort);
         return;
       }
@@ -9078,8 +9294,18 @@ document.addEventListener('keydown', ev => {
   if (k === '-') { setZoom(zoom / 1.2); return; }
   if (k === '0') { zoomFit(); return; }
   if (k === 'r') { rotateDialog(); return; }
-  if (k === '[') { rotateBy(-90); return; }
-  if (k === ']') { rotateBy(90); return; }
+  if (k === '[' || k === ']') {
+    /* While Trace is armed these nudge the next-section height, the same
+       as AC Trace. The Rotate button and R still turn the sheet. */
+    if (tool === 'trace' && !(draft && draft.kind === 'tape')) {
+      setTraceHeight(Math.round((traceHeight + (k === ']' ? 0.1 : -0.1)) * 100) / 100);
+      toast('Next section at ' + fmt(traceHeight, 2) + ' m');
+      render();
+      return;
+    }
+    rotateBy(k === '[' ? -90 : 90);
+    return;
+  }
 });
 
 /* ==========================================================================
@@ -9159,6 +9385,13 @@ el('hintShow').addEventListener('click', ev => { ev.preventDefault(); showHint()
 el('hintMore').addEventListener('click', ev => { ev.preventDefault(); hintLong = !hintLong; syncHint(); });
 el('hintFin').addEventListener('click', () => { finishDraftInPlace(); });
 el('orthoChk').addEventListener('click', ev => ev.stopPropagation());
+el('hgtIn').addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  if (!isNaN(v)) { traceHeight = v; render(); }
+});
+el('hgtIn').addEventListener('wheel', () => el('hgtIn').blur(), { passive: true });
+el('hgtIn').addEventListener('click', ev => ev.stopPropagation());
+el('hgtIn').addEventListener('keydown', ev => ev.stopPropagation());
 
 el('zRot').addEventListener('click', rotateDialog);
 el('zIn').addEventListener('click', () => setZoom(zoom * 1.2));

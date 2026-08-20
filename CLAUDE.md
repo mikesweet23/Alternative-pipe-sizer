@@ -311,6 +311,28 @@ diverting valve** (`ctrl3Div` / 3DV). A load arrangement can be 3-port
 diverting or 3-port mixing (`threePort` / `threePortMix`); the simulator
 knows both.
 
+### Heights per section — the same model as AC Trace
+
+A plant, a load and a header still have a height, but that is the unit, not
+the pipe. **Every point on a run carries its own** (`sg.pts[i].h`), falling
+back to `sg.height` and then to the height the old node-only model would
+have drawn that pipe at, so a file written before this still looks the same
+in 3D and still counts the same riser. `vertexH()` is the only place that
+resolves it.
+
+While tracing, the next point gets `traceHeight` (the **Height** box in the
+hint bar, default `settings.mainHeight`). Change it before a click and that
+click starts a riser. `[` and `]` nudge it 0.1 m while Trace is armed; they
+still rotate the sheet in every other tool. Branching from an existing run
+picks up that pipe's height so the tee is level.
+
+The run inspector has the same point-by-point list as AC Trace, with *Level
+the whole run* and *Set all to…*. `riseBreakdown()` walks the section in the
+direction it is fed: on at the start, every change along it, off at the end.
+3D check (`segPoly3D`) draws that walk, so a main at 3.5 m with a plant at
+1 m and a coil at 2.5 m reads as three heights, not one. Extra rise over an
+obstruction is unchanged.
+
 ### Several plants on one header
 
 Duty / assist / standby lives on the plant (`dutyRole`). Plants that share a
@@ -636,7 +658,9 @@ the drawing, the scale, the traced geometry and any tape measures
 - **Rotating the drawing turns the take-off with it.** A sheet arrives
   sideways more often than not, and a scan is rarely square, so Rotate sits
   with the zoom controls — quarter turns and a fine nudge for straightening,
-  `R` for the panel, `[` and `]` for the quarter turns. The rotation is
+  `R` for the panel, `[` and `]` for the quarter turns. While **Trace** is
+  armed those two keys nudge the next-section height instead — the Rotate
+  button and `R` still turn the sheet. The rotation is
   **baked into the image and every traced point is turned with it**, rather
   than the sheet being spun on screen: hit testing, snapping, the labels that
   have to stay square to the sheet, the 3D check and the export then carry on
@@ -1009,7 +1033,9 @@ Two minutes, and it exercises every join:
 1. Open `trace.html`, load any drawing, set a scale, place a plant and a load,
    trace one run.
 2. Open **3D check**, confirm the plant, the main and the load sit at the
-   heights they were given, then come back to the plan.
+   heights they were given, then come back to the plan. Set a point on the
+   run to a different height, open 3D again: that section must sit at the
+   typed height, with a riser at the corner, not at the plant.
 3. **Check** — it should come back clean.
 4. **Send to Sizer**. The sizer should open with the project already in it and
    say so in the toast.
