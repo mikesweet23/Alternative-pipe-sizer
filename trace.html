@@ -684,6 +684,7 @@
     <button class="tb" id="bCheck" disabled title="Look for connections that are not where they look">Check</button>
     <button class="tb" id="b3d" disabled title="Check the heights in three dimensions">3D check</button>
     <button class="tb" id="bSched" disabled>Schedule</button>
+    <button class="tb" id="bPdf" disabled title="PDF report — 3D view and the material, length and valve schedules">PDF</button>
     <button class="tb" id="bSave" title="Save this trace as a file (Ctrl+S)">Save</button>
     <button class="tb" id="bLoad">Open</button>
     <button class="tb go" id="bExport" disabled>Send to Sizer</button>
@@ -6944,8 +6945,7 @@ function renderValveSchedule() {
   });
 }
 
-function renderPipeSchedule() {
-  el('schedTakeoff').style.display = 'none';
+function pipeScheduleRows() {
   const rows = [];
   const walk = (nodeId, depth) => {
     S.segs.filter(s => s.up === nodeId).forEach(sg => {
@@ -6957,6 +6957,12 @@ function renderPipeSchedule() {
   };
   S.nodes.filter(n => n.type === 'source').forEach(r => walk(r.id, 0));
   S.segs.filter(s => s.orphan).forEach(sg => rows.push({ sg, down: null, depth: 0, isCons: false, orphan: true }));
+  return rows;
+}
+
+function renderPipeSchedule() {
+  el('schedTakeoff').style.display = 'none';
+  const rows = pipeScheduleRows();
 
   const body = rows.map(r => {
     const sg = r.sg, p = sg.pipe;
@@ -7097,6 +7103,334 @@ function renderIndexPanel(w) {
       el('drawer').classList.remove('on');
     });
   });
+}
+
+/* Pipe metres to order, grouped by material and size. Route and riser are
+   one way; pipe metres is every installed leg. The schedule on screen and
+   the PDF both read this, so they cannot drift. */
+function pipeMaterialTakeoff() {
+  const groups = {};
+  S.segs.forEach(sg => {
+    const mat = sg.material || S.settings.material;
+    const size = sg.pipe ? sg.pipe.nom : 'unsized';
+    const pipes = sg.mode === 'single' ? 1 : 2;
+    const key = mat + '|' + size + '|' + pipes;
+    if (!groups[key]) {
+      groups[key] = { mat, matLabel: MAT_LABEL[mat] || mat, size, pipes,
+                      runs: 0, routeM: 0, riserM: 0, pipeM: 0, nFit: 0 };
+    }
+    const g = groups[key];
+    g.runs++;
+    g.routeM += sg.runM || 0;
+    g.riserM += (sg.fit ? (sg.fit.rise || 0) + (sg.fit.extra || 0) : 0);
+    g.pipeM += sg.hydM || 0;
+    g.nFit += sg.nFit || 0;
+  });
+  return Object.keys(groups).map(k => groups[k]).sort((a, b) =>
+    a.matLabel.localeCompare(b.matLabel) ||
+    String(a.size).localeCompare(String(b.size), 'en', { numeric: true }) ||
+    (a.pipes - b.pipes));
+}
+
+/* Elbows, tees and the rest counted off the geometry, plus anything placed
+   on the K basis. Typical-kPa valves stay on the valve take-off. */
+function fittingsTakeoff() {
+  const groups = {};
+  S.segs.forEach(sg => {
+    const list = (sg.fit && sg.fit.list) || {};
+    const size = sg.pipe ? sg.pipe.nom : 'unsized';
+    Object.keys(list).forEach(k => {
+      const key = k + '|' + size;
+      if (!groups[key]) {
+        const ft = FITTING_TYPES[k];
+        groups[key] = { type: k, label: (ft && ft.label) || k, size,
+                        qty: 0, assumed: !!(ft && ft.assumed) };
+      }
+      groups[key].qty += list[k];
+    });
+  });
+  return Object.keys(groups).map(k => groups[k]).sort((a, b) =>
+    a.label.localeCompare(b.label) ||
+    String(a.size).localeCompare(String(b.size), 'en', { numeric: true }));
+}
+
+function formatDateGB(iso) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? (m[3] + '/' + m[2] + '/' + m[1]) : (iso || '\u2014');
+}
+
+/* ==========================================================================
+   PDF REPORT
+   Same route as the sizer: a print window, Save as PDF. The report is the
+   take-off as it stands — 3D, pipe metres by size, fittings counted off the
+   geometry, valves placed by hand, and the index path. Concept and a scaled
+   drawing use the same button; Concept says the lengths were typed.
+   ========================================================================== */
+function exportTracePDFReport() {
+  if (!S.img) { toast(S.concept ? 'Start a concept first' : 'Load a drawing first'); return; }
+  solve();
+  const t = totals();
+  const project = S.ref || 'Untitled';
+  const mode = S.concept ? 'Concept schematic' : 'Scaled drawing';
+  const mat = MAT_LABEL[S.settings.material] || S.settings.material;
+  const cond = (CONDITION_LABEL[S.settings.condition] || S.settings.condition)
+    .replace(/ \(design\)/, '');
+  const nf = S.segs.reduce((n, s) => n + (s.nFit || 0), 0);
+  const w = worstPath();
+  const allIdx = (S.indexes && S.indexes.length) ? S.indexes : (w ? [w] : []);
+  const png = capture3DPng(1100, 640);
+  const logo = document.querySelector('.adi-bar .brand-logo');
+  const logoSrc = logo ? logo.src : '';
+
+  const pipeRows = pipeScheduleRows();
+  const pipeBody = pipeRows.map(r => {
+    const sg = r.sg, p = sg.pipe;
+    const vert = (sg.fit.rise || 0) + (sg.fit.extra || 0);
+    const flags = [];
+    if (r.isCons && r.down) flags.push(esc(r.down.name));
+    if (sg.isIndex) flags.push('index');
+    if (isOffloader(r.down)) flags.push('off-loader');
+    if (!r.orphan && (sg.nCons || 0) === 0 && !isOffloader(r.down)) flags.push('no load');
+    if (r.orphan) flags.push('not connected');
+    const st = !p ? 'unsized'
+      : (p.v > S.settings.vMax ? 'fast' : (p.slow ? 'slow' : 'ok'));
+    return '<tr' + (sg.isIndex ? ' class="idx"' : '') + '>'
+      + '<td>' + esc(sg.ref) + (flags.length ? ' <span class="tag">' + flags.join(' · ') + '</span>' : '') + '</td>'
+      + '<td class="n">' + (p ? p.nom : '\u2014') + '</td>'
+      + '<td class="n">' + fmt(sg.runM, 1) + '</td>'
+      + '<td class="n">' + (vert > 0.01 ? fmt(vert, 1) : '\u2014') + '</td>'
+      + '<td class="n">' + (sg.mode === 'single' ? '1' : '2') + '</td>'
+      + '<td class="n">' + fmt(sg.hydM, 1) + '</td>'
+      + '<td class="n">' + fmt(sg.kw, 1) + '</td>'
+      + '<td class="n">' + fmt(sg.lps, 2) + '</td>'
+      + '<td class="n">' + (p ? fmt(p.v, 2) : '\u2014') + '</td>'
+      + '<td class="n">' + (p ? fmt(p.paPerM, 0) : '\u2014') + '</td>'
+      + '<td class="n">' + sg.nFit + '</td>'
+      + '<td class="n">' + fmt(sg.fitKpa, 2) + '</td>'
+      + '<td class="n">' + fmt(sg.dropKpa, 2) + '</td>'
+      + '<td class="n">' + (sg.coilKpa > 0 ? fmt(sg.totalKpa, 2) : '\u2014') + '</td>'
+      + '<td>' + st + '</td></tr>';
+  }).join('');
+
+  const pipeFoot = pipeRows.length
+    ? '<tr class="sub"><td>All runs</td><td class="n"></td>'
+      + '<td class="n">' + fmt(t.routeM, 1) + '</td>'
+      + '<td class="n">' + fmt(t.riserM, 1) + '</td>'
+      + '<td class="n"></td><td class="n">' + fmt(t.pipeM, 1) + '</td>'
+      + '<td class="n" colspan="4"></td><td class="n">' + nf + '</td>'
+      + '<td class="n" colspan="4"></td></tr>'
+    : '';
+
+  const matRows = pipeMaterialTakeoff();
+  const matBody = matRows.map(g =>
+    '<tr><td>' + esc(g.matLabel) + '</td><td class="n">' + esc(g.size) + '</td>'
+    + '<td class="n">' + g.pipes + '</td><td class="n">' + g.runs + '</td>'
+    + '<td class="n">' + fmt(g.routeM, 1) + '</td>'
+    + '<td class="n">' + fmt(g.riserM, 1) + '</td>'
+    + '<td class="n"><strong>' + fmt(g.pipeM, 1) + '</strong></td>'
+    + '<td class="n">' + g.nFit + '</td></tr>').join('');
+
+  const fitRows = fittingsTakeoff();
+  const fitBody = fitRows.map(g =>
+    '<tr><td>' + esc(g.label) + (g.assumed ? ' <span class="tag">assumed</span>' : '') + '</td>'
+    + '<td class="n">' + esc(g.size) + '</td>'
+    + '<td class="n"><strong>' + g.qty + '</strong></td></tr>').join('');
+  const fitQty = fitRows.reduce((n, g) => n + g.qty, 0);
+
+  const vRows = valveSchedule();
+  const vGroups = {};
+  vRows.forEach(r => {
+    const key = r.type + '|' + (r.size || 'unsized');
+    if (!vGroups[key]) vGroups[key] = { label: r.label, size: r.size, qty: 0, kpa: 0, assumed: r.assumed };
+    vGroups[key].qty += r.qty;
+    vGroups[key].kpa += r.totalKpa;
+  });
+  const vTake = Object.keys(vGroups).sort((a, b) =>
+      vGroups[a].label.localeCompare(vGroups[b].label)
+      || String(vGroups[a].size).localeCompare(String(vGroups[b].size), 'en', { numeric: true }))
+    .map(k => {
+      const g = vGroups[k];
+      return '<tr><td>' + esc(g.label) + (g.assumed ? ' <span class="tag">assumed</span>' : '') + '</td>'
+        + '<td class="n">' + (g.size || 'unsized') + '</td>'
+        + '<td class="n">' + g.qty + '</td>'
+        + '<td class="n">' + fmt(g.kpa, 2) + '</td></tr>';
+    }).join('');
+  const vList = vRows.map(r =>
+    '<tr><td>' + esc(r.tag) + '</td><td>' + esc(r.label)
+    + (r.assumed ? ' <span class="tag">assumed</span>' : '') + '</td>'
+    + '<td>' + esc(r.run) + (r.isIndex ? ' <span class="tag">index</span>' : '') + '</td>'
+    + '<td class="n">' + (r.size || '\u2014') + '</td>'
+    + '<td>' + esc(r.leg) + '</td><td class="n">' + r.qty + '</td>'
+    + '<td class="n">' + (r.branch ? '\u2014' : fmt(r.eachKpa, 2)) + '</td>'
+    + '<td class="n">' + (r.branch ? '\u2014' : fmt(r.totalKpa, 2)) + '</td></tr>').join('');
+  const vKpa = vRows.reduce((s, r) => s + (r.branch ? 0 : r.totalKpa), 0);
+  const vQty = vRows.reduce((s, r) => s + r.qty, 0);
+
+  const idxHtml = allIdx.length ? allIdx.map(r => {
+    const g = groupOf(r.group) || {};
+    const hops = r.chain.map(sg =>
+      esc(sg.ref) + (sg.pipe ? ' ' + sg.pipe.nom : '') + ' ' + fmt(sg.dropKpa, 2) + ' kPa')
+      .join(' \u2192 ');
+    const title = allIdx.length > 1
+      ? (g.sepId == null ? 'Primary circuit' : 'Secondary off ' + (g.sepName || 'header'))
+      : 'Index run';
+    return '<p><strong>' + esc(title) + '</strong> \u2014 ' + (hops || 'no pipework')
+      + (r.coil > 0 ? ' \u2192 ' + esc(r.node.name) + ' ' + fmt(r.coil, 2) + ' kPa' : '')
+      + ' = <strong>' + fmt(r.drop, 2) + ' kPa</strong>. '
+      + r.hops + ' run' + (r.hops === 1 ? '' : 's') + ' to ' + esc(r.node.name)
+      + ', carrying ' + fmt(groupFlow(r.group), 2) + ' l/s.</p>';
+  }).join('') + (allIdx.length > 1
+    ? '<p>These do not add up: each is a separate hydraulic circuit with its own pump.</p>'
+    : '')
+    : '<p>No index run yet \u2014 nothing is connected back to plant.</p>';
+
+  const hs = [];
+  S.nodes.forEach(n => hs.push(heightOf(n)));
+  S.segs.forEach(sg => heightsOf(sg).forEach(h => hs.push(h)));
+  const lo = hs.length ? Math.min.apply(null, hs) : 0;
+  const hi = hs.length ? Math.max.apply(null, hs) : 0;
+  const risers = S.segs.filter(s => s.fit && s.fit.rise > 0.01).length;
+
+  const css = '@page{size:A4;margin:14mm}*{box-sizing:border-box;margin:0;padding:0}'
+    + 'body{font-family:Archivo,Segoe UI,Arial,sans-serif;color:#23262c;font-size:10pt;line-height:1.45;background:#fbfaf7}'
+    + '.hd{border-bottom:3px solid #e0a422;padding-bottom:12px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:flex-start;gap:16px}'
+    + '.hd h1{font-size:18px;color:#1c1f26}.hd .s{font-size:10px;color:#5c6069;letter-spacing:.04em;font-weight:600;margin-top:4px}'
+    + '.hd img{height:42px;width:auto}'
+    + '.meta{display:grid;grid-template-columns:1fr 1fr;gap:3px 24px;margin-bottom:16px;font-size:9.5pt}'
+    + '.meta .r{display:flex;justify-content:space-between;border-bottom:1px dotted #bfb9ac;padding:2px 0}'
+    + '.meta .l{color:#5c6069;font-weight:600}'
+    + 'h2{font-size:13px;color:#1c1f26;margin:18px 0 8px;padding-bottom:4px;border-bottom:2px solid #e0a422}'
+    + 'p{margin-bottom:8px}'
+    + '.rpt{width:100%;border-collapse:collapse;margin-bottom:10px;font-size:8.2pt}'
+    + '.rpt th{background:#1c1f26;color:#fbfaf7;text-align:left;padding:5px 6px;font-size:7.4pt;font-weight:600}'
+    + '.rpt th.n,.rpt td.n{text-align:right}'
+    + '.rpt td{padding:4px 6px;border-bottom:1px solid #d9d5cc}'
+    + '.rpt tr:nth-child(even) td{background:#f1efe9}'
+    + '.rpt .sub td{border-top:2px solid #1c1f26;font-weight:700;background:#ece8df!important}'
+    + '.rpt tr.idx td{background:#f8eed4!important}'
+    + '.tag{font-size:7pt;background:#e0a422;color:#241a00;padding:1px 4px;border-radius:2px;font-weight:700;margin-left:4px}'
+    + '.tiles{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}'
+    + '.tile{flex:1;min-width:90px;border:1px solid #d9d5cc;border-radius:4px;padding:8px;text-align:center;background:#fff}'
+    + '.tile .v{font-size:18px;font-weight:800;color:#1c1f26}'
+    + '.tile .l{font-size:7.5pt;color:#5c6069;text-transform:uppercase;letter-spacing:.04em}'
+    + '.view3{border:1px solid #d9d5cc;background:#f6f4ef;padding:8px;margin-bottom:10px}'
+    + '.view3 img{width:100%;height:auto;display:block}'
+    + '.leg{font-size:8.5pt;color:#5c6069;margin:6px 0 0}'
+    + '.sw{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle;margin:0 4px 0 10px}'
+    + '.disc{margin-top:18px;padding-top:10px;border-top:1px solid #bfb9ac;font-size:8pt;color:#8a8e97}'
+    + '.pbar{position:fixed;top:0;left:0;right:0;background:#1c1f26;color:#fbfaf7;padding:10px 18px;display:flex;justify-content:space-between;align-items:center;z-index:9}'
+    + '.pbar button{background:#e0a422;color:#241a00;border:none;padding:7px 16px;font-weight:700;border-radius:3px;cursor:pointer}'
+    + '.pbar button.sec{background:transparent;color:#fbfaf7;border:1px solid rgba(255,255,255,.35)}'
+    + '@media print{.no-print{display:none!important}body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}'
+    + '@media screen{.doc{margin-top:56px;max-width:860px;margin-left:auto;margin-right:auto;padding:16px}}';
+
+  const html = '<!DOCTYPE html><html lang="en-GB"><head><meta charset="UTF-8">'
+    + '<title>' + (S.concept ? 'Concept' : 'Pipe Trace') + ' report \u2014 ' + esc(project) + '</title>'
+    + '<style>' + css + '</style></head><body>'
+    + '<div class="pbar no-print"><span style="font-weight:600">'
+    + (S.concept ? 'Concept' : 'Pipe Trace') + ' report \u2014 ready to save as PDF</span>'
+    + '<span><button class="sec" onclick="window.close()">Close</button> '
+    + '<button onclick="window.print()">Save as PDF / Print</button></span></div>'
+    + '<div class="doc">'
+    + '<div class="hd"><div><h1>' + (S.concept ? 'Concept take-off report' : 'Pipe Trace take-off report') + '</h1>'
+    + '<div class="s">adi Climate Systems \u00b7 ' + (S.concept ? 'schematic take-off' : 'drawing take-off') + '</div></div>'
+    + (logoSrc ? '<img src="' + logoSrc + '" alt="adi Climate Systems">' : '') + '</div>'
+    + '<div class="meta">'
+    + '<div class="r"><span class="l">Project</span><span>' + esc(project) + '</span></div>'
+    + '<div class="r"><span class="l">Date</span><span>' + esc(formatDateGB(S.date)) + '</span></div>'
+    + '<div class="r"><span class="l">Engineer</span><span>' + esc(S.engineer || '\u2014') + '</span></div>'
+    + '<div class="r"><span class="l">Sheet</span><span>' + mode + '</span></div>'
+    + '<div class="r"><span class="l">Material</span><span>' + esc(mat) + '</span></div>'
+    + '<div class="r"><span class="l">Condition</span><span>' + esc(cond) + '</span></div>'
+    + '<div class="r"><span class="l">Jointing</span><span>' + esc(S.settings.jointing) + '</span></div>'
+    + '<div class="r"><span class="l">Limit</span><span>' + S.settings.limitPd + ' Pa/m \u00b7 '
+      + S.settings.vMin + '\u2013' + S.settings.vMax + ' m/s</span></div>'
+    + '</div>'
+    + '<h2>1. Summary</h2>'
+    + '<div class="tiles">'
+    + '<div class="tile"><div class="v">' + t.consumers + '</div><div class="l">Loads</div></div>'
+    + '<div class="tile"><div class="v">' + fmt(t.kw, 0) + '</div><div class="l">Duty kW</div></div>'
+    + '<div class="tile"><div class="v">' + fmt(t.pipeM, 0) + '</div><div class="l">Pipe m installed</div></div>'
+    + '<div class="tile"><div class="v">' + nf + '</div><div class="l">Fittings</div></div>'
+    + '<div class="tile"><div class="v">' + (w ? fmt(w.drop, 0) : '\u2014') + '</div><div class="l">Index kPa</div></div>'
+    + '</div>'
+    + '<p>' + (S.concept
+      ? 'This is a concept schematic. Installed length is typed on each run; there is no drawing to measure. Rise is not added on top of that typed length.'
+      : 'Route is one way on the plan. Riser is one way vertical. Pipe metres is every leg as installed \u2014 route plus riser, times the number of pipes.')
+    + ' Sizes are indicative against ' + S.settings.limitPd + ' Pa/m on ' + esc(mat.toLowerCase())
+    + ', ' + esc(cond.toLowerCase()) + '. Send the take-off to the sizer for the full calculation.</p>'
+    + '<h2>2. 3D view</h2>'
+    + '<div class="view3">'
+    + (png ? '<img src="' + png + '" alt="Isometric 3D of the take-off">'
+         : '<p>The 3D view could not be drawn.</p>')
+    + '<div class="leg"><span class="sw" style="background:#c0392b;margin-left:0"></span>Flow'
+    + '<span class="sw" style="background:#2471a3"></span>Return'
+    + ' &nbsp;\u00b7&nbsp; ' + fmt(lo, 2) + ' m to ' + fmt(hi, 2) + ' m above finished floor'
+    + ' &nbsp;\u00b7&nbsp; ' + risers + ' run' + (risers === 1 ? '' : 's') + ' with a riser'
+    + ' &nbsp;\u00b7&nbsp; isometric, true height</div></div>'
+    + '<h2>3. Pipework schedule</h2>'
+    + '<table class="rpt"><thead><tr>'
+    + '<th>Run</th><th class="n">Size</th><th class="n">Route m</th><th class="n">Riser m</th>'
+    + '<th class="n">Pipes</th><th class="n">Pipe m</th><th class="n">kW</th><th class="n">l/s</th>'
+    + '<th class="n">m/s</th><th class="n">Pa/m</th><th class="n">Fittings</th><th class="n">Fit. kPa</th>'
+    + '<th class="n">Run kPa</th><th class="n">With coil</th><th>Status</th></tr></thead>'
+    + '<tbody>' + (pipeBody || '<tr><td colspan="15">Nothing traced yet.</td></tr>') + pipeFoot + '</tbody></table>'
+    + '<p style="font-size:8.5pt;color:#5c6069">Route and riser are one way. Pipe metres is what gets ordered. '
+    + NAMING_NOTE + '</p>'
+    + '<h2>4. Material take-off</h2>'
+    + '<p>Metres to order, grouped by material and size. A paired run counts both legs.</p>'
+    + '<table class="rpt"><thead><tr><th>Material</th><th class="n">Size</th><th class="n">Pipes</th>'
+    + '<th class="n">Runs</th><th class="n">Route m</th><th class="n">Riser m</th>'
+    + '<th class="n">Pipe m</th><th class="n">Fittings</th></tr></thead>'
+    + '<tbody>' + (matBody || '<tr><td colspan="8">Nothing traced yet.</td></tr>')
+    + (matRows.length
+        ? '<tr class="sub"><td>All pipe</td><td class="n"></td><td class="n"></td>'
+          + '<td class="n">' + S.segs.length + '</td>'
+          + '<td class="n">' + fmt(t.routeM, 1) + '</td>'
+          + '<td class="n">' + fmt(t.riserM, 1) + '</td>'
+          + '<td class="n">' + fmt(t.pipeM, 1) + '</td>'
+          + '<td class="n">' + nf + '</td></tr>'
+        : '')
+    + '</tbody></table>'
+    + '<h2>5. Fittings counted off the geometry</h2>'
+    + '<p>Elbows, bends, tees and assumed terminal sets, at the size of the run they sit on. '
+    + 'Valves placed by hand on a typical or fixed kPa are on the next sheet, not here.</p>'
+    + '<table class="rpt"><thead><tr><th>Item</th><th class="n">Size</th><th class="n">Qty</th></tr></thead>'
+    + '<tbody>' + (fitBody || '<tr><td colspan="3">No fittings counted yet.</td></tr>')
+    + (fitRows.length
+        ? '<tr class="sub"><td>All counted fittings</td><td class="n"></td><td class="n">' + fitQty + '</td></tr>'
+        : '')
+    + '</tbody></table>'
+    + '<h2>6. Valves &amp; fittings placed</h2>'
+    + (vRows.length
+      ? '<p>What has been dropped on the drawing. ' + vQty + ' item' + (vQty === 1 ? '' : 's')
+        + ', ' + fmt(vKpa, 1) + ' kPa across the network.</p>'
+        + '<table class="rpt"><thead><tr><th colspan="4">Take-off \u2014 what gets ordered</th></tr>'
+        + '<tr><th>Item</th><th class="n">Size</th><th class="n">Qty</th><th class="n">kPa</th></tr></thead>'
+        + '<tbody>' + vTake + '</tbody></table>'
+        + '<table class="rpt"><thead><tr><th colspan="8">Itemised</th></tr>'
+        + '<tr><th>Tag</th><th>Item</th><th>Run</th><th class="n">Size</th><th>Leg</th>'
+        + '<th class="n">Qty</th><th class="n">kPa each</th><th class="n">kPa total</th></tr></thead>'
+        + '<tbody>' + vList
+        + '<tr class="sub"><td colspan="5">All placed</td><td class="n">' + vQty
+        + '</td><td class="n"></td><td class="n">' + fmt(vKpa, 2) + '</td></tr>'
+        + '</tbody></table>'
+      : '<p>No valves placed yet. Elbows and tees are on the fittings sheet above.</p>')
+    + '<h2>7. Index run</h2>'
+    + idxHtml
+    + '<div class="disc"><strong>Disclaimer:</strong> This take-off is a design aid. Lengths, sizes and '
+    + 'pressures are based on the inputs on the drawing or schematic and on standard reference data. '
+    + 'Assumed valve and fitting figures stand in for selected-product data until they are replaced. '
+    + 'All outputs must be verified by a competent engineer against the project, manufacturers\u2019 '
+    + 'certified data and applicable standards before construction. The sizer is the next step for '
+    + 'the full hydraulic calculation.</div>'
+    + '</div></body></html>';
+
+  const win = window.open('', '_blank');
+  if (!win) { alert('Please allow pop-ups to generate the PDF report.'); return; }
+  win.document.write(html);
+  win.document.close();
+  toast('Report ready \u2014 Save as PDF in the print dialog');
 }
 
 /* ==========================================================================
@@ -7820,7 +8154,7 @@ function showDrawing(opts) {
   el('zoomer').style.display = 'flex';
   const zRot = el('zRot');
   if (zRot) zRot.style.display = S.img.virtual ? 'none' : '';
-  ['bSched','bExport','bName','b3d','bCheck'].forEach(id => el(id).disabled = false);
+  ['bSched','bPdf','bExport','bName','b3d','bCheck'].forEach(id => el(id).disabled = false);
   if (S.img.virtual) {
     el('bOpenDwg').textContent = 'Open drawing';
     el('bOpenDwg').title = 'Load a PDF or image — this concept sheet has no drawing';
@@ -8154,7 +8488,7 @@ function stopConcept() {
     el('zoomer').style.display = 'none';
     el('dwg').style.display = 'none';
     el('ov').innerHTML = '';
-    ['bSched','bExport','bName','b3d','bCheck'].forEach(id => { const b = el(id); if (b) b.disabled = true; });
+    ['bSched','bPdf','bExport','bName','b3d','bCheck'].forEach(id => { const b = el(id); if (b) b.disabled = true; });
     el('bOpenDwg').textContent = 'Open drawing';
     buildRail();
   }
@@ -8302,8 +8636,10 @@ function stepsDialog() {
      + 'not at the plant. Read-only — come back to the plan to change a point height.'],
     ['Check the schedule, then send it on', tick(false),
      'The schedule shows size, velocity, gradient and the fittings counted off the geometry, with the '
-     + 'index run marked and written out at the bottom. Send to Sizer opens the sizer with the '
-     + 'project already in it, and saves a copy of the file at the same time. Runs are named '
+     + 'index run marked and written out at the bottom. <strong>PDF</strong> opens a printable report '
+     + 'with the 3D view, the pipework schedule and the material, length and valve take-off. '
+     + 'Send to Sizer opens the sizer with the project already in it, and saves a copy of the file '
+     + 'at the same time. Runs are named '
      + NAMING_NOTE + '.'],
   ];
   modal('How Pipe Trace works',
@@ -8766,8 +9102,11 @@ function fit3D() {
 }
 
 function draw3D() {
-  const cv = el('threeCv');
-  if (!cv.getContext) return;
+  draw3DOnto(el('threeCv'));
+}
+
+function draw3DOnto(cv) {
+  if (!cv || !cv.getContext) return;
   const ctx = cv.getContext('2d');
   const m = V3.model;
   ctx.setTransform(V3.dpr, 0, 0, V3.dpr, 0, 0);
@@ -8877,6 +9216,32 @@ function close3D() {
   V3.on = false;
   el('three').classList.remove('on');
   render();
+}
+
+/* Snapshot the isometric at true height for the PDF. Saves and restores the
+   live 3D camera so printing does not yank the panel if it is already open. */
+function capture3DPng(w, h) {
+  const snap = {
+    w: V3.w, h: V3.h, dpr: V3.dpr, s: V3.s, panX: V3.panX, panY: V3.panY,
+    az: V3.az, el: V3.el, ex: V3.ex, labels: V3.labels, model: V3.model
+  };
+  const cv = document.createElement('canvas');
+  const dpr = 1.5;
+  V3.w = w; V3.h = h; V3.dpr = dpr;
+  cv.width = Math.round(w * dpr);
+  cv.height = Math.round(h * dpr);
+  V3.az = 0.62; V3.el = 0.52; V3.ex = 1; V3.labels = true;
+  V3.model = build3D();
+  fit3D();
+  draw3DOnto(cv);
+  let url = '';
+  try { url = cv.toDataURL('image/png'); } catch (err) { url = ''; }
+  V3.w = snap.w; V3.h = snap.h; V3.dpr = snap.dpr; V3.s = snap.s;
+  V3.panX = snap.panX; V3.panY = snap.panY;
+  V3.az = snap.az; V3.el = snap.el; V3.ex = snap.ex;
+  V3.labels = snap.labels; V3.model = snap.model;
+  if (V3.on) { size3D(); draw3D(); }
+  return url;
 }
 
 /* Front and side are true elevations — elevation angle exactly zero — so a
@@ -9376,6 +9741,7 @@ el('bSched').addEventListener('click', () => {
   const on = d.classList.toggle('on');
   if (on) renderSchedule();
 });
+el('bPdf').addEventListener('click', exportTracePDFReport);
 el('bSchedClose').addEventListener('click', () => el('drawer').classList.remove('on'));
 el('insClose').addEventListener('click', closeInspector);
 el('hint').addEventListener('pointerdown', ev => ev.stopPropagation());

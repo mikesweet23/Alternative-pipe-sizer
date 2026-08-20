@@ -285,6 +285,27 @@ nothing to measure. Click a run and the inspector focuses that box. That is
 how a concept design gets concept pipe sizes before a layout exists.
 `/` opens Trace so that is the first thing you see.
 
+**PDF** on the Trace bar (same button in Concept) opens a printable report:
+the isometric 3D, the pipework schedule, metres to order by material and
+size, fittings counted off the geometry, valves placed by hand, and the
+index path. Same route as the sizer — a print window, Save as PDF. Concept
+says the lengths were typed; a scaled drawing says they were measured.
+
+### PDF report from Trace and Concept
+
+`exportTracePDFReport()` is the whole of it. `capture3DPng()` draws the
+isometric onto an off-screen canvas at true height (flow `#c0392b`, return
+`#2471a3`, paper background) and puts the PNG in the report, then puts the
+live 3D camera back so an open 3D check is not yanked. The schedules read
+`pipeScheduleRows()`, `pipeMaterialTakeoff()`, `fittingsTakeoff()` and
+`valveSchedule()` — the same figures as the on-screen Schedule drawer, so
+the two cannot drift. Route and riser are one way; pipe metres is every
+installed leg. In Concept, `lengthOverride` is that installed length and
+rise is not added on top of it.
+
+This is a take-off, not the sizer calculation. The disclaimer says so and
+points at Send to Sizer for the full hydraulics.
+
 ### Tracing: two pipes or one, dots on a run, edge rings
 
 Arming **Trace** opens Two pipes / Single pipe (flow) / Single pipe (return)
@@ -914,8 +935,9 @@ the drawing, the scale, the traced geometry and any tape measures
   `.steps` and `.chain` were already taken inside the tools). **Change one copy
   and change all three in the same commit**, and keep the shared brand tokens
   (`--adi-bar`, `--adi-bar-ink`, `--adi-bar-muted`, `--adi-bar-line`,
-  `--adi-blue`) identical too. Trace carries ten more buttons in the same bar,
-  so it alone adds two breakpoints below the block that drop the strapline and
+  `--adi-blue`) identical too. Trace carries the extra toolbar buttons in the
+  same bar (drawing, Concept, schedule, PDF, Send to Sizer and the rest), so
+  it alone adds two breakpoints below the block that drop the strapline and
   then the step labels — that keeps it one row down to a 1366-wide laptop, and
   is the only sanctioned local deviation.
 - Below the bar every tool keeps its **deliberately different visual identity**
@@ -1058,6 +1080,10 @@ Two minutes, and it exercises every join:
     Check is clean. The standby feed has a size and no design flow.
 13. **Inline pump**: place a pump on a concept run, type lengths, confirm the
     inspector shows flow, index head and absorbed kW.
+14. **PDF report**: PDF from Trace and from Concept. The window shows the 3D
+    isometric, the pipework schedule and the material / length / valve
+    take-off. Concept must use the typed installed length. Save as PDF / Print
+    in the print dialog.
 
 If sizes differ between trace and sizer, look first at roughness, then at the
 viscosity note in section 2.
