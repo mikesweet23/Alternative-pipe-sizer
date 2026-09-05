@@ -2129,8 +2129,10 @@ function currentViscosity() {
 function calcPD(vflow_m3s, id_m, material) {
   const A = Math.PI * (id_m / 2) ** 2;
   const v = vflow_m3s / A;
-  const rho = parseFloat(document.getElementById('rho').value);
-  const mu = currentViscosity();
+  // the same fallback calculateCircuit() uses, so a cleared field cannot put NaN
+  // through Re and out into the headroom figures
+  const rho = parseFloat(document.getElementById('rho').value) || 999;
+  const mu = currentViscosity() || waterMu(getMeanTemp());
   const Re = rho * v * id_m / mu;
   const eps = getRoughness(material);
   const relRough = eps / id_m;
@@ -2301,7 +2303,13 @@ function moveCircuit(id, dir) {
 function duplicateCircuit(id) {
   const src = circuits.find(c => c.id === id);
   if (!src) return;
-  const copy = newCircuit(Object.assign({}, src, { ref: src.ref + ' (copy)' }));
+  /* Everything on the row, not only what newCircuit() knows about: a header or
+     heat exchanger duplicated through the whitelist came out as a plain main,
+     with its group, its vessel figures and its four temperatures gone. */
+  const copy = Object.assign({}, src, { id: nextId++, ref: src.ref + ' (copy)', isIndex: false });
+  delete copy.collapsed; delete copy.sized;
+  if (copy.fittingSchedule) copy.fittingSchedule = Object.assign({}, copy.fittingSchedule);
+  if (Array.isArray(copy.traceValves)) copy.traceValves = copy.traceValves.map(v => Object.assign({}, v));
   const idx = circuits.indexOf(src);
   circuits.splice(idx + 1, 0, copy);
   renderCircuits();
@@ -4215,14 +4223,20 @@ function calculateCircuit(c) {
     weights.combined_kg_total = weights.pipe_kg_total + weights.water_kg_total;
   }
 
+  /* The status is the pipe actually selected, override included. It used to
+     answer for the automatic pick, so a row stepped down to a pipe over the
+     limit, or up to one below the minimum velocity, still showed OK — and the
+     CSV and the report repeated it. */
   let status;
   if (llhActive) {
     // For LLH: OK if recommended pipe achieves velocity ≤ V_MAX
     if (recommended && recommended.v <= V_MAX) status = 'ok';
     else status = 'no_fit';
+  } else if (!recommended) {
+    status = 'no_fit';
   } else {
-    if (firstOk) status = 'ok';
-    else if (firstPDOk) status = 'velocity_warn';
+    if (recommended.pd <= LIMIT && recommended.v >= V_MIN && recommended.v <= V_MAX) status = 'ok';
+    else if (recommended.pd <= LIMIT) status = 'velocity_warn';
     else status = 'no_fit';
   }
 
@@ -4837,6 +4851,8 @@ function renderCircuits() {
 
       if (result.status === 'ok')                statusBadge = (result.llhActive ? '<span class="badge badge-llh" style="margin-right:4px">LLH</span>' : '') + '<span class="badge badge-rec">✓ OK</span>';
       else if (result.status === 'velocity_warn') statusBadge = (result.llhActive ? '<span class="badge badge-llh" style="margin-right:4px">LLH</span>' : '') + '<span class="badge badge-warn">Vel Range</span>';
+      else if (result.sizeOverride && result.recommended)
+        statusBadge = '<span class="badge badge-warn" title="The size stepped to is over the Pa/m limit">Over limit</span>';
       else                                        statusBadge = '<span class="badge badge-warn">No Fit</span>';
     } else {
       statusBadge = '<span class="badge badge-warn">' + result.error + '</span>';
@@ -5989,6 +6005,49 @@ function showToast(msg) {
    ============================================================ */
 const PROJECT_SETTING_IDS = ["projectRef", "engineer", "calcDate", "glycol", "rho", "cp", "defaultMaterial", "limitPd", "vMin", "vMax", "pipeCondition", "customRoughCarbon", "customRoughStainless", "llhVMax", "llhMaterial", "weightUplift", "plantPd", "valvePd", "strainerPd", "miscPd", "staticHead", "safetyFactor", "insType", "insLambda", "surfaceFinish", "fluidTemp", "ambientTemp", "dwellMins", "flangeFactor", "targetTemp", "diversityFactor", "plantMargin", "plantOutput", "recoverFrom", "recoverTo", "plantDT", "returnTemp", "shutdownScenario", "customStartTemp", "rollupTol", "systemPreset", "pumpMinFlow"];
 
+/* Parts of a project file this tool does not use but must not lose. Pipe Trace
+   writes the valve take-off (`valveSchedule`), its own figures (`traceMeta`)
+   and the runs it left out (`dropped`); the sizer only needs the pressures,
+   which are already inside the circuits, but one Save here used to strip all
+   three from the file for good. They are kept as they arrived and written
+   back untouched. */
+let passThrough = {};
+const PASS_THROUGH_KEYS = ['valveSchedule', 'traceMeta', 'dropped'];
+function takePassThrough(data) {
+  passThrough = {};
+  PASS_THROUGH_KEYS.forEach(k => { if (data && data[k] !== undefined) passThrough[k] = data[k]; });
+}
+
+/* The pipe the sizer selected for a circuit, in the form the simulator
+   needs to solve on exactly this basis: bore, roughness and the equivalent
+   length the fittings came to. Derived, and rewritten on every save; the
+   sizer itself never reads it back. Before this the simulator re-selected
+   every pipe from its own, shorter tables at "new" roughness and applied the
+   planning percentage to a schedule the sizer had counted, so the two tools
+   disagreed on the same file for reasons that were not anyone's design. */
+function sizedFor(c) {
+  const r = calculateCircuit(c);
+  if (!r || r.error || !r.recommended) return null;
+  const p = r.recommended;
+  return {
+    nom: p.nom, od: p.od, wall: p.wall, id_mm: +p.id_mm.toFixed(3),
+    material: r.materialUsed, rough_m: getRoughness(r.materialUsed),
+    lengthTotal: +r.length.toFixed(3), effectiveLength: +r.effectiveLength.toFixed(3),
+    lps: +r.vflow_ls.toFixed(6), pipeLoss_kPa: +r.pipeLoss_kPa.toFixed(4),
+    llh: !!r.llhActive, sizeOverride: r.sizeOverride || 0,
+  };
+}
+
+/* What goes in the file for one circuit: what was typed, the pipe it came to,
+   and none of the fold state of the table on this screen. */
+function circuitForFile(c) {
+  const o = Object.assign({}, c);
+  delete o.collapsed;
+  const s = sizedFor(c);
+  if (s) o.sized = s; else delete o.sized;
+  return o;
+}
+
 function buildProjectSnapshot() {
   const settings = {};
   PROJECT_SETTING_IDS.forEach(id => {
@@ -6006,18 +6065,18 @@ function buildProjectSnapshot() {
      temperatures and quietly landing somewhere else. rho and cp already cross
      as their own fields; this is the third property and it was missing. */
   settings.mu = currentViscosity();
-  return {
+  return Object.assign({
     app: 'adi-pipework-sizer',
     schema: 1,
     savedAt: new Date().toISOString(),
     rev: projectRev,
-    circuits: circuits,
+    circuits: circuits.map(circuitForFile),
     nextId: nextId,
     plantItems: plantItems,
     nextPlantId: nextPlantId,
     settings: settings,
     lastEdited: currentEditStamp(),
-  };
+  }, passThrough);
 }
 
 function projectFileName() {
@@ -6098,39 +6157,12 @@ function applyProjectData(data, opts) {
                  + 'Save the current project first if you need to keep it.')) {
       return false;
     }
-    // Restore settings
-    if (data.settings) {
-      PROJECT_SETTING_IDS.forEach(id => {
-        const el = document.getElementById(id);
-        if (el && data.settings[id] !== undefined) el.value = data.settings[id];
-      });
-      const llh = document.getElementById('llhEnabled');
-      if (llh && data.settings.llhEnabled !== undefined) {
-        llh.checked = !!data.settings.llhEnabled;
-        if (typeof onLLHChange === 'function') onLLHChange();
-      }
-      const th = document.getElementById('thermalEnabled');
-      if (th && data.settings.thermalEnabled !== undefined) {
-        th.checked = !!data.settings.thermalEnabled;
-        if (typeof onThermalToggle === 'function') onThermalToggle();
-      }
-      const ap = document.getElementById('autoProps');
-      if (ap && data.settings.autoProps !== undefined) {
-        ap.checked = !!data.settings.autoProps;
-      }
+    if (parseInt(data.schema, 10) > 1) {
+      alert('This file was written by a newer version of the sizer (schema ' + data.schema + ').\n\n'
+        + 'It will open, but anything that version added will not be understood here. '
+        + 'Refresh the page to make sure you are on the latest build before saving over it.');
     }
-    // Restore circuits (backfill any fields added since the file was written)
-    circuits = migrateLengths(data.circuits.map(cc => Object.assign({
-      length: 20, fittings: 20, isIndex: false, consumerLoad: 0, isLLH: false, sizeOverride: 0,
-      isSeparator: false, vesselType: '', vesselKind: '', hxKw: 0,
-      hxPriSup: null, hxPriRet: null, hxSecSup: null, hxSecRet: null,
-    }, cc)));
-    nextId = nextIdFrom(data.nextId, circuits);
-    const repaired = repairCircuitList(circuits);
-    plantItems = (Array.isArray(data.plantItems) ? data.plantItems : []).filter(it => it && typeof it === 'object');
-    loadedEditStamp = data.lastEdited || null;
-    projectRev = parseInt(data.rev, 10) || 0;
-    nextPlantId = nextIdFrom(data.nextPlantId, plantItems);
+    const repaired = installProject(data);
     // Refresh the glycol display labels WITHOUT touching rho/cp — the loaded
     // values must survive. onBasisChange respects the restored autoProps state:
     // auto recalculates (deterministic), manual keeps the file's figures.
@@ -6139,8 +6171,73 @@ function applyProjectData(data, opts) {
     saveToLocalStorage();
     showToast('Opened ' + ref + ' \u2014 ' + circuits.length + ' circuits'
               + (source ? ' from ' + source : '') + repairNote(repaired));
+    warnUnknownFittings();
     return true;
   }
+}
+
+/* Put a project's settings, circuits and plant items on screen. Shared by a
+   file the user opened, the Pipe Trace hand-over and the browser's own copy,
+   so all three restore the same fields the same way. Returns the repair notes
+   for the toast. */
+function installProject(data) {
+  if (data.settings) {
+    PROJECT_SETTING_IDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (el && data.settings[id] !== undefined) el.value = data.settings[id];
+    });
+    const llh = document.getElementById('llhEnabled');
+    if (llh && data.settings.llhEnabled !== undefined) {
+      llh.checked = !!data.settings.llhEnabled;
+      if (typeof onLLHChange === 'function') onLLHChange();
+    }
+    const th = document.getElementById('thermalEnabled');
+    if (th && data.settings.thermalEnabled !== undefined) {
+      th.checked = !!data.settings.thermalEnabled;
+      if (typeof onThermalToggle === 'function') onThermalToggle();
+    }
+    const ap = document.getElementById('autoProps');
+    if (ap && data.settings.autoProps !== undefined) {
+      ap.checked = !!data.settings.autoProps;
+    }
+    const cr = document.getElementById('customRoughnessRow');
+    const pc = document.getElementById('pipeCondition');
+    if (cr && pc) cr.style.display = pc.value === 'custom' ? 'grid' : 'none';
+  }
+  // Restore circuits (backfill any fields added since the file was written)
+  circuits = migrateLengths((data.circuits || []).filter(cc => cc && typeof cc === 'object').map(cc => Object.assign({
+    length: 20, fittings: 20, isIndex: false, consumerLoad: 0, isLLH: false, sizeOverride: 0,
+    isSeparator: false, vesselType: '', vesselKind: '', hxKw: 0,
+    hxPriSup: null, hxPriRet: null, hxSecSup: null, hxSecRet: null,
+  }, cc)));
+  nextId = nextIdFrom(data.nextId, circuits);
+  const repaired = repairCircuitList(circuits);
+  plantItems = (Array.isArray(data.plantItems) ? data.plantItems : []).filter(it => it && typeof it === 'object');
+  loadedEditStamp = data.lastEdited || null;
+  projectRev = parseInt(data.rev, 10) || 0;
+  nextPlantId = nextIdFrom(data.nextPlantId, plantItems);
+  takePassThrough(data);
+  return repaired;
+}
+
+/* A fitting counted in Pipe Trace under a key this file does not know is
+   worth nothing here — fittingK() returns 0 for it — and until now it went
+   quietly. Said once, on open, with the keys named. */
+function unknownFittingKeys() {
+  const seen = new Set();
+  circuits.forEach(c => Object.keys(c.fittingSchedule || {}).forEach(k => {
+    if (!FITTING_TYPES[k] && (parseFloat(c.fittingSchedule[k]) || 0) > 0) seen.add(k);
+  }));
+  return [...seen];
+}
+function warnUnknownFittings() {
+  const keys = unknownFittingKeys();
+  if (!keys.length) return;
+  alert('This project counts fittings under ' + keys.length + ' key' + (keys.length === 1 ? '' : 's')
+    + ' this sizer does not know: ' + keys.join(', ') + '.\n\n'
+    + 'They are counted in Pipe Trace and worth zero here, so the pipe losses understate. '
+    + 'Both tools must carry the same FITTING_TYPES table \u2014 refresh to the latest build, or '
+    + 'add the missing type to both files in one commit.');
 }
 
 /* ============================================================
@@ -6157,12 +6254,18 @@ function takeTraceHandoff() {
   var raw = null;
   try { raw = localStorage.getItem(TRACE_HANDOFF_KEY); } catch (e) { return false; }
   if (!raw) return false;
-  try { localStorage.removeItem(TRACE_HANDOFF_KEY); } catch (e) {}
+  var drop = function () { try { localStorage.removeItem(TRACE_HANDOFF_KEY); } catch (e) {} };
   var pack;
-  try { pack = JSON.parse(raw); } catch (e) { return false; }
-  if (!pack || !pack.project) return false;
-  if (pack.at && (Date.now() - pack.at) > 10 * 60 * 1000) return false;
-  return applyProjectData(pack.project, { alerts: false, source: 'Pipe Trace' });
+  try { pack = JSON.parse(raw); } catch (e) { drop(); return false; }
+  if (!pack || !pack.project) { drop(); return false; }
+  if (pack.at && (Date.now() - pack.at) > 10 * 60 * 1000) { drop(); return false; }
+  /* Cleared only once it is on screen. Clearing on read meant that answering
+     "no" to replacing the circuits already here threw the take-off away, and
+     the copy Pipe Trace downloaded was the only way back. Declined, it stays
+     for the ten minutes and is offered again on the next load. */
+  var ok = applyProjectData(pack.project, { alerts: false, source: 'Pipe Trace' });
+  if (ok) drop();
+  return ok;
 }
 
 /* ============================================================
@@ -6399,48 +6502,14 @@ function openSchematic() {
   win.document.close();
 }
 
+/* The browser's own copy is the same snapshot the file gets, so a refresh
+   brings back every setting a Save would have kept. It used to be a hand-kept
+   list of fields that had fallen behind the file: rho and cp typed by hand,
+   the low loss header switch, the pump extras and the roughness were all
+   dropped on refresh while the file kept them. The old shape is still read. */
 function saveToLocalStorage() {
   try {
-    const state = {
-      circuits,
-      nextId,
-      rev: projectRev,
-      glycol: document.getElementById('glycol').value,
-      defaultMaterial: document.getElementById('defaultMaterial').value,
-      limitPd: document.getElementById('limitPd').value,
-      vMin: document.getElementById('vMin').value,
-      vMax: document.getElementById('vMax').value,
-      projectRef: document.getElementById('projectRef').value,
-      engineer: document.getElementById('engineer').value,
-      calcDate: document.getElementById('calcDate').value,
-      returnTemp: document.getElementById('returnTemp').value,
-      autoProps: document.getElementById('autoProps').checked,
-      plantItems: plantItems,
-      nextPlantId: nextPlantId,
-      thermal: {
-        enabled: document.getElementById('thermalEnabled').checked,
-        insType: document.getElementById('insType').value,
-        insLambda: document.getElementById('insLambda').value,
-        surfaceFinish: document.getElementById('surfaceFinish').value,
-        fluidTemp: document.getElementById('fluidTemp').value,
-        ambientTemp: document.getElementById('ambientTemp').value,
-        dwellMins: document.getElementById('dwellMins').value,
-        flangeFactor: document.getElementById('flangeFactor').value,
-        targetTemp: document.getElementById('targetTemp').value,
-      },
-      plant: {
-        diversityFactor: document.getElementById('diversityFactor').value,
-        plantMargin: document.getElementById('plantMargin').value,
-        plantOutput: document.getElementById('plantOutput').value,
-        recoverFrom: document.getElementById('recoverFrom').value,
-        recoverTo: document.getElementById('recoverTo').value,
-        plantDT: document.getElementById('plantDT').value,
-        shutdownScenario: document.getElementById('shutdownScenario').value,
-        customStartTemp: document.getElementById('customStartTemp').value,
-        pumpMinFlow: document.getElementById('pumpMinFlow').value,
-      },
-    };
-    localStorage.setItem('adi_pipesizer_v2', JSON.stringify(state));
+    localStorage.setItem('adi_pipesizer_v2', JSON.stringify({ v: 3, project: buildProjectSnapshot() }));
   } catch (e) {}
 }
 
@@ -6449,6 +6518,18 @@ function loadFromLocalStorage() {
     const raw = localStorage.getItem('adi_pipesizer_v2');
     if (!raw) return false;
     const s = JSON.parse(raw);
+    if (s && s.project && s.project.app === 'adi-pipework-sizer' && Array.isArray(s.project.circuits)) {
+      installProject(s.project);
+      return true;
+    }
+    return loadFromLocalStorageV2(s);
+  } catch (e) { return false; }
+}
+
+/* The browser copy as it was written before the snapshot was used for it. */
+function loadFromLocalStorageV2(s) {
+  try {
+    if (!s) return false;
     if (s.circuits) {
       circuits = migrateLengths(s.circuits.map(c => ({
         length: 20, fittings: 30, isIndex: false, consumerLoad: 0, isLLH: false, sizeOverride: 0,
@@ -6517,14 +6598,13 @@ function formatDateGB(iso) {
   return parts[2] + '/' + parts[1] + '/' + parts[0];
 }
 
-['rho','cp','limitPd','vMin','vMax','defaultMaterial','projectRef','engineer'].forEach(id => {
+/* rho, cp and the three temperatures carry their handler inline on the input;
+   binding them here as well ran every keystroke twice \u2014 two renders, two
+   writes to the browser copy. */
+['limitPd','vMin','vMax','defaultMaterial','projectRef','engineer'].forEach(id => {
   document.getElementById(id).addEventListener('input', renderCircuits);
 });
 document.getElementById('glycol').addEventListener('input', onGlycolChange);
-['fluidTemp','returnTemp','ambientTemp'].forEach(id => {
-  const el = document.getElementById(id);
-  if (el) el.addEventListener('input', onBasisChange);
-});
 document.getElementById('pipeCondition').addEventListener('change', e => {
   document.getElementById('customRoughnessRow').style.display = e.target.value === 'custom' ? 'grid' : 'none';
   renderCircuits();

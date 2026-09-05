@@ -801,36 +801,89 @@
    This answers "given these pipes and these valves, what flow do I get".
    ========================================================================== */
 
-/* ---------- pipe dimension tables (nominal, OD mm, wall mm) ---------- */
-const TABLES = {
-  truboreMetric: [['DN15',18,1.5],['DN20',23,1.5],['DN25',28,1.5],['DN32',35,1.5],['DN40',43,1.5],
-    ['DN50',53,1.5],['DN65',69,2],['DN80',84,2],['DN100',104,2],['DN125',129,2],['DN150',154,2],
-    ['DN200',204,2],['DN250',254,2],['DN300',304,2],['DN350',355,2.5],['DN400',406,3],['DN450',456,3],
-    ['DN500',506,3],['DN600',606,3],['DN700',708,4],['DN800',808,4],['DN900',908,4],['DN1000',1008,4]],
-  trubore: [['DN15',21.3,2],['DN20',26.9,2],['DN25',33.7,2],['DN32',42.4,2],['DN40',48.3,2],
-    ['DN50',60.3,2],['DN65',76.1,2],['DN80',88.9,2],['DN100',114.3,2],['DN125',139.7,2],['DN150',168.3,2],
-    ['DN200',219.1,3],['DN250',273,3],['DN300',323.9,4],['DN350',355.6,4],['DN400',406.4,4],
-    ['DN450',457,3],['DN500',508,4],['DN600',609.6,4],['DN700',711,4],['DN800',813,4]],
-  carbon: [['15',21.3,2.6],['20',26.9,2.6],['25',33.7,3.2],['32',42.4,3.2],['40',48.3,3.2],
-    ['50',60.3,3.6],['65',76.1,3.6],['80',88.9,4.0],['100',114.3,4.5],['125',139.7,5.0],['150',165.1,5.0]],
-  copper: [['15mm',15,0.7],['22mm',22,0.9],['28mm',28,0.9],['35mm',35,1.2],['42mm',42,1.2],
-    ['54mm',54,1.2],['67mm',66.7,1.5],['76mm',76.1,1.5],['108mm',108,1.5]],
-};
-TABLES.truboreMetric316 = TABLES.truboreMetric;
-TABLES.trubore316 = TABLES.trubore;
-TABLES.stainless = TABLES.trubore;
-TABLES.stainless304 = TABLES.trubore;
-TABLES.mlcp = TABLES.copper;
+/* ---------- pipe dimension tables (nominal, OD mm, wall mm) ----------
+   Copied verbatim from the Pipework Sizer's CARBON … MLCP arrays, and the
+   simulator carries the same copy. The three have to agree to the tenth of a
+   millimetre or a run sized here changes size when the project is opened
+   there; tests/chain-consistency-test.mjs compares them. */
+const CARBON = [
+  ['DN8',13.5,2.30],['DN10',17.2,2.30],['DN15',21.3,2.65],['DN20',26.9,2.65],['DN25',33.7,3.25],
+  ['DN32',42.4,3.25],['DN40',48.3,3.25],['DN50',60.3,3.65],['DN65',76.1,3.65],['DN80',88.9,4.05],
+  ['DN100',114.3,4.50],['DN125',139.7,4.85],['DN150',165.1,4.85],['DN200',219.1,6.30],['DN250',273.0,6.30],
+  ['DN300',323.9,7.10],['DN350',355.6,8.00],['DN400',406.4,8.80],['DN450',457.0,10.0],['DN500',508.0,11.0],
+  ['DN550',559.0,12.5],['DN600',610.0,12.5],['DN650',660.0,14.2],['DN700',711.0,14.2],['DN750',762.0,15.9],
+  ['DN800',813.0,15.9],
+];
+const STAINLESS = [
+  ['DN8',13.7,1.65],['DN10',17.1,1.65],['DN15',21.3,2.11],['DN20',26.7,2.11],['DN25',33.4,2.77],
+  ['DN32',42.2,2.77],['DN40',48.3,2.77],['DN50',60.3,2.77],['DN65',73.0,3.05],['DN80',88.9,3.05],
+  ['DN100',114.3,3.05],['DN125',141.3,3.40],['DN150',168.3,3.40],['DN200',219.1,3.76],['DN250',273.0,4.19],
+  ['DN300',323.9,4.57],['DN350',355.6,6.35],['DN400',406.4,6.35],['DN450',457.0,6.35],['DN500',508.0,6.35],
+  ['DN600',610.0,6.35],['DN700',711.0,7.92],['DN800',813.0,7.92],
+];
+const STAINLESS304 = [
+  ['DN8',13.7,1.65],['DN10',17.1,1.65],['DN15',21.3,2.11],['DN20',26.7,2.11],['DN25',33.4,2.77],
+  ['DN32',42.2,2.77],['DN40',48.3,2.77],['DN50',60.3,2.77],['DN65',73.0,3.05],['DN80',88.9,3.05],
+  ['DN100',114.3,3.05],['DN125',141.3,3.40],['DN150',168.3,3.40],['DN200',219.1,3.76],['DN250',273.0,4.19],
+  ['DN300',323.9,4.57],['DN350',355.6,6.35],['DN400',406.4,6.35],['DN450',457.0,6.35],['DN500',508.0,6.35],
+  ['DN600',610.0,6.35],['DN700',711.0,7.92],['DN800',813.0,7.92],
+];
+const TRUBORE = [
+  ['DN15',21.3,2.0],['DN20',26.9,2.0],['DN25',33.7,2.0],['DN32',42.4,2.0],['DN40',48.3,2.0],
+  ['DN50',60.3,2.0],['DN65',76.1,2.0],['DN80',88.9,2.0],['DN100',114.3,2.0],['DN125',139.7,2.0],
+  ['DN150',168.3,2.0],['DN200',219.1,3.0],['DN250',273.0,3.0],['DN300',323.9,4.0],['DN350',355.6,4.0],
+  ['DN400',406.4,4.0],['DN450',457.0,3.0],['DN500',508.0,4.0],['DN600',609.6,4.0],['DN700',711.0,4.0],
+  ['DN800',813.0,4.0],
+];
+const TRUBORE_METRIC = [
+  ['DN15',18.0,1.5],['DN20',23.0,1.5],['DN25',28.0,1.5],['DN32',35.0,1.5],['DN40',43.0,1.5],
+  ['DN50',53.0,1.5],['DN65',69.0,2.0],['DN80',84.0,2.0],['DN100',104.0,2.0],['DN125',129.0,2.0],
+  ['DN150',154.0,2.0],['DN200',204.0,2.0],['DN250',254.0,2.0],['DN300',304.0,2.0],['DN350',355.0,2.5],
+  ['DN400',406.0,3.0],['DN450',456.0,3.0],['DN500',506.0,3.0],['DN600',606.0,3.0],['DN700',708.0,4.0],
+  ['DN800',808.0,4.0],['DN900',908.0,4.0],['DN1000',1008.0,4.0],
+];
+const COPPER = [
+  ['8mm',8.0,0.6],['10mm',10.0,0.6],['12mm',12.0,0.6],['15mm',15.0,0.7],['22mm',22.0,0.9],
+  ['28mm',28.0,0.9],['35mm',35.0,1.2],['42mm',42.0,1.2],['54mm',54.0,1.2],['67mm',66.7,1.5],
+  ['76mm',76.1,1.5],['108mm',108.0,1.5],['133mm',133.0,2.0],['159mm',159.0,2.0],['219mm',219.1,2.5],
+  ['267mm',267.0,3.0],['318mm',318.0,3.0],
+];
+const MLCP = [
+  ['12mm',12.0,1.5],['16mm',16.0,2.0],['20mm',20.0,2.0],['25mm',25.0,2.5],['32mm',32.0,3.0],
+  ['40mm',40.0,3.5],['50mm',50.0,4.0],['63mm',63.0,4.5],['75mm',75.0,5.0],['90mm',90.0,6.0],
+  ['110mm',110.0,7.0],
+];
+const TABLES = { copper: COPPER, carbon: CARBON, stainless: STAINLESS, stainless304: STAINLESS304,
+  trubore: TRUBORE, trubore316: TRUBORE, truboreMetric: TRUBORE_METRIC, truboreMetric316: TRUBORE_METRIC, mlcp: MLCP };
 
-const ROUGH = { truboreMetric: 1.5e-5, truboreMetric316: 1.5e-5, trubore: 1.5e-5, trubore316: 1.5e-5,
-  stainless: 1.5e-5, stainless304: 1.5e-5, carbon: 4.6e-5, copper: 1.5e-6, mlcp: 7e-6 };
+/* Roughness in metres by condition and material — the sizer's table, copied.
+   The condition comes over in settings.pipeCondition; a project sized "in
+   service" or "corroded" used to be solved here as new pipe, so its friction
+   understated against the sizer's own figure for the same bore. */
+const ROUGHNESS_PRESETS = {
+  new:      { copper: 0.0000015, carbon: 0.000046, stainless: 0.000015, stainless304: 0.000015, trubore: 0.000015, trubore316: 0.000015, truboreMetric: 0.000015, truboreMetric316: 0.000015, mlcp: 0.000007 },
+  used:     { copper: 0.000003,  carbon: 0.00012,  stainless: 0.00003,  stainless304: 0.00003,  trubore: 0.00003,  trubore316: 0.00003,  truboreMetric: 0.00003,  truboreMetric316: 0.00003,  mlcp: 0.000007 },
+  corroded: { copper: 0.000005,  carbon: 0.0005,   stainless: 0.00006,  stainless304: 0.00006,  trubore: 0.00006,  trubore316: 0.00006,  truboreMetric: 0.00006,  truboreMetric316: 0.00006,  mlcp: 0.000007 },
+};
+function roughFor(material) {
+  const s = (PROJECT_DATA && PROJECT_DATA.settings) || {};
+  const cond = s.pipeCondition || 'new';
+  if (cond === 'custom') {
+    const carbonR = (parseFloat(s.customRoughCarbon) || 0.046) / 1000;
+    const stainlessR = (parseFloat(s.customRoughStainless) || 0.015) / 1000;
+    if (material === 'carbon') return carbonR;
+    if (/stainless|trubore/i.test(material || '')) return stainlessR;
+    return ROUGHNESS_PRESETS.new[material] || 0.000046;
+  }
+  return (ROUGHNESS_PRESETS[cond] && ROUGHNESS_PRESETS[cond][material]) || 0.000046;
+}
 
 /* ---------- fluid ---------- */
 function waterRho(T) { return ((1.051865e-05*T - 5.171329e-03)*T - 6.179237e-03)*T + 1000.068; }
 function waterCp(T)  { return (((1.606849e-09*T - 4.736562e-07)*T + 5.721385e-05)*T - 2.586464e-03)*T + 4.215269; }
 /* Dynamic viscosity of water at temperature, Pa.s — Vogel form fitted to
    IAPWS table values over 0-120 C, worst deviation 0.64% at the ends and
-   0.35% at a 70 C mean. Identical function in index.html and trace.html; all
+   0.35% at a 70 C mean. Identical function in sizer.html and trace.html; all
    three must be changed together or the tools disagree on every size.
    All three were pinned at 0.00131 Pa.s until this was corrected — water at
    about 10 C, against rho and cp taken at the mean operating temperature.
@@ -896,10 +949,24 @@ function pipeHydraulics(lps, id_mm, roughness) {
   return { v, paPerM: f * (FLUID.rho * v * v) / (2 * d) };
 }
 
-// Select the pipe the sizer would have chosen
+/* The pipe the sizer chose. A file saved by the sizer carries it on each
+   circuit as `sized` — bore, roughness, the equivalent length the counted
+   fittings came to — and that is used as it stands, so this page solves on
+   exactly the sizer's basis: same tables, same condition, same header rule,
+   same fittings. A file without it (older, or written by hand) falls back to
+   re-selecting from the same tables the sizer holds. */
 function selectPipe(node) {
+  const s = node.sized;
+  if (s && s.id_mm > 0) {
+    const h = pipeHydraulics(node.designLps, s.id_mm, s.rough_m || roughFor(node.material));
+    const chosen = { nom: s.nom, od: s.od, wall: s.wall, id: s.id_mm, ...h,
+      rough: s.rough_m || roughFor(node.material), fromSizer: true, llh: !!s.llh,
+      stepped: s.sizeOverride || 0 };
+    chosen.vMinFail = !s.llh && chosen.v < PROJECT.vMin;
+    return chosen;
+  }
   const tbl = TABLES[node.material] || TABLES.truboreMetric;
-  const rough = ROUGH[node.material] || 1.5e-5;
+  const rough = roughFor(node.material);
   const lim = PROJECT.limitPd, vMax = PROJECT.vMax, vMin = PROJECT.vMin;
   const lps = node.designLps;
   let chosen = null;
@@ -922,6 +989,7 @@ function selectPipe(node) {
     const id = od - 2 * wall;
     chosen = { nom, od, wall, id, ...pipeHydraulics(lps, id, rough), stepped: step };
   }
+  chosen.rough = rough;
   chosen.vMinFail = chosen.v < vMin;
   return chosen;
 }
@@ -930,7 +998,7 @@ function selectPipe(node) {
    Recomputed properly rather than scaled, so part-load turbulence is right. */
 function pipeDrop(node, lps) {
   if (lps <= 0) return 0;
-  const rough = ROUGH[node.material] || 1.5e-5;
+  const rough = node.pipe && node.pipe.rough ? node.pipe.rough : roughFor(node.material);
   const h = pipeHydraulics(lps, node.pipe.id, rough);
   const L = node.lengthTotal * (1 + node.fittings / 100);
   return h.paPerM * L / 1000;
@@ -970,6 +1038,7 @@ let PROJECT_CIRCUITS = [];     // every circuit in the imported project
 let PROJECT_GROUPS = [];       // one per pump
 let PROJECT_DATA = null;       // the imported file, so a group can take its own fluid
 let ACTIVE_GROUP = 0;
+let IMPORT_NOTES = {};         // what buildGroupNetwork had to put right, said on import
 
 function circuitGroupOf(c) {
   const g = c && c.hydraulicGroup;
@@ -1075,14 +1144,26 @@ function buildGroupNetwork(gid) {
   NODES = raw.map(c => {
     const lenF = parseFloat(c.length) || 0;
     const lenR = (c.lengthsPaired === false) ? (parseFloat(c.lengthReturn) || 0) : lenF;
+    /* What the sizer selected, when the file carries it. Its equivalent
+       length already holds the counted fittings at the chosen bore, so the
+       planning percentage is replaced by the figure that length implies and
+       the pipe drop here lands on the sizer's own kPa. */
+    const sized = (c.sized && typeof c.sized === 'object' && c.sized.id_mm > 0) ? c.sized : null;
+    let lengthTotal = lenF + lenR;
+    let fittingsPct = parseFloat(c.fittings) || 20;
+    if (sized && sized.lengthTotal > 0) {
+      lengthTotal = sized.lengthTotal;
+      if (sized.effectiveLength > 0) fittingsPct = Math.max(0, (sized.effectiveLength / sized.lengthTotal - 1) * 100);
+    }
     const n = {
       id: c.id,
       ref: c.ref,
       type: c.circuitType || 'main',
       parentId: (c.parentId === undefined) ? null : c.parentId,
       material: TABLES[c.material] ? c.material : 'truboreMetric',
-      lengthTotal: lenF + lenR,
-      fittings: parseFloat(c.fittings) || 20,
+      sized,
+      lengthTotal,
+      fittings: fittingsPct,
       dT: Math.abs(parseFloat(c.dT)) || 20,
       /* A header is the terminal of the circuit that feeds it: what the
          primary pump pushes through, in place of a coil. In its own
@@ -1119,10 +1200,39 @@ function buildGroupNetwork(gid) {
     return n;
   });
 
+  IMPORT_NOTES.dupIds = raw.length - Object.keys(byId).length;
+  IMPORT_NOTES.dangling = 0;
   NODES.forEach(n => {
     const p = byId[n.parentId];
     if (p && p !== n) { n.parent = p; p.children.push(n); }
-    else { n.parent = null; n.parentId = null; }
+    else {
+      /* A parent outside this group is the separator that opens it, and that
+         is meant. A parent that is nowhere in the project is a circuit that
+         was deleted from under this one, and is worth a word. */
+      if (n.parentId !== null && n.parentId !== undefined
+          && !PROJECT_CIRCUITS.some(c => c.id === n.parentId)) IMPORT_NOTES.dangling++;
+      n.parent = null; n.parentId = null;
+    }
+  });
+  /* A ring of Fed-froms — A fed from B fed from A — has no root, so nothing
+     in it would ever be reached from the pump and it would drop out of the
+     solve without a word. Every node is walked up to a root; one that comes
+     back to itself is cut loose and becomes a root, and the picker says so. */
+  IMPORT_NOTES.cycles = 0;
+  NODES.forEach(n => {
+    const seen = new Set([n.id]);
+    let p = n.parent;
+    while (p) {
+      if (seen.has(p.id)) {
+        const i = n.parent.children.indexOf(n);
+        if (i >= 0) n.parent.children.splice(i, 1);
+        n.parent = null; n.parentId = null; n.cycleCut = true;
+        IMPORT_NOTES.cycles++;
+        break;
+      }
+      seen.add(p.id);
+      p = p.parent;
+    }
   });
 
   // design duty: consumers carry their own, mains roll up
@@ -1470,6 +1580,28 @@ function pumpCurve(runOverride) {
                  : null };
 }
 
+/* Where the full-speed curve meets the system curve sysR·Q². The parabola has
+   a closed form. A pasted curve does not, and the operating point used to be
+   taken from the parabola's own k even when the head was then read off the
+   published curve — so the duty shown was a flow from one machine at the head
+   of another. Head falls with flow and sysR·Q² rises, so the crossing is
+   found by bisection on the real curve. */
+function fullSpeedFlow(pump, sysR) {
+  if (!isFinite(sysR) || sysR <= 0) return 0;
+  if (!pump.real) {
+    const kEff = pump.k / (pump.nPumps * pump.nPumps);
+    return Math.sqrt(Math.max(0, pump.H0 / (kEff + sysR)));
+  }
+  const f = q => pump.head(q) - sysR * q * q;
+  let lo = 0, hi = Math.max(1e-3, curveRunOut(PUMP_CURVE) * pump.nPumps * 2);
+  if (f(hi) > 0) return hi;                  // system so slack the pump runs past its curve
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (f(mid) > 0) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
 /* Speed ratio needed to sit at (Q,H), from the affinity laws.
    Scaled curve is H = s^2*H0 - k*Q^2, so s = sqrt((H + kQ^2)/H0). */
 function speedRatio(pump, Q, H) {
@@ -1581,8 +1713,7 @@ function trialFlow(n) {
   const Rs = roots.map(r => reduceNode(r, {}));
   const sysR = parallelR(Rs);
   if (!isFinite(sysR) || sysR <= 0) return 0;
-  const kEff = pump.k / (n * n);
-  const Qfull = Math.sqrt(Math.max(0, pump.H0 / (kEff + sysR)));
+  const Qfull = fullSpeedFlow(pump, sysR);
   if (pump.mode === 'constant') return Math.min(Math.sqrt(Math.max(0, pump.Hset / sysR)), Qfull);
   if (pump.mode === 'proportional') {
     const A = sysR, B = -(pump.Hset * 0.5 / pump.Qd), C = -(pump.Hset * 0.5);
@@ -1620,8 +1751,7 @@ function solve() {
     if (!isFinite(sysR)) { Q = 0; break; }
 
     // Where the control mode puts the operating point
-    const kEff = pump.k / (pump.nPumps * pump.nPumps);
-    const Qfull = Math.sqrt(Math.max(0, pump.H0 / (kEff + sysR)));   // full speed
+    const Qfull = fullSpeedFlow(pump, sysR);   // full speed, on whichever curve is in force
     if (pump.mode === 'constant') {
       // hold Hset: sysR*Q^2 = Hset
       Q = Math.sqrt(Math.max(0, pump.Hset / sysR));
@@ -1713,7 +1843,7 @@ function solve() {
       n.dpTotal = n.dpPipe;
     }
     n.pctDesign = n.designLps > 0 ? n.flow / n.designLps * 100 : 0;
-    n.velocity = pipeHydraulics(n.flow, n.pipe.id, ROUGH[n.material] || 1.5e-5).v;
+    n.velocity = pipeHydraulics(n.flow, n.pipe.id, n.pipe.rough || roughFor(n.material)).v;
     n.kwActual = n.flow / 1000 * FLUID.rho * FLUID.cp * n.dT;
   });
 
@@ -2807,6 +2937,24 @@ function indexPathBreakdown() {
   return best;
 }
 
+/* Where the pipes on this page came from. A file the sizer saved carries its
+   own selection on each circuit, and that is what is solved; an older file
+   has its pipes re-selected here from the same tables, which is close but
+   not the same thing when a schedule of fittings was counted. */
+function pipeBasisNote() {
+  const from = NODES.filter(n => n.pipe && n.pipe.fromSizer).length;
+  if (!NODES.length) return '';
+  if (from === NODES.length) {
+    return '<div class="note" style="font-size:11px;margin:0 0 8px">Pipe sizes, bores, roughness and the '
+      + 'fittings allowance are the sizer&rsquo;s own, read from the file.</div>';
+  }
+  return '<div class="msg info" style="font-size:11px;margin:0 0 8px">'
+    + (from ? (NODES.length - from) + ' of ' + NODES.length + ' circuits' : 'This file')
+    + ' carr' + (from ? 'y' : 'ies') + ' no record of the pipe the sizer chose, so the pipes are re-selected here '
+    + 'from the same tables. Save the project from the current sizer and re-import to solve on '
+    + 'exactly the sizer&rsquo;s selection.</div>';
+}
+
 function renderHeadOrigin() {
   const box = el('headOrigin');
   if (!box) return;
@@ -2833,6 +2981,7 @@ function renderHeadOrigin() {
     +   pct(b.valve) + '</td></tr>'
     + '</tbody><tfoot><tr><td>Pump head</td><td class="n">' + fmt(b.total, 1)
     +   '</td><td class="n">100%</td></tr></tfoot></table>'
+    + pipeBasisNote()
     + (mode === 'none'
         ? '<div class="msg ok" style="font-size:11.5px;margin:0">'
           + '<strong>This is the same basis as the Pipework Sizer</strong><br>'
@@ -2903,7 +3052,9 @@ function renderGroupPicker() {
     + (function () {
         const sep = groupSeparator(ACTIVE_GROUP);
         if (sep && sep.vesselType === 'hx') {
-          return ' at ' + (parseFloat(sep.hxSecSup) || 0) + '/' + (parseFloat(sep.hxSecRet) || 0) + ' &deg;C';
+          // the same fallback applyGroupFluid() solves on, said out loud rather than shown as 0/0
+          const ts = parseFloat(sep.hxSecSup), tr = parseFloat(sep.hxSecRet);
+          return ' at ' + (isNaN(ts) ? '70 (assumed)' : ts) + '/' + (isNaN(tr) ? '50 (assumed)' : tr) + ' &deg;C';
         }
         if (PROJECT && ACTIVE_GROUP === (PROJECT_GROUPS[0] && PROJECT_GROUPS[0].id)) {
           const hx = PROJECT_CIRCUITS.find(c => c.vesselType === 'hx' && c.isSeparator);
@@ -2934,8 +3085,11 @@ function switchGroup(gid) {
   if (gid === ACTIVE_GROUP || !PROJECT_CIRCUITS.length) return;
   buildGroupNetwork(gid);
   balanced = false;
-  PUMP_CURVE = null;
+  PUMP_CURVE = null;     // the pasted curve belonged to the other circuit's pump
+  if (el('curveMsg')) el('curveMsg').innerHTML = '';
+  if (el('pumpNote')) el('pumpNote').textContent = 'generic curve';
   seedPumpDuty(true);
+  renderConsumers();     // the toggles must be this circuit's nodes, not the last one's
   refresh();
   zoomToFit();
   const g = PROJECT_GROUPS.find(x => x.id === gid);
@@ -2972,7 +3126,6 @@ function seedPumpDuty(alsoFlow) {
    refresh cannot silently re-import a project the user has since changed. */
 var SIM_HANDOFF_KEY = 'adi-sizer-handoff';
 function showHandoffToast() {
-  const m = el('curveMsg');
   const box = el('diagnostics');
   if (box) box.insertAdjacentHTML('afterbegin',
     '<div class="msg ok">Opened from the Pipework Sizer. The control valve allowance starts on '
@@ -2985,12 +3138,16 @@ function takeSizerHandoff() {
   var raw = null;
   try { raw = localStorage.getItem(SIM_HANDOFF_KEY); } catch (e) { return false; }
   if (!raw) return false;
-  try { localStorage.removeItem(SIM_HANDOFF_KEY); } catch (e) {}
+  var drop = function () { try { localStorage.removeItem(SIM_HANDOFF_KEY); } catch (e) {} };
   var pack;
-  try { pack = JSON.parse(raw); } catch (e) { return false; }
-  if (!pack || !pack.project) return false;
-  if (pack.at && (Date.now() - pack.at) > 10 * 60 * 1000) return false;
-  return loadProject(pack.project);
+  try { pack = JSON.parse(raw); } catch (e) { drop(); return false; }
+  if (!pack || !pack.project) { drop(); return false; }
+  if (pack.at && (Date.now() - pack.at) > 10 * 60 * 1000) { drop(); return false; }
+  // cleared once it is on screen, not merely read, so a load that fails leaves
+  // the project where the sizer put it for another try within the ten minutes
+  var ok = loadProject(pack.project);
+  if (ok) drop();
+  return ok;
 }
 
 function loadProject(data) {
@@ -2998,9 +3155,25 @@ function loadProject(data) {
     alert('That is not a project file saved from the Pipework Sizer.');
     return false;
   }
-  if (data.circuits.length === 0) { alert('That project has no circuits in it.'); return false; }
+  if (!data.circuits.some(c => c && c.ref)) { alert('That project has no circuits in it.'); return false; }
+  if (parseInt(data.schema, 10) > 1) {
+    alert('This file was written by a newer version of the sizer (schema ' + data.schema + ').\n\n'
+      + 'It will open, but anything that version added will not be understood here. '
+      + 'Refresh the page to make sure you are on the latest build.');
+  }
 
   buildNetwork(data);
+  if (!NODES.length) { alert('That project has no circuits this page can solve.'); return false; }
+
+  const fixes = [];
+  if (IMPORT_NOTES.dupIds) fixes.push(IMPORT_NOTES.dupIds + ' circuit id' + (IMPORT_NOTES.dupIds === 1 ? '' : 's')
+    + ' used twice (the later row is unreachable)');
+  if (IMPORT_NOTES.dangling) fixes.push(IMPORT_NOTES.dangling + ' Fed-from pointing at a circuit that is not in the file, shown fed from the plant');
+  if (IMPORT_NOTES.cycles) fixes.push(IMPORT_NOTES.cycles + ' Fed-from ring cut so its circuits reach the pump');
+  if (fixes.length) {
+    alert('This project needed putting straight on the way in:\n\u2022 ' + fixes.join('\n\u2022 ')
+      + '\n\nOpen it in the Pipework Sizer, check the Fed-from column, and save it again.');
+  }
 
   seedPumpDuty(true);
 

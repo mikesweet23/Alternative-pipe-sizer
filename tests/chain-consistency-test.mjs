@@ -85,6 +85,42 @@ if (ftTrace && ftSizer) {
     + (differ.length ? ' (differ: ' + differ.join(', ') + ')' : ''));
 }
 
+/* ---- pipe dimension tables: the sizer's, copied into the other two ---- */
+function extractArray(text, name) {
+  const m = new RegExp('^const\\s+' + name + '\\s*=\\s*\\[', 'm').exec(text);
+  if (!m) return null;
+  let i = text.indexOf('[', m.index), depth = 0;
+  for (; i < text.length; i++) {
+    if (text[i] === '[') depth++;
+    else if (text[i] === ']' && --depth === 0) {
+      const body = text.slice(text.indexOf('[', m.index), i + 1);
+      // strip the sizer's trailing "// ID 15.0" comments before evaluating
+      return new Function('return (' + body.replace(/\/\/[^\n]*/g, '') + ');')();
+    }
+  }
+  return null;
+}
+['CARBON', 'STAINLESS', 'STAINLESS304', 'TRUBORE', 'TRUBORE_METRIC', 'COPPER', 'MLCP'].forEach(name => {
+  const t = { trace: extractArray(src.trace, name), sizer: extractArray(src.sizer, name), simulator: extractArray(src.simulator, name) };
+  const norm = a => a && JSON.stringify(a.map(r => [String(r[0]), +r[1], +r[2]]));
+  ok(t.trace && t.sizer && t.simulator && norm(t.trace) === norm(t.sizer) && norm(t.sizer) === norm(t.simulator),
+    name + ' pipe table has the same rows, ODs and walls in all three tools');
+});
+['trace', 'sizer', 'simulator'].forEach(k => {
+  const mapName = k === 'sizer' ? 'PIPES' : 'TABLES';
+  const defs = ['CARBON', 'STAINLESS', 'STAINLESS304', 'TRUBORE', 'TRUBORE_METRIC', 'COPPER', 'MLCP']
+    .map(n => 'const ' + n + ' = ' + JSON.stringify(extractArray(src[k], n)) + ';').join('');
+  const body = extractObject(src[k], mapName);
+  const map = body ? new Function(defs + ' return (' + body + ');')() : null;
+  ok(map && ['carbon', 'stainless', 'stainless304', 'trubore', 'trubore316', 'truboreMetric', 'truboreMetric316', 'copper', 'mlcp']
+    .every(m => Array.isArray(map[m]) && map[m].length),
+    k + ': every material key resolves to a table');
+});
+const rp = { trace: obj(src.trace, 'ROUGHNESS_PRESETS'), sizer: obj(src.sizer, 'ROUGHNESS_PRESETS'), simulator: obj(src.simulator, 'ROUGHNESS_PRESETS') };
+ok(rp.trace && rp.sizer && rp.simulator && JSON.stringify(rp.trace) === JSON.stringify(rp.sizer)
+  && JSON.stringify(rp.sizer) === JSON.stringify(rp.simulator),
+  'ROUGHNESS_PRESETS is identical in all three tools');
+
 /* ---- modulating against on/off: the same rule in two places ---- */
 const arrangements = obj(src.simulator, 'ARRANGEMENTS');
 const valveTypes = obj(src.trace, 'VALVE_TYPES');

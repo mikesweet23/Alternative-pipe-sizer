@@ -64,6 +64,38 @@ ok(/kids\.forEach\(k => \{ k\.parentId = up; \}\)/.test(sizer),
 ok(/rev: projectRev,/.test(sizer) && /projectRev = parseInt\(data\.rev, 10\) \|\| 0/.test(sizer),
   'Sizer: rev is written to the file and read back');
 
+ok(/const PASS_THROUGH_KEYS = \['valveSchedule', 'traceMeta', 'dropped'\]/.test(sizer)
+  && /\}, passThrough\);/.test(sizer) && /takePassThrough\(data\)/.test(sizer),
+  'Sizer: valveSchedule, traceMeta and dropped are carried through a save untouched');
+ok(/function sizedFor\(/.test(sizer) && /circuits: circuits\.map\(circuitForFile\)/.test(sizer)
+  && /delete o\.collapsed;/.test(sizer),
+  'Sizer: the file carries the pipe selected on each circuit and not the fold state');
+ok(/JSON\.stringify\(\{ v: 3, project: buildProjectSnapshot\(\) \}\)/.test(sizer)
+  && /function loadFromLocalStorageV2\(/.test(sizer) && /installProject\(s\.project\)/.test(sizer),
+  'Sizer: the browser copy is the snapshot, and the old shape is still read');
+ok(/var ok = applyProjectData\(pack\.project, \{ alerts: false, source: 'Pipe Trace' \}\);\s*if \(ok\) drop\(\);/.test(sizer),
+  'Sizer: the Trace handoff key is cleared only once the project is on screen');
+ok(/const copy = Object\.assign\(\{\}, src, \{ id: nextId\+\+, ref: src\.ref \+ ' \(copy\)', isIndex: false \}\);/.test(sizer),
+  'Sizer: Duplicate copies the whole row');
+ok(/if \(recommended\.pd <= LIMIT && recommended\.v >= V_MIN && recommended\.v <= V_MAX\) status = 'ok';/.test(sizer),
+  'Sizer: the status badge answers for the pipe selected, override included');
+ok(/function warnUnknownFittings\(/.test(sizer) && /warnUnknownFittings\(\);/.test(sizer),
+  'Sizer: a fitting key it does not know is named on open');
+
+const simulator = readFileSync(join(root, 'simulator.html'), 'utf8');
+ok(/function fullSpeedFlow\(/.test(simulator) && !/const kEff = pump\.k \/ \(pump\.nPumps \* pump\.nPumps\);\s*const Qfull/.test(simulator),
+  'Simulator: the operating point comes from whichever curve is in force');
+ok(/if \(s && s\.id_mm > 0\) \{/.test(simulator) && /fromSizer: true/.test(simulator),
+  'Simulator: a circuit with `sized` is solved on the sizer\u2019s pipe');
+ok(/function roughFor\(/.test(simulator) && /s\.pipeCondition \|\| 'new'/.test(simulator),
+  'Simulator: roughness follows the project\u2019s pipe condition');
+ok(/n\.cycleCut = true/.test(simulator) && /IMPORT_NOTES\.cycles/.test(simulator),
+  'Simulator: a Fed-from ring is cut and said');
+ok(/renderConsumers\(\);\s*\/\/ the toggles must be this circuit/.test(simulator),
+  'Simulator: switching group rebuilds the Consumers panel');
+ok(/var ok = loadProject\(pack\.project\);\s*if \(ok\) drop\(\);/.test(simulator),
+  'Simulator: the handoff key is cleared only once the project is on screen');
+
 /* ---- the pure functions, run ---- */
 const traceNext = new Function(extractFunction(trace, 'nextIdFrom') + '; return nextIdFrom;')();
 ok(traceNext(3, [{ id: 1 }, { id: 15 }], [{ id: 9 }]) === 16, 'nextIdFrom: a stale counter is lifted past the highest id (Trace)');

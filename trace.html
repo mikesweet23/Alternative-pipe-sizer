@@ -844,27 +844,60 @@
    ========================================================================== */
 
 /* ---------- pipe dimension tables (nominal, OD mm, wall mm) ---------- */
-const TABLES = {
-  truboreMetric: [['DN15',18,1.5],['DN20',23,1.5],['DN25',28,1.5],['DN32',35,1.5],['DN40',43,1.5],
-    ['DN50',53,1.5],['DN65',69,2],['DN80',84,2],['DN100',104,2],['DN125',129,2],['DN150',154,2],
-    ['DN200',204,2],['DN250',254,2],['DN300',304,2],['DN350',355,2.5],['DN400',406,3],['DN450',456,3],
-    ['DN500',506,3],['DN600',606,3],['DN700',708,4],['DN800',808,4],['DN900',908,4],['DN1000',1008,4]],
-  trubore: [['DN15',21.3,2],['DN20',26.9,2],['DN25',33.7,2],['DN32',42.4,2],['DN40',48.3,2],
-    ['DN50',60.3,2],['DN65',76.1,2],['DN80',88.9,2],['DN100',114.3,2],['DN125',139.7,2],['DN150',168.3,2],
-    ['DN200',219.1,3],['DN250',273,3],['DN300',323.9,4],['DN350',355.6,4],['DN400',406.4,4],
-    ['DN450',457,3],['DN500',508,4],['DN600',609.6,4],['DN700',711,4],['DN800',813,4]],
-  carbon: [['DN8',13.5,2.30],['DN10',17.2,2.30],['DN15',21.3,2.65],['DN20',26.9,2.65],
-    ['DN25',33.7,3.25],['DN32',42.4,3.25],['DN40',48.3,3.25],['DN50',60.3,3.65],
-    ['DN65',76.1,3.65],['DN80',88.9,4.05],['DN100',114.3,4.50],['DN125',139.7,4.85],
-    ['DN150',165.1,4.85],['DN200',219.1,6.30],['DN250',273.0,6.30],['DN300',323.9,7.10],
-    ['DN350',355.6,8.00],['DN400',406.4,8.80],['DN450',457.0,10.0],['DN500',508.0,11.0]],
-  copper: [['15mm',15,0.7],['22mm',22,0.9],['28mm',28,0.9],['35mm',35,1.2],['42mm',42,1.2],
-    ['54mm',54,1.2],['67mm',66.7,1.2],['76mm',76.1,1.5],['108mm',108,1.5],['133mm',133,1.5],['159mm',159,2.0]],
-};
-TABLES.truboreMetric316 = TABLES.truboreMetric;
-TABLES.trubore316       = TABLES.trubore;
-TABLES.stainless304     = TABLES.trubore;
-TABLES.stainless        = TABLES.trubore;
+/* ---------- pipe dimension tables (nominal, OD mm, wall mm) ----------
+   Copied verbatim from the Pipework Sizer's CARBON … MLCP arrays, and the
+   simulator carries the same copy. The three have to agree to the tenth of a
+   millimetre or a run sized here changes size when the project is opened
+   there; tests/chain-consistency-test.mjs compares them. */
+const CARBON = [
+  ['DN8',13.5,2.30],['DN10',17.2,2.30],['DN15',21.3,2.65],['DN20',26.9,2.65],['DN25',33.7,3.25],
+  ['DN32',42.4,3.25],['DN40',48.3,3.25],['DN50',60.3,3.65],['DN65',76.1,3.65],['DN80',88.9,4.05],
+  ['DN100',114.3,4.50],['DN125',139.7,4.85],['DN150',165.1,4.85],['DN200',219.1,6.30],['DN250',273.0,6.30],
+  ['DN300',323.9,7.10],['DN350',355.6,8.00],['DN400',406.4,8.80],['DN450',457.0,10.0],['DN500',508.0,11.0],
+  ['DN550',559.0,12.5],['DN600',610.0,12.5],['DN650',660.0,14.2],['DN700',711.0,14.2],['DN750',762.0,15.9],
+  ['DN800',813.0,15.9],
+];
+const STAINLESS = [
+  ['DN8',13.7,1.65],['DN10',17.1,1.65],['DN15',21.3,2.11],['DN20',26.7,2.11],['DN25',33.4,2.77],
+  ['DN32',42.2,2.77],['DN40',48.3,2.77],['DN50',60.3,2.77],['DN65',73.0,3.05],['DN80',88.9,3.05],
+  ['DN100',114.3,3.05],['DN125',141.3,3.40],['DN150',168.3,3.40],['DN200',219.1,3.76],['DN250',273.0,4.19],
+  ['DN300',323.9,4.57],['DN350',355.6,6.35],['DN400',406.4,6.35],['DN450',457.0,6.35],['DN500',508.0,6.35],
+  ['DN600',610.0,6.35],['DN700',711.0,7.92],['DN800',813.0,7.92],
+];
+const STAINLESS304 = [
+  ['DN8',13.7,1.65],['DN10',17.1,1.65],['DN15',21.3,2.11],['DN20',26.7,2.11],['DN25',33.4,2.77],
+  ['DN32',42.2,2.77],['DN40',48.3,2.77],['DN50',60.3,2.77],['DN65',73.0,3.05],['DN80',88.9,3.05],
+  ['DN100',114.3,3.05],['DN125',141.3,3.40],['DN150',168.3,3.40],['DN200',219.1,3.76],['DN250',273.0,4.19],
+  ['DN300',323.9,4.57],['DN350',355.6,6.35],['DN400',406.4,6.35],['DN450',457.0,6.35],['DN500',508.0,6.35],
+  ['DN600',610.0,6.35],['DN700',711.0,7.92],['DN800',813.0,7.92],
+];
+const TRUBORE = [
+  ['DN15',21.3,2.0],['DN20',26.9,2.0],['DN25',33.7,2.0],['DN32',42.4,2.0],['DN40',48.3,2.0],
+  ['DN50',60.3,2.0],['DN65',76.1,2.0],['DN80',88.9,2.0],['DN100',114.3,2.0],['DN125',139.7,2.0],
+  ['DN150',168.3,2.0],['DN200',219.1,3.0],['DN250',273.0,3.0],['DN300',323.9,4.0],['DN350',355.6,4.0],
+  ['DN400',406.4,4.0],['DN450',457.0,3.0],['DN500',508.0,4.0],['DN600',609.6,4.0],['DN700',711.0,4.0],
+  ['DN800',813.0,4.0],
+];
+const TRUBORE_METRIC = [
+  ['DN15',18.0,1.5],['DN20',23.0,1.5],['DN25',28.0,1.5],['DN32',35.0,1.5],['DN40',43.0,1.5],
+  ['DN50',53.0,1.5],['DN65',69.0,2.0],['DN80',84.0,2.0],['DN100',104.0,2.0],['DN125',129.0,2.0],
+  ['DN150',154.0,2.0],['DN200',204.0,2.0],['DN250',254.0,2.0],['DN300',304.0,2.0],['DN350',355.0,2.5],
+  ['DN400',406.0,3.0],['DN450',456.0,3.0],['DN500',506.0,3.0],['DN600',606.0,3.0],['DN700',708.0,4.0],
+  ['DN800',808.0,4.0],['DN900',908.0,4.0],['DN1000',1008.0,4.0],
+];
+const COPPER = [
+  ['8mm',8.0,0.6],['10mm',10.0,0.6],['12mm',12.0,0.6],['15mm',15.0,0.7],['22mm',22.0,0.9],
+  ['28mm',28.0,0.9],['35mm',35.0,1.2],['42mm',42.0,1.2],['54mm',54.0,1.2],['67mm',66.7,1.5],
+  ['76mm',76.1,1.5],['108mm',108.0,1.5],['133mm',133.0,2.0],['159mm',159.0,2.0],['219mm',219.1,2.5],
+  ['267mm',267.0,3.0],['318mm',318.0,3.0],
+];
+const MLCP = [
+  ['12mm',12.0,1.5],['16mm',16.0,2.0],['20mm',20.0,2.0],['25mm',25.0,2.5],['32mm',32.0,3.0],
+  ['40mm',40.0,3.5],['50mm',50.0,4.0],['63mm',63.0,4.5],['75mm',75.0,5.0],['90mm',90.0,6.0],
+  ['110mm',110.0,7.0],
+];
+const TABLES = { copper: COPPER, carbon: CARBON, stainless: STAINLESS, stainless304: STAINLESS304,
+  trubore: TRUBORE, trubore316: TRUBORE, truboreMetric: TRUBORE_METRIC, truboreMetric316: TRUBORE_METRIC, mlcp: MLCP };
 
 const MAT_LABEL = {
   truboreMetric:    'Tru-Bore Metric 304L',
@@ -880,12 +913,9 @@ const MAT_LABEL = {
    here keeps its size when the project is opened there. Any change to one
    table has to be made in the other. */
 const ROUGHNESS_PRESETS = {
-  new:      { copper: 0.0000015, carbon: 0.000046, stainless: 0.000015, stainless304: 0.000015,
-              trubore: 0.000015, trubore316: 0.000015, truboreMetric: 0.000015, truboreMetric316: 0.000015 },
-  used:     { copper: 0.000003,  carbon: 0.00012,  stainless: 0.00003,  stainless304: 0.00003,
-              trubore: 0.00003,  trubore316: 0.00003,  truboreMetric: 0.00003,  truboreMetric316: 0.00003 },
-  corroded: { copper: 0.000005,  carbon: 0.0005,   stainless: 0.00006,  stainless304: 0.00006,
-              trubore: 0.00006,  trubore316: 0.00006, truboreMetric: 0.00006, truboreMetric316: 0.00006 },
+  new:      { copper: 0.0000015, carbon: 0.000046, stainless: 0.000015, stainless304: 0.000015, trubore: 0.000015, trubore316: 0.000015, truboreMetric: 0.000015, truboreMetric316: 0.000015, mlcp: 0.000007 },
+  used:     { copper: 0.000003,  carbon: 0.00012,  stainless: 0.00003,  stainless304: 0.00003,  trubore: 0.00003,  trubore316: 0.00003,  truboreMetric: 0.00003,  truboreMetric316: 0.00003,  mlcp: 0.000007 },
+  corroded: { copper: 0.000005,  carbon: 0.0005,   stainless: 0.00006,  stainless304: 0.00006,  trubore: 0.00006,  trubore316: 0.00006,  truboreMetric: 0.00006,  truboreMetric316: 0.00006,  mlcp: 0.000007 },
 };
 const CONDITION_LABEL = {
   new:      'New / clean (design)',
@@ -1434,7 +1464,9 @@ function asOneUndo(label, fn) {
 function undo() {
   const step = undoStack.pop();
   if (!step) { toast('Nothing to undo'); return; }
-  const d = JSON.parse(step.state);
+  let d;
+  try { d = JSON.parse(step.state); }
+  catch (e) { refreshUndoBtn(); toast('That undo step could not be read and was dropped'); return; }
   S.nodes = d.nodes; S.segs = d.segs; S.items = d.items || [];
   S.measures = d.measures || []; S.nextId = d.nextId;
   draft = null; sel = null;
@@ -6217,7 +6249,7 @@ function fittingsBox(sg) {
   const rows = keys.map(k => {
     const n = sg.fit.list[k];
     const each = sg.pipe ? fittingPa(k, dn, mat, sg.pipe.v, rho) / 1000 : 0;
-    return '<tr><td style="padding:3px 0">' + n + ' \u00d7 ' + FITTING_TYPES[k].label + '</td>'
+    return '<tr><td style="padding:3px 0">' + n + ' \u00d7 ' + (FITTING_TYPES[k] || { label: k }).label + '</td>'
       + '<td style="padding:3px 0;text-align:right;font-family:Azeret Mono,monospace">'
       + fmt(n * each, 2) + '</td></tr>';
   }).join('');
@@ -6352,7 +6384,13 @@ function wireInspector() {
          truthy and a common-flow buffer starts breaking the network. */
       if (f === 'ports') obj.ports = parseInt(inp.value) || 2;
       else if (f === 'sep') obj.sep = inp.value === '1' || inp.value === 'true';
-      else obj[f] = (inp.type === 'number') ? (inp.value === '' ? 0 : parseFloat(inp.value)) : inp.value;
+      else if (inp.type === 'number') {
+        // a half-typed number is not a figure: keep what was there rather than
+        // store NaN, which JSON writes as null and the next open trips over
+        const v = inp.value === '' ? 0 : parseFloat(inp.value);
+        if (isFinite(v)) obj[f] = v; else return;
+      }
+      else obj[f] = inp.value;
       /* Changing what a vessel is changes the whole panel and, if it is a
          separator, the numbering of everything below it. */
       if (f === 'kind' && node && node.type === 'consumer' && isStockLoadName(node.name)) {
@@ -8130,7 +8168,16 @@ function autosave() {
       localStorage.setItem(AUTO_KEY, JSON.stringify({
         at: Date.now(), ref: S.ref, project: projectBundle(false),
       }));
-    } catch (e) { return; }                       // out of room: nothing to do
+    } catch (e) {
+      /* Out of room, or the store is blocked. Said once per session: believing
+         the browser has a copy when it has not is how a day's tracing is lost
+         to a closed tab. */
+      if (!autosaveWarned) {
+        autosaveWarned = true;
+        toast('The browser cannot keep a copy of this trace — use Save. (' + (e && e.name || 'storage error') + ')');
+      }
+      return;
+    }
     try {
       if (S.img) localStorage.setItem(AUTO_IMG_KEY, JSON.stringify(imgForSave()));
     } catch (e) {
@@ -8139,6 +8186,7 @@ function autosave() {
     }
   }, 900);
 }
+let autosaveWarned = false;
 
 function readAutosave() {
   try {
@@ -8250,12 +8298,19 @@ function loadProject(data) {
   S.ref = data.ref || ''; S.engineer = data.engineer || ''; S.date = data.date || S.date;
   S.rev = parseInt(data.rev, 10) || 0;
   S.savedAt = data.savedAt || null; S.savedBy = data.savedBy || '';
-  S.pxPerM = parseFloat(data.pxPerM) || 0; S.calib = data.calib || null;
+  S.pxPerM = parseFloat(data.pxPerM) || 0;
+  /* A calibration line with a point missing would throw on the first render. */
+  const cal = data.calib;
+  S.calib = (cal && cal.a && cal.b && isFinite(cal.a.x) && isFinite(cal.a.y)
+    && isFinite(cal.b.x) && isFinite(cal.b.y)) ? cal : null;
   S.concept = !!data.concept;
   S.nodes = (Array.isArray(data.nodes) ? data.nodes : []).filter(n => n && typeof n === 'object');
   S.segs = (Array.isArray(data.segs) ? data.segs : []).filter(s => s && typeof s === 'object');
-  /* Files written before valves could be placed simply have none. */
-  S.items = (Array.isArray(data.items) ? data.items : []).filter(it => it && VALVE_LIB[it.type]);
+  /* Files written before valves could be placed simply have none. A valve of a
+     type this build does not know is left out, and said — it used to vanish. */
+  const rawItems = (Array.isArray(data.items) ? data.items : []).filter(it => it && typeof it === 'object');
+  const unknownValves = rawItems.filter(it => !VALVE_LIB[it.type]);
+  S.items = rawItems.filter(it => VALVE_LIB[it.type]);
   S.measures = (Array.isArray(data.measures) ? data.measures : []).filter(m => m && m.pts && m.pts.length >= 2);
   S.nodes.forEach(n => {
     if (n.type !== 'consumer') return;
@@ -8265,6 +8320,12 @@ function loadProject(data) {
   /* Never below one past the highest id in the file — see nextIdFrom(). */
   S.nextId = nextIdFrom(data.nextId, S.nodes, S.segs, S.items, S.measures);
   const repairs = repairProject();
+  if (unknownValves.length) {
+    const kinds = [...new Set(unknownValves.map(it => String(it.type)))];
+    repairs.push(unknownValves.length + ' valve' + (unknownValves.length === 1 ? ' of a type' : 's of types')
+      + ' this build does not know (' + kinds.join(', ') + ') ' + (unknownValves.length === 1 ? 'was' : 'were')
+      + ' left out — the file may be from a newer build');
+  }
   /* Corners lock by default now. A file written before that carries the old
      default of `ortho: false`, which is not a decision anybody made — so it is
      dropped and the current default stands. Anything saved since says so with
@@ -8279,10 +8340,15 @@ function loadProject(data) {
   /* This file's history is its own. Stepping back past its first change
      would put the previous project's take-off on this sheet. */
   undoStack.length = 0;
-  draft = null; sel = null; clipboard = null;
+  draft = null; sel = null; clipboard = null; hoverPt = null;
   S.index = null; S.indexes = []; S.groups = [];
+  if (tool !== 'select') setTool('select');     // a half-drawn run from the last job must not finish on this one
   if (data.img) { S.img = data.img; showDrawing(); }
-  else if (S.concept) startConcept();
+  else if (S.concept) {
+    // a concept with no sheet in the file gets the blank grid, not the last job's drawing
+    if (S.img && !S.img.virtual) S.img = null;
+    startConcept();
+  }
   else if (S.img) clearDrawing();     // a take-off with no sheet: not the last job's sheet
   closeInspector();
   refreshUndoBtn();
