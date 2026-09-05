@@ -636,6 +636,11 @@ the highest total back to plant, summing each run's pipe and fitting loss and
 adding the coil at the end. Both tools therefore agree, and `traceMeta` carries
 `indexTerminal`, `indexKpa` and `indexRuns` so the figure can be checked.
 
+Both files carry `rev` — how many times they have been saved — and the sizer's
+carries `savedAt` and `lastEdited`; the trace file carries `savedAt` and
+`savedBy`. `traceMeta.traceRev` / `traceSavedAt` / `exportedAt` on a sizer
+project say which trace revision it was cut from and when.
+
 Pipe Trace has its own separate save format, `app: 'adi-pipe-trace'`, holding
 the drawing, the scale, the traced geometry and any tape measures
 (`measures`). That never goes to the sizer.
@@ -891,6 +896,52 @@ the drawing, the scale, the traced geometry and any tape measures
   `Trace_x.json` and `x_from_trace.json`, which is how the wrong one gets
   opened. Opening a sizer file in Trace now explains what it is and where it
   goes, in a modal — the old two-second toast was gone before it was read.
+- **A file that has been through several hands is put straight on the way
+ in, and it says so.** A job saved, reopened, edited and re-saved by several
+ people over months arrives with things no build of the tool ever writes:
+ a stale `nextId`, two components with one id, a run whose end names a
+ component that is gone, a valve on a run that is gone. None of it is worth
+ refusing the file for, and none of it may be repaired silently. In Pipe
+ Trace `loadProject()` does four things, in this order, and every one of
+ them exists because the opposite went wrong:
+ - `S.settings = Object.assign(defaultSettings(), file.settings)` — from the
+ **defaults**, not from the last project. `Object.assign(S.settings, …)`
+ let a file written before a setting existed inherit whatever the previous
+ job had chosen, so the material, the limit and the flow unit followed one
+ project into the next.
+ - `S.nextId = nextIdFrom(file.nextId, nodes, segs, items, measures)` —
+ never below one past the **highest id in the file**. Trusting the counter
+ handed a new run the id of one already on the drawing, and every edit to
+ either then landed on the first. Counting the objects is no bound either:
+ ids are sparse after deletions.
+ - `repairProject()` — duplicate ids renumbered (whatever referred to the
+ shared id already resolved to the first, so nothing moves); a run end that
+ names a missing component is given a **tee at that point**, so the pipe
+ stays where it was traced and Check then reports the dead end; a valve on
+ a missing run is removed; a run without two drawable points is removed.
+ A modal lists what was done. The same rules for the sizer are
+ `nextIdFrom()` and `repairCircuitList()` in `applyProjectData()` and
+ `loadFromLocalStorage()`.
+ - `undoStack.length = 0` — a file's history is its own. Ctrl+Z after opening
+ a second file used to put the first file's take-off on the second's sheet.
+ What a solve writes on to a node or a run is listed by name in
+ `NODE_DERIVED` and `SEG_DERIVED` and stripped from every save, so a file
+ carries what was drawn and nothing that is worked out again on open. A key
+ added to `solve()` and not to those lists goes into the file and into every
+ copy ever made of it — `hgroup` did exactly that.
+ Every route a file arrives by — Open, Ctrl+O, a drop on the board — goes
+ through `openProjectFile()`, which tells JSON that is not a trace apart from
+ a trace the tool fell over on, and puts the job that was on screen back if
+ it did. In the sizer, deleting a circuit hands what it fed to the circuit
+ that fed it (`deleteCircuit()`), so a branch does not become a root and
+ drop out of every roll-up above it.
+- **Every save is a revision.** `rev` on both file formats, stepped on Save
+ (not on autosave), with `savedAt` and `savedBy` beside it in the trace file
+ and the existing `lastEdited` stamp in the sizer's. Trace shows it in the
+ status strip and on the PDF, the sizer beside the edit stamp, and the sizer
+ export carries `traceMeta.traceRev` so a sizer file can be traced back to
+ the trace it was cut from. A job passed round then has a number to quote —
+ "rev 14, saved 3 Sep by Mike" — rather than a filename and a hope.
 - **The trace is also kept in the browser.** `autosave()` runs off the back of
   `render()`, so every change is written a moment later, and the take-off is
   offered back on the next visit rather than restored silently — opening the
@@ -1090,7 +1141,11 @@ viscosity note in section 2.
 
 ### If you touched the fluid properties
 
-**Confirm all three tools hold the identical viscosity.** In each of the three
+**Confirm all three tools hold the identical viscosity.** `node
+tests/chain-consistency-test.mjs` does this from the source — it evaluates
+`waterMu`, `waterRho` and `waterCp` out of all three files and fails on a
+single differing digit, and does the same for `FITTING_TYPES`, the authority
+rule, the brand bar and the handoff keys. Run it first. In each of the three
 consoles, `waterMu(70)` must return `0.000402339802133043` — the same digits,
 not the same to three figures. The sizer's `currentViscosity()` must match it
 with glycol at 0%, and be higher by exactly the `GLYCOL_TABLE` ratio above it.

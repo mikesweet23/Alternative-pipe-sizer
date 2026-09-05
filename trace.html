@@ -8173,7 +8173,8 @@ function offerAutosave() {
 
   modal('Pick up where you left off?',
       '<p style="margin-top:0">There is a trace saved in this browser from <strong>' + whenTxt
-    + '</strong>' + (box.ref ? ' &mdash; <strong>' + esc(box.ref) + '</strong>' : '') + '.</p>'
+    + '</strong>' + (box.ref ? ' &mdash; <strong>' + esc(box.ref) + '</strong>' : '')
+    + (p.rev > 0 ? ' <span class="mono">' + esc(revLabel(p).trim()) + '</span>' : '') + '.</p>'
     + '<div class="note">' + runs + ' run' + (runs === 1 ? '' : 's') + ', '
     + valves + ' valve' + (valves === 1 ? '' : 's')
     + (p.img ? ', with the drawing' : ', but the drawing was too big to keep &mdash; you will be '

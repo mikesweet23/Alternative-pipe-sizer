@@ -21,7 +21,13 @@ node tests/concept-snap-trace-test.mjs
 node tests/concept-cooler-offload-test.mjs
 node tests/concept-section-height-test.mjs
 node tests/concept-pdf-report-test.mjs
+node tests/chain-consistency-test.mjs
+node tests/persistence-repair-test.mjs
 ```
+
+`chain-consistency-test` evaluates the blocks that exist as copies in more than one file — `waterMu` / `waterRho` / `waterCp`, `FITTING_TYPES`, the authority rule, the brand bar, the handoff keys — and fails if any copy has drifted. Run it after touching any of them. `persistence-repair-test` covers what happens when a file that has been through several hands is opened: the id counter, the repairs, the settings reset, the revision stamp.
+
+A headless browser can drive the real pages: Google Chrome is on the VM at `/usr/local/bin/google-chrome`, and `playwright-core` installed outside the repo (for example under `/tmp`) can `page.evaluate()` the tools' own functions — `loadProject`, `projectBundle`, `solve`, `buildSizerProject` in Trace; `applyProjectData`, `buildProjectSnapshot`, `calculateCircuit` in the sizer; `loadProject`, `solve` in the simulator. Nothing browser-based lives in the repo: the tools have no dependencies and that is deliberate.
 
 Concept is schematic: after tracing a run, type **Installed length** on that run. Check fails with "do not reach" / "no size" when a click near a load did not actually join — finish on the ringed edge of the box, not a free point beside it. Corners lock to 90°/45°; Alt frees one hop.
 
