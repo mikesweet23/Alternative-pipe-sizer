@@ -1321,7 +1321,19 @@ const S = {
   /* One hydraulic circuit per pump: the primary, and one below each header or
      separating buffer. Worked out by every solve, never stored. */
   groups: [], indexes: [],
-  settings: {
+  /* How many times this take-off has been saved to a file, and by whom and
+     when it last was. A job that several people pass around gets a number to
+     quote — "rev 14, Mike, 3 Sep" — instead of a filename and a hope. */
+  rev: 0, savedAt: null, savedBy: '',
+  settings: null,            // filled from defaultSettings() below
+  setupDone: false,
+};
+/* Every project setting and its default, as a fresh object. loadProject()
+   starts from this rather than from whatever the last project left in
+   S.settings, so a file written before a setting existed gets the default
+   and not the previous job's choice. */
+function defaultSettings() {
+  return {
     material: 'truboreMetric',
     condition: 'new',            // matches the sizer's pipe condition
     customRough: 0.000046,
@@ -1361,10 +1373,26 @@ const S = {
     loadHeight: 2.5,
     /* How flow is typed and shown. Always stored as l/s. */
     volUnit: 'lps',              // 'lps' | 'm3h'
-  },
-  setupDone: false,
-};
+  };
+}
+S.settings = defaultSettings();
 const nid = () => S.nextId++;
+
+/* The next free id, never lower than one past the highest id in use. A file
+   that has been through several hands can arrive with a `nextId` that is
+   stale — merged by hand, edited outside the tool, or written by an older
+   build — and trusting it hands a new run the id of one already on the
+   drawing. Every id in the file is looked at, not the count of them: ids are
+   sparse after deletions, so a count is no bound at all. */
+function nextIdFrom(claimed, ...lists) {
+  let top = 0;
+  lists.forEach(list => (list || []).forEach(o => {
+    const v = Number(o && o.id);
+    if (isFinite(v) && v > top) top = v;
+  }));
+  const c = Number(claimed);
+  return Math.max(isFinite(c) && c > 0 ? Math.floor(c) : 1, Math.floor(top) + 1);
+}
 
 /* ==========================================================================
    UNDO
@@ -4147,7 +4175,9 @@ function renderStatus() {
     + (S.nodes.some(n => n.type === 'llh' && n.shell && n.shell.reversed)
         ? cell('Header', 'primary short', true) : '')
     // said out loud, because a sheet turned an hour ago is not obvious later
-    + (imgRot() ? cell('Sheet turned', fmt(imgRot(), 1) + '°') : '');
+    + (imgRot() ? cell('Sheet turned', fmt(imgRot(), 1) + '°') : '')
+    // which revision of a job passed between several people this is
+    + (S.rev > 0 ? cell('File', revLabel(S).replace(/^ \(|\)$/g, '')) : '');
 }
 
 /* ==========================================================================
@@ -7339,6 +7369,7 @@ function exportTracePDFReport() {
     + '<div class="r"><span class="l">Project</span><span>' + esc(project) + '</span></div>'
     + '<div class="r"><span class="l">Date</span><span>' + esc(formatDateGB(S.date)) + '</span></div>'
     + '<div class="r"><span class="l">Engineer</span><span>' + esc(S.engineer || '\u2014') + '</span></div>'
+    + (S.rev > 0 ? '<div class="r"><span class="l">File</span><span>' + esc(revLabel(S).replace(/^ \(|\)$/g, '')) + '</span></div>' : '')
     + '<div class="r"><span class="l">Sheet</span><span>' + mode + '</span></div>'
     + '<div class="r"><span class="l">Material</span><span>' + esc(mat) + '</span></div>'
     + '<div class="r"><span class="l">Condition</span><span>' + esc(cond) + '</span></div>'
@@ -7710,6 +7741,9 @@ function buildSizerProject() {
     valveSchedule: exportValveList(),
     traceMeta: {
       from: 'pipe-trace', pxPerM: S.pxPerM,
+      // which saved revision of the take-off this came from, so a sizer file
+      // can be traced back to the trace file it was cut from
+      traceRev: S.rev || 0, traceSavedAt: S.savedAt || null, exportedAt: new Date().toISOString(),
       jointing: S.settings.jointing,
       flangeSpacing: S.settings.flangeSpacing,
       fittingsCounted: S.segs.reduce((n, s) => n + (s.nFit || 0), 0),
@@ -7965,24 +7999,127 @@ function imgForSave() {
   return o;
 }
 
+/* Everything a solve writes on to a node or a run and nothing a person typed.
+   Stripped from every save so a file only carries what was drawn; the figures
+   are worked out again on open. A key added to solve() and not listed here
+   goes into the file, and from there into every copy that is ever made of it. */
+const NODE_DERIVED = ['feedSeg', 'feedSegCool', 'reached', 'flowLps', 'sharedLps', 'dutyKw',
+  'shell', 'hgroup', 'subGroup', 'uiTab'];
+const SEG_DERIVED = ['up', 'down', 'parentSeg', 'depth', 'orphan', 'kw', 'lps', 'nCons', 'runM',
+  'lenM', 'pipe', 'hydM', 'fit', 'fitPa', 'nFit', 'straightKpa', 'fitKpa', 'valveKpa', 'nValves',
+  'dropKpa', 'equivPct', 'coilKpa', 'totalKpa', 'isIndex', 'spine', 'sizeLps', 'hgroup'];
+
 function projectBundle(withImg) {
   const out = JSON.parse(JSON.stringify({
     app: 'adi-pipe-trace', schema: 1,
     ref: S.ref, engineer: S.engineer, date: S.date,
+    rev: S.rev || 0, savedAt: S.savedAt || null, savedBy: S.savedBy || '',
     img: withImg ? imgForSave() : null, pxPerM: S.pxPerM, calib: S.calib,
     concept: !!S.concept,
     nodes: S.nodes, segs: S.segs, items: S.items, measures: S.measures || [],
     nextId: S.nextId, settings: S.settings,
   }));
   out.nodes.forEach(n => {
-    ['feedSeg','feedSegCool','reached','flowLps','sharedLps','dutyKw','shell','hgroup','subGroup','uiTab'].forEach(kk => delete n[kk]);
+    NODE_DERIVED.forEach(kk => delete n[kk]);
     if (n.cool) delete n.cool.sharedLps;
   });
-  out.segs.forEach(s => { ['up','down','parentSeg','depth','orphan','kw','lps','nCons','runM','lenM',
-    'pipe','hydM','fit','fitPa','nFit','straightKpa','fitKpa','valveKpa','nValves','dropKpa','equivPct',
-    'coilKpa','totalKpa','isIndex','spine','sizeLps']
-    .forEach(k => delete s[k]); });
+  out.segs.forEach(s => SEG_DERIVED.forEach(k => delete s[k]));
   return out;
+}
+
+/* ==========================================================================
+   REPAIRING A FILE ON THE WAY IN
+   A take-off that has been saved, reopened, edited and saved again by several
+   people over months can arrive with things in it that this build never
+   writes: two components with the same id, a run whose end refers to a
+   component that is no longer in the file, a valve on a run that has gone, a
+   run with one point. None of them is anyone's fault and none of them is
+   worth refusing the file for. Each is put right in the least destructive
+   way there is, and what was done is said out loud, so nobody opens a job
+   and wonders why a tee has appeared.
+
+   What each repair does:
+   - duplicate id       the later one is given a fresh id. Anything that
+                        referred to the shared id already resolved to the
+                        first, so nothing moves.
+   - run with a missing end
+                        a tee is put at that end of the run. The pipe stays
+                        on the drawing where it was traced; Check then reports
+                        the tee as a dead end, and the engineer reconnects it
+                        or lets Tidy take it away.
+   - run without two points
+                        removed, with any valves on it.
+   - valve on a missing run
+                        removed. It had no position to be drawn at.
+   ========================================================================== */
+function repairProject() {
+  const notes = [];
+  const say = (n, one, many) => { if (n) notes.push(n + ' ' + (n === 1 ? one : many)); };
+
+  // 1. ids used twice within a list
+  let dups = 0;
+  const dedupe = (list) => {
+    const seen = new Set();
+    (list || []).forEach(o => {
+      if (!o) return;
+      if (o.id === undefined || o.id === null || seen.has(o.id)) { o.id = nid(); dups++; }
+      seen.add(o.id);
+    });
+  };
+  dedupe(S.nodes); dedupe(S.segs); dedupe(S.items); dedupe(S.measures);
+  say(dups, 'id that was used twice was renumbered', 'ids that were used twice were renumbered');
+
+  // 2. runs that cannot be drawn
+  const shortRuns = S.segs.filter(s => !Array.isArray(s.pts) || s.pts.length < 2
+    || s.pts.some(p => !p || !isFinite(p.x) || !isFinite(p.y)));
+  if (shortRuns.length) {
+    const gone = new Set(shortRuns.map(s => s.id));
+    S.segs = S.segs.filter(s => !gone.has(s.id));
+    S.items = S.items.filter(it => !gone.has(it.seg));
+    say(shortRuns.length, 'run with no drawable geometry was removed', 'runs with no drawable geometry were removed');
+  }
+
+  // 3. a run whose end names a component that is not in the file
+  let ends = 0;
+  S.segs.forEach(sg => {
+    ['a', 'b'].forEach(end => {
+      const id = sg[end];
+      if (id === null || id === undefined || nodeById(id)) return;
+      const p = end === 'a' ? sg.pts[0] : sg.pts[sg.pts.length - 1];
+      const j = { id: nid(), type: 'junction', x: p.x, y: p.y, name: 'Tee',
+        height: (p.h !== undefined && isFinite(parseFloat(p.h))) ? parseFloat(p.h) : defaultPipeHeight() };
+      S.nodes.push(j);
+      sg[end] = j.id;
+      delete sg[end + 'Port'];
+      ends++;
+    });
+  });
+  say(ends, 'run end referred to a component that is not in the file and was given a tee',
+    'run ends referred to components that are not in the file and were given a tee');
+
+  // 4. valves with nowhere to sit
+  const lost = S.items.filter(it => !segById(it.seg));
+  if (lost.length) {
+    S.items = S.items.filter(it => segById(it.seg));
+    say(lost.length, 'valve was on a run that is not in the file and was removed',
+      'valves were on runs that are not in the file and were removed');
+  }
+  S.items.forEach(it => { const t = parseFloat(it.t); it.t = isFinite(t) ? clamp(t, 0, 1) : 0.5; });
+
+  return notes;
+}
+
+/* Take the sheet off the screen and go back to the empty board. Used when a
+   file arrives with no drawing and is not a concept, so the take-off it
+   carries is not drawn over whatever sheet the last job left behind. */
+function clearDrawing() {
+  S.img = null;
+  el('board').style.display = '';
+  el('zoomer').style.display = 'none';
+  el('dwg').style.display = 'none';
+  el('ov').innerHTML = '';
+  ['bSched', 'bPdf', 'bExport', 'bName', 'b3d', 'bCheck'].forEach(id => { const b = el(id); if (b) b.disabled = true; });
+  el('bOpenDwg').textContent = 'Open drawing';
 }
 
 function autosave() {
@@ -8062,11 +8199,17 @@ function download(name, text) {
 }
 
 function saveProject() {
+  // a save to a file is a revision; the autosave is not
+  S.rev = (parseInt(S.rev, 10) || 0) + 1;
+  S.savedAt = new Date().toISOString();
+  S.savedBy = S.engineer || '';
   // the same bundle the autosave writes, so the two can never drift apart
   const out = projectBundle(true);
   const name = (S.ref || 'Untitled').replace(/[^\w\- ]+/g, '').trim() || 'Untitled';
   download('Trace — ' + name + ' — ' + S.date + '.json', JSON.stringify(out));
-  toast('Saved “Trace — ' + name + '” to your downloads');
+  toast('Saved “Trace — ' + name + '” to your downloads' + revLabel(S));
+  renderStatus();
+  autosave();     // the browser copy carries the same revision as the file
 }
 
 /* Two different files come out of this tool and they are easy to mix up:
@@ -8104,33 +8247,71 @@ function loadProject(data) {
     return;
   }
   S.ref = data.ref || ''; S.engineer = data.engineer || ''; S.date = data.date || S.date;
-  S.pxPerM = data.pxPerM || 0; S.calib = data.calib || null;
+  S.rev = parseInt(data.rev, 10) || 0;
+  S.savedAt = data.savedAt || null; S.savedBy = data.savedBy || '';
+  S.pxPerM = parseFloat(data.pxPerM) || 0; S.calib = data.calib || null;
   S.concept = !!data.concept;
-  S.nodes = data.nodes || []; S.segs = data.segs || [];
+  S.nodes = (Array.isArray(data.nodes) ? data.nodes : []).filter(n => n && typeof n === 'object');
+  S.segs = (Array.isArray(data.segs) ? data.segs : []).filter(s => s && typeof s === 'object');
   /* Files written before valves could be placed simply have none. */
-  S.items = (data.items || []).filter(it => it && VALVE_LIB[it.type]);
-  S.measures = (data.measures || []).filter(m => m && m.pts && m.pts.length >= 2);
+  S.items = (Array.isArray(data.items) ? data.items : []).filter(it => it && VALVE_LIB[it.type]);
+  S.measures = (Array.isArray(data.measures) ? data.measures : []).filter(m => m && m.pts && m.pts.length >= 2);
   S.nodes.forEach(n => {
     if (n.type !== 'consumer') return;
     n.valve = migrateValveType(n.valve);
     if (n.cool) n.cool.valve = migrateValveType(n.cool.valve);
   });
-  S.nextId = data.nextId || (S.nodes.length + S.segs.length + S.items.length + (S.measures || []).length + 1);
+  /* Never below one past the highest id in the file — see nextIdFrom(). */
+  S.nextId = nextIdFrom(data.nextId, S.nodes, S.segs, S.items, S.measures);
+  const repairs = repairProject();
   /* Corners lock by default now. A file written before that carries the old
      default of `ortho: false`, which is not a decision anybody made — so it is
      dropped and the current default stands. Anything saved since says so with
      `angleLockRev`, and its choice either way is honoured. */
   const st = Object.assign({}, data.settings || {});
   if (!(st.angleLockRev >= 2)) delete st.ortho;
-  Object.assign(S.settings, st);
+  /* Start from the defaults, not from the last project's settings: a file
+     written before a setting existed gets the default, and a setting the
+     previous job changed does not follow this one in. */
+  S.settings = Object.assign(defaultSettings(), st);
   setTraceHeight(S.settings.mainHeight);
+  /* This file's history is its own. Stepping back past its first change
+     would put the previous project's take-off on this sheet. */
+  undoStack.length = 0;
+  draft = null; sel = null; clipboard = null;
+  S.index = null; S.indexes = []; S.groups = [];
   if (data.img) { S.img = data.img; showDrawing(); }
   else if (S.concept) startConcept();
-  sel = null; closeInspector();
+  else if (S.img) clearDrawing();     // a take-off with no sheet: not the last job's sheet
+  closeInspector();
+  refreshUndoBtn();
   el('orthoChk').checked = !!S.settings.ortho;   // the file may hold its own answer
   syncConceptUi();
   buildRail(); render();
-  toast('Opened ' + (S.ref || 'project'));
+  toast('Opened ' + (S.ref || 'project') + revLabel(S));
+  if (repairs.length) {
+    modal('Opened, with repairs',
+        '<p style="margin-top:0">The file had been through a few hands and needed putting straight '
+      + 'on the way in. Nothing typed was changed; this is what was done:</p>'
+      + '<ul style="margin:0 0 12px;padding-left:18px;font-size:12.5px;line-height:1.55">'
+      + repairs.map(r => '<li>' + esc(r) + '</li>').join('') + '</ul>'
+      + '<div class="note">Run <strong>Check</strong> before sending this to the sizer. A tee '
+      + 'that was added stands where a run used to meet a component that is no longer in the '
+      + 'file; reconnect it, or let Tidy remove it.</div>'
+      + '<button class="btn" style="margin-top:12px" onclick="closeModal()">Close</button>');
+  }
+}
+
+/* " (rev 14, saved 3 Sep by Mike)" — or nothing for a file that predates it. */
+function revLabel(s) {
+  if (!s || !(s.rev > 0)) return '';
+  const bits = ['rev ' + s.rev];
+  if (s.savedAt) {
+    const d = new Date(s.savedAt);
+    if (!isNaN(d)) bits.push('saved ' + d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+      + (s.savedBy ? ' by ' + s.savedBy : ''));
+  }
+  return ' (' + bits.join(', ') + ')';
 }
 
 /* The sheet on screen. Called on every load and after every rotation, so the
@@ -9686,15 +9867,40 @@ el('bProj').addEventListener('click', projectDialog);
 el('bSteps').addEventListener('click', stepsDialog);
 el('bSave').addEventListener('click', saveProject);
 el('bLoad').addEventListener('click', () => el('fProj').click());
-el('fProj').addEventListener('change', e => {
-  const f = e.target.files[0]; e.target.value = '';
+/* One reader for every route a project file arrives by — the Open button,
+   Ctrl+O and a drop on the board. "Not JSON" and "the tool fell over opening
+   it" are different failures and get different messages: the first is the
+   wrong file, the second is a bug worth reporting with the file attached. */
+function openProjectFile(f) {
   if (!f) return;
   const r = new FileReader();
   r.onload = () => {
-    try { loadProject(JSON.parse(r.result)); }
-    catch (err) { toast('That file could not be read'); }
+    let data;
+    try { data = JSON.parse(r.result); }
+    catch (err) { toast('That file is not JSON — it is not a trace this tool wrote'); return; }
+    // what is on screen now, so a file that fails half-way in does not leave a half-loaded job
+    const before = projectBundle(true);
+    const hadWork = !!(before.nodes.length || before.segs.length || before.img);
+    try { loadProject(data); }
+    catch (err) {
+      console.error('loadProject failed', err);
+      let restored = false;
+      if (hadWork) { try { loadProject(before); restored = true; } catch (e2) { console.error(e2); } }
+      modal('That file could not be opened',
+          '<p style="margin-top:0">The file read as JSON but the tool stopped while putting it on '
+        + 'screen. It may have been written by a newer build, or edited outside the tool.</p>'
+        + '<div class="note mono" style="word-break:break-all">' + esc(err && err.message || String(err)) + '</div>'
+        + '<div class="note">Keep the file and pass it on with this message.'
+        + (restored ? ' The job that was on screen has been put back.' : '') + '</div>'
+        + '<button class="btn" style="margin-top:12px" onclick="closeModal()">Close</button>');
+    }
   };
+  r.onerror = () => toast('That file could not be read');
   r.readAsText(f);
+}
+el('fProj').addEventListener('change', e => {
+  const f = e.target.files[0]; e.target.value = '';
+  openProjectFile(f);
 });
 
 el('bExport').addEventListener('click', exportToSizer);
@@ -9779,11 +9985,8 @@ const drop = el('drop');
 document.addEventListener('drop', e => {
   const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
   if (!f) return;
-  if (/json$/i.test(f.name)) {
-    const r = new FileReader();
-    r.onload = () => { try { loadProject(JSON.parse(r.result)); } catch (err) { toast('That file could not be read'); } };
-    r.readAsText(f);
-  } else loadDrawingFile(f);
+  if (/json$/i.test(f.name)) openProjectFile(f);
+  else loadDrawingFile(f);
 });
 
 window.addEventListener('keydown', e => { setOverride(e.altKey); });

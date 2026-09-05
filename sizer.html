@@ -2308,9 +2308,63 @@ function duplicateCircuit(id) {
   showToast('Circuit duplicated');
 }
 
+/* Taking a circuit out of the tree hands whatever it fed to the circuit that
+   fed it, so a branch does not silently become a root and drop out of every
+   roll-up above it. That is the usual meaning of deleting a section of main;
+   if it is not what was meant, Fed-from on each child is one click away. */
 function deleteCircuit(id) {
+  const gone = circuitById(id);
+  if (!gone) return;
+  const kids = childrenOf(id);
+  const up = (gone.parentId === null || gone.parentId === undefined || !circuitById(gone.parentId))
+    ? null : gone.parentId;
+  kids.forEach(k => { k.parentId = up; });
   circuits = circuits.filter(c => c.id !== id);
   renderCircuits();
+  if (kids.length) {
+    const upRef = up === null ? 'the plant' : ((circuitById(up) || {}).ref || 'its parent');
+    showToast('Deleted ' + gone.ref + ' \u2014 ' + kids.length + ' circuit' + (kids.length === 1 ? '' : 's')
+      + ' it fed now fed from ' + upRef);
+  }
+}
+
+/* The next free circuit id, never lower than one past the highest in use.
+   A project that has been saved, merged and edited by several people can
+   arrive with a stale `nextId`; trusting it gives a new row the id of one
+   already in the table, and from then on every edit to either lands on the
+   first. The ids themselves are looked at, not the count of them — after
+   deletions they are sparse and a count is no bound at all. */
+function nextIdFrom(claimed, list) {
+  let top = 0;
+  (list || []).forEach(o => { const v = Number(o && o.id); if (isFinite(v) && v > top) top = v; });
+  const c = Number(claimed);
+  return Math.max(isFinite(c) && c > 0 ? Math.floor(c) : 1, Math.floor(top) + 1);
+}
+
+/* A list of circuits as it arrives from a file: ids used twice are given a
+   fresh one (anything that referred to the shared id already resolved to the
+   first, so nothing moves), and a Fed-from that names a circuit not in the
+   list is cleared so the row is honestly a root rather than pointing at
+   nothing. Returns what was done, for the toast. */
+function repairCircuitList(list) {
+  const notes = { dupIds: 0, dangling: 0 };
+  const seen = new Set();
+  list.forEach(c => {
+    if (c.id === undefined || c.id === null || seen.has(c.id)) { c.id = nextId++; notes.dupIds++; }
+    seen.add(c.id);
+  });
+  const ids = new Set(list.map(c => c.id));
+  list.forEach(c => {
+    if (c.parentId === null || c.parentId === undefined) return;
+    if (c.parentId === c.id || !ids.has(c.parentId)) { c.parentId = null; notes.dangling++; }
+  });
+  return notes;
+}
+function repairNote(n) {
+  const bits = [];
+  if (n.dupIds) bits.push(n.dupIds + ' duplicate id' + (n.dupIds === 1 ? '' : 's') + ' renumbered');
+  if (n.dangling) bits.push(n.dangling + ' Fed-from pointing at a missing circuit set to plant');
+  return bits.length ? ' \u00b7 repaired: ' + bits.join(', ') : '';
 }
 
 function updateCircuitField(id, field, value) {
@@ -3251,16 +3305,23 @@ function formatEditStamp(st) {
 
 // Set when a project file is opened, so the report can show the prior editor
 let loadedEditStamp = null;
+/* How many times this project has been saved to a file. Read from the file on
+   open, stepped on every save, written back. A job several people pass round
+   then has a number to quote \u2014 "rev 14" \u2014 rather than a filename and a
+   timestamp that two machines may disagree about. */
+let projectRev = 0;
 
 function renderEditStamp() {
   const el = document.getElementById('editStamp');
   if (!el) return;
   const ini = engineerInitials(document.getElementById('engineer').value);
   const prior = loadedEditStamp ? formatEditStamp(loadedEditStamp) : '';
-  if (!ini && !prior) { el.innerHTML = ''; return; }
+  if (!ini && !prior && !projectRev) { el.innerHTML = ''; return; }
   el.innerHTML =
       (ini ? '<span style="display:inline-block;background:var(--brand-blue-deep);color:var(--white);font-weight:800;'
            + 'font-size:10px;letter-spacing:1px;padding:3px 7px;border-radius:3px">' + escHtml(ini) + '</span>' : '')
+    + (projectRev > 0
+        ? '<span style="color:var(--muted);font-size:11px;margin-left:8px">rev ' + projectRev + '</span>' : '')
     + (prior && (!loadedEditStamp || loadedEditStamp.initials !== ini)
         ? '<span style="color:var(--muted);font-size:11px;margin-left:8px">last saved by ' + escHtml(prior) + '</span>'
         : '');
@@ -5949,6 +6010,7 @@ function buildProjectSnapshot() {
     app: 'adi-pipework-sizer',
     schema: 1,
     savedAt: new Date().toISOString(),
+    rev: projectRev,
     circuits: circuits,
     nextId: nextId,
     plantItems: plantItems,
@@ -5970,6 +6032,8 @@ function projectFileName() {
 
 function saveProjectFile() {
   try {
+    projectRev = (parseInt(projectRev, 10) || 0) + 1;    // a file save is a revision
+    renderEditStamp();
     const name = projectFileName();
     const blob = new Blob([JSON.stringify(buildProjectSnapshot(), null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
@@ -6061,10 +6125,12 @@ function applyProjectData(data, opts) {
       isSeparator: false, vesselType: '', vesselKind: '', hxKw: 0,
       hxPriSup: null, hxPriRet: null, hxSecSup: null, hxSecRet: null,
     }, cc)));
-    nextId = data.nextId || (circuits.length + 1);
-    plantItems = Array.isArray(data.plantItems) ? data.plantItems : [];
+    nextId = nextIdFrom(data.nextId, circuits);
+    const repaired = repairCircuitList(circuits);
+    plantItems = (Array.isArray(data.plantItems) ? data.plantItems : []).filter(it => it && typeof it === 'object');
     loadedEditStamp = data.lastEdited || null;
-    nextPlantId = data.nextPlantId || (plantItems.length + 1);
+    projectRev = parseInt(data.rev, 10) || 0;
+    nextPlantId = nextIdFrom(data.nextPlantId, plantItems);
     // Refresh the glycol display labels WITHOUT touching rho/cp — the loaded
     // values must survive. onBasisChange respects the restored autoProps state:
     // auto recalculates (deterministic), manual keeps the file's figures.
@@ -6072,7 +6138,7 @@ function applyProjectData(data, opts) {
     onBasisChange();
     saveToLocalStorage();
     showToast('Opened ' + ref + ' \u2014 ' + circuits.length + ' circuits'
-              + (source ? ' from ' + source : ''));
+              + (source ? ' from ' + source : '') + repairNote(repaired));
     return true;
   }
 }
@@ -6338,6 +6404,7 @@ function saveToLocalStorage() {
     const state = {
       circuits,
       nextId,
+      rev: projectRev,
       glycol: document.getElementById('glycol').value,
       defaultMaterial: document.getElementById('defaultMaterial').value,
       limitPd: document.getElementById('limitPd').value,
@@ -6387,8 +6454,10 @@ function loadFromLocalStorage() {
         length: 20, fittings: 30, isIndex: false, consumerLoad: 0, isLLH: false, sizeOverride: 0,
         ...c,
       })));
-      nextId = s.nextId || circuits.length + 1;
+      nextId = nextIdFrom(s.nextId, circuits);
+      repairCircuitList(circuits);
     }
+    projectRev = parseInt(s.rev, 10) || 0;
     if (s.glycol !== undefined) document.getElementById('glycol').value = s.glycol;
     if (s.defaultMaterial) document.getElementById('defaultMaterial').value = s.defaultMaterial;
     if (s.limitPd) document.getElementById('limitPd').value = s.limitPd;
@@ -6399,7 +6468,7 @@ function loadFromLocalStorage() {
     if (s.calcDate) document.getElementById('calcDate').value = s.calcDate;
     if (s.returnTemp) document.getElementById('returnTemp').value = s.returnTemp;
     if (s.autoProps !== undefined) document.getElementById('autoProps').checked = !!s.autoProps;
-    if (Array.isArray(s.plantItems)) { plantItems = s.plantItems; nextPlantId = s.nextPlantId || (plantItems.length + 1); }
+    if (Array.isArray(s.plantItems)) { plantItems = s.plantItems.filter(it => it && typeof it === 'object'); nextPlantId = nextIdFrom(s.nextPlantId, plantItems); }
     if (s.thermal) {
       const t = s.thermal;
       if (t.enabled !== undefined) document.getElementById('thermalEnabled').checked = !!t.enabled;
