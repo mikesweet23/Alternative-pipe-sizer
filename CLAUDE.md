@@ -535,6 +535,31 @@ The four differential valves reach the sizer by a different route again:
   rather than silently folded in somewhere wrong.
 
 ### Pipe tables
+- **The sizer's `CARBON` … `MLCP` arrays are the tables, and the other two
+ tools hold copies** — `TABLES` in `trace.html` and `simulator.html`, built
+ from consts of the same names. They have to agree to the tenth of a
+ millimetre or a run sized in Trace changes size when the project is opened
+ in the sizer; `tests/chain-consistency-test.mjs` compares every row. They
+ did not agree until September 2026: Trace served "Stainless 316 sch 10S"
+ from the Tru-Bore ISO table (DN65 bore 72.1 against the sizer's 66.9), its
+ copper walls differed at 67 and 133 mm, and the simulator's carbon stopped
+ at DN150 with different walls, had no stainless of its own and treated MLCP
+ as copper. `ROUGHNESS_PRESETS` is the same story, three copies, same test.
+- **The simulator solves on the pipe the sizer chose, not a pipe it chooses
+ again.** A file the sizer saves carries `sized` on each circuit — `nom`,
+ `od`, `wall`, `id_mm`, `rough_m`, `lengthTotal`, `effectiveLength`,
+ `pipeLoss_kPa`, `llh`, `sizeOverride` — written by `sizedFor()` and never
+ read back by the sizer. `selectPipe()` in the simulator uses it as it
+ stands, and the fittings percentage is replaced by what `effectiveLength`
+ implies, so the simulator's pipe drop at design flow *is* the sizer's
+ `pipeLoss_kPa` to three decimals, header rule, pipe condition and counted
+ schedule included. A file without `sized` (older, or written by hand) falls
+ back to re-selecting from the same tables, with the condition read from
+ `settings.pipeCondition` (`roughFor()`), and the head-origin panel says
+ which of the two it is doing (`pipeBasisNote()`). Before this the
+ simulator re-selected every pipe at "new" roughness from its own shorter
+ tables and applied the planning percentage to a schedule the sizer had
+ counted, so the two disagreed on the same file for reasons nobody designed.
 - **Tru-Bore Metric** is exact-bore: OD = DN + 2 walls. 1.5 mm wall to DN50,
   2.0 mm DN65–DN300, then DN350 355×2.5, DN400 406×3, DN500 506×3,
   DN600 606×3, DN700 708×4, DN800 808×4, DN900 908×4, DN1000 1008×4.
@@ -602,6 +627,7 @@ Circuit fields that carry meaning across tools:
 | `isLLH` | Size on velocity alone, to the header limit. Already existed in the sizer; Pipe Trace now sets it. **Never** set on a heat exchanger |
 | `vesselType`, `vesselKind`, `vesselLitres`, `ports`, `marginPct`, `primaryLps`, `secondaryLps` | What the vessel is and what is either side of it. `vesselType: 'hx'` with `vesselKind: 'plate'` or `'shell'` |
 | `hxPriSup`, `hxPriRet`, `hxSecSup`, `hxSecRet`, `hxPriLps`, `hxSecLps`, `hxKw`, `secDT` | Heat exchanger only. Four temperatures, both flows, the duty that crosses, and the secondary ΔT. `dT` on that circuit is the **primary** ΔT so `separatorDutyKw()` rolls the heat up correctly |
+| `sized` | **Written by the sizer on save, read by the simulator.** The pipe the sizer selected — `nom`, `od`, `wall`, `id_mm`, `rough_m`, `lengthTotal`, `effectiveLength`, `pipeLoss_kPa`, `llh`, `sizeOverride`. Derived; rewritten on every save; the sizer never reads it back. See "Pipe tables" in section 2 |
 
 `settings.mu` is written by the sizer alongside `settings.rho` and
 `settings.cp` — the viscosity actually used, derived rather than typed. The
@@ -631,10 +657,21 @@ read rather than a re-derivation. **It is the substrate a P&ID export is meant
 to be built on**, together with `sym` in `VALVE_LIB`, which is the key a symbol
 library would map against.
 
+**The sizer carries `valveSchedule`, `traceMeta` and `dropped` through
+untouched** (`passThrough`, `PASS_THROUGH_KEYS`), so a Save or a Send to
+Simulator from the sizer writes them back as they arrived. Until September
+2026 one Save in the sizer stripped all three from the file for good, which
+is exactly the substrate the P&ID export was to be built on.
+
 Pipe Trace picks the index run the same way the sizer does: the terminal with
 the highest total back to plant, summing each run's pipe and fitting loss and
 adding the coil at the end. Both tools therefore agree, and `traceMeta` carries
 `indexTerminal`, `indexKpa` and `indexRuns` so the figure can be checked.
+
+Both files carry `rev` — how many times they have been saved — and the sizer's
+carries `savedAt` and `lastEdited`; the trace file carries `savedAt` and
+`savedBy`. `traceMeta.traceRev` / `traceSavedAt` / `exportedAt` on a sizer
+project say which trace revision it was cut from and when.
 
 Pipe Trace has its own separate save format, `app: 'adi-pipe-trace'`, holding
 the drawing, the scale, the traced geometry and any tape measures
@@ -891,6 +928,52 @@ the drawing, the scale, the traced geometry and any tape measures
   `Trace_x.json` and `x_from_trace.json`, which is how the wrong one gets
   opened. Opening a sizer file in Trace now explains what it is and where it
   goes, in a modal — the old two-second toast was gone before it was read.
+- **A file that has been through several hands is put straight on the way
+ in, and it says so.** A job saved, reopened, edited and re-saved by several
+ people over months arrives with things no build of the tool ever writes:
+ a stale `nextId`, two components with one id, a run whose end names a
+ component that is gone, a valve on a run that is gone. None of it is worth
+ refusing the file for, and none of it may be repaired silently. In Pipe
+ Trace `loadProject()` does four things, in this order, and every one of
+ them exists because the opposite went wrong:
+ - `S.settings = Object.assign(defaultSettings(), file.settings)` — from the
+ **defaults**, not from the last project. `Object.assign(S.settings, …)`
+ let a file written before a setting existed inherit whatever the previous
+ job had chosen, so the material, the limit and the flow unit followed one
+ project into the next.
+ - `S.nextId = nextIdFrom(file.nextId, nodes, segs, items, measures)` —
+ never below one past the **highest id in the file**. Trusting the counter
+ handed a new run the id of one already on the drawing, and every edit to
+ either then landed on the first. Counting the objects is no bound either:
+ ids are sparse after deletions.
+ - `repairProject()` — duplicate ids renumbered (whatever referred to the
+ shared id already resolved to the first, so nothing moves); a run end that
+ names a missing component is given a **tee at that point**, so the pipe
+ stays where it was traced and Check then reports the dead end; a valve on
+ a missing run is removed; a run without two drawable points is removed.
+ A modal lists what was done. The same rules for the sizer are
+ `nextIdFrom()` and `repairCircuitList()` in `applyProjectData()` and
+ `loadFromLocalStorage()`.
+ - `undoStack.length = 0` — a file's history is its own. Ctrl+Z after opening
+ a second file used to put the first file's take-off on the second's sheet.
+ What a solve writes on to a node or a run is listed by name in
+ `NODE_DERIVED` and `SEG_DERIVED` and stripped from every save, so a file
+ carries what was drawn and nothing that is worked out again on open. A key
+ added to `solve()` and not to those lists goes into the file and into every
+ copy ever made of it — `hgroup` did exactly that.
+ Every route a file arrives by — Open, Ctrl+O, a drop on the board — goes
+ through `openProjectFile()`, which tells JSON that is not a trace apart from
+ a trace the tool fell over on, and puts the job that was on screen back if
+ it did. In the sizer, deleting a circuit hands what it fed to the circuit
+ that fed it (`deleteCircuit()`), so a branch does not become a root and
+ drop out of every roll-up above it.
+- **Every save is a revision.** `rev` on both file formats, stepped on Save
+ (not on autosave), with `savedAt` and `savedBy` beside it in the trace file
+ and the existing `lastEdited` stamp in the sizer's. Trace shows it in the
+ status strip and on the PDF, the sizer beside the edit stamp, and the sizer
+ export carries `traceMeta.traceRev` so a sizer file can be traced back to
+ the trace it was cut from. A job passed round then has a number to quote —
+ "rev 14, saved 3 Sep by Mike" — rather than a filename and a hope.
 - **The trace is also kept in the browser.** `autosave()` runs off the back of
   `render()`, so every change is written a moment later, and the take-off is
   offered back on the next visit rather than restored silently — opening the
@@ -900,10 +983,43 @@ the drawing, the scale, the traced geometry and any tape measures
   for again. The file Save is what you send to someone else or archive with
   the job, and it writes the same bundle so the two cannot drift.
 - **Send to Sizer hands over directly.** The project goes into
-  `localStorage['adi-pipework-handoff']` and the sizer picks it up on load,
-  clearing the key so a refresh cannot re-import it. A copy of the file is
-  still downloaded, and if the store is unavailable the file is the fallback.
-  The sizer's side of this is `takeTraceHandoff()` calling `applyProjectData()`.
+ `localStorage['adi-pipework-handoff']` and the sizer picks it up on load,
+ clearing the key so a refresh cannot re-import it. A copy of the file is
+ still downloaded, and if the store is unavailable the file is the fallback.
+ The sizer's side of this is `takeTraceHandoff()` calling `applyProjectData()`.
+ **The key is cleared once the project is on screen, not when it is read.**
+ The sizer asks before replacing circuits already there; clearing on read
+ meant answering "no" threw the take-off away and the downloaded copy was the
+ only way back. Declined, it stays for its ten minutes and is offered again.
+ The simulator's `takeSizerHandoff()` follows the same rule.
+- **The sizer's browser copy is the file.** `saveToLocalStorage()` writes
+ `{ v: 3, project: buildProjectSnapshot() }` and `loadFromLocalStorage()`
+ restores it through `installProject()`, the same function a file the user
+ opened and the Trace hand-over go through. It used to be a hand-kept list of
+ fields that had fallen behind the file: ρ and cp typed by hand, the low loss
+ header switch, the pump extras and the roughness were all lost on refresh
+ while the file kept them. The old shape is still read (`loadFromLocalStorageV2`).
+- **In the sizer, Duplicate copies the row, not a whitelist of it.** It went
+ through `newCircuit()`, which knows the fields a new row starts with and
+ nothing else, so a duplicated header or heat exchanger came out as a plain
+ main with its group, vessel figures and four temperatures gone.
+- **The sizer's status badge answers for the pipe selected, override
+ included.** It answered for the automatic pick, so a row stepped down to a
+ pipe over the limit still showed OK and the CSV and report repeated it. A
+ stepped size over the Pa/m limit now reads *Over limit*.
+- **The simulator finds the operating point on whichever curve is in
+ force.** `fullSpeedFlow()` — closed form for the parabola, bisection on
+ `head(Q) − sysR·Q²` for a pasted curve. With a real curve pasted, the flow
+ used to come from the parabola's own `k` while the head was then read off
+ the published curve: a flow from one machine at the head of another.
+ `speedRatio()` was already split the same way; change one and check both.
+- **A Fed-from ring is cut, not dropped.** A → B → A has no root, so nothing
+ in it was ever reached from the pump and it fell out of the solve without a
+ word. `buildGroupNetwork()` walks every node to a root, cuts the one that
+ comes back to itself (`cycleCut`), and `loadProject()` says so, alongside a
+ count of duplicate ids and of Fed-froms naming a circuit not in the file.
+ Switching hydraulic group also rebuilds the Consumers panel — it did not,
+ so the toggles still drove the previous circuit's nodes.
 - **Pipe Trace will not let anything be placed before the scale is set.** A
   drawing that arrives without one opens a modal that cannot be dismissed, and
   the plant, load and trace tools stay disabled. Swapping the sheet behind an
@@ -1063,7 +1179,11 @@ Two minutes, and it exercises every join:
    say so in the toast.
 5. Confirm the **size and the fitting count match** what Pipe Trace showed, and
    that the **index run is ticked on the same path** the trace schedule named.
-6. Save from the sizer, open it in the simulator, confirm it solves.
+6. Save from the sizer, open it in the simulator, confirm it solves, and that
+ the head-origin panel says the pipes are *the sizer's own, read from the
+ file*. The pipe figure on the index path must match the sizer's
+ `pipeLoss_kPa` for the same circuits; if it does not, `sized` is not
+ crossing.
 7. Opening `/` lands on Pipe Trace, not the sizer. `/?handoff=1` still opens
    the sizer.
 8. **Concept**: Start a concept, place a plant and a load, draw a run, type
@@ -1090,7 +1210,11 @@ viscosity note in section 2.
 
 ### If you touched the fluid properties
 
-**Confirm all three tools hold the identical viscosity.** In each of the three
+**Confirm all three tools hold the identical viscosity.** `node
+tests/chain-consistency-test.mjs` does this from the source — it evaluates
+`waterMu`, `waterRho` and `waterCp` out of all three files and fails on a
+single differing digit, and does the same for `FITTING_TYPES`, the authority
+rule, the brand bar and the handoff keys. Run it first. In each of the three
 consoles, `waterMu(70)` must return `0.000402339802133043` — the same digits,
 not the same to three figures. The sizer's `currentViscosity()` must match it
 with glycol at 0%, and be higher by exactly the `GLYCOL_TABLE` ratio above it.
