@@ -244,6 +244,61 @@
   }
   .board .drop.hot { border-color: var(--measure); background: rgba(224,164,34,.10); }
 
+  /* ---- the start page carries the whole help, so a first visit reads it
+     without opening anything; the pane repeats it searchable at any time ---- */
+  .board { align-items: flex-start; overflow-y: auto; }
+  .board-in { max-width: 1120px; width: 100%; margin: 0 auto; padding: 8px 0 40px; }
+  .board .drop { max-width: 520px; margin: 0 auto 26px; }
+  .board-help { text-align: left; }
+  .board-help h2 {
+    font-family: 'Azeret Mono', monospace; font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--muted); font-weight: 700; margin: 0 0 12px; text-align: center;
+  }
+  .board-help .help-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .board-help .help-sec {
+    background: rgba(255,255,255,.86); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px 6px;
+  }
+  .board-help .help-sec h3 { margin: 0 0 6px; font-size: 14px; font-weight: 800; letter-spacing: -0.01em; }
+  .board-help .tip { padding: 7px 0 8px; border-top: 1px solid var(--rule); }
+  .board-help .tip h4 { margin: 0 0 3px; font-size: 12.5px; font-weight: 700; }
+  .board-help .tip p { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-soft); }
+  .board-help .keys { grid-column: 1 / -1; }
+  table.mini.keys-tbl { width: 100%; }
+  table.mini.keys-tbl td.mono { font-family: 'Azeret Mono', monospace; font-size: 11px; white-space: nowrap; padding-right: 12px; color: var(--ink); }
+
+  /* ---- the help pane: every tip, searchable, at any time ---- */
+  .helpPane {
+    position: absolute; right: 0; top: 0; bottom: 0; width: 400px; max-width: 100%; z-index: 9;
+    background: var(--white); border-left: 1px solid var(--rule-2);
+    box-shadow: -6px 0 22px rgba(0,0,0,.10); display: none; flex-direction: column;
+  }
+  .helpPane.on { display: flex; }
+  .help-hd { padding: 10px 12px; border-bottom: 1px solid var(--rule); display: flex; align-items: center; gap: 10px; }
+  .help-hd h3 { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
+  .help-hd input { flex: 1; min-width: 0; padding: 7px 9px; border: 1px solid var(--rule-2); border-radius: 4px; font-size: 12.5px; font-family: inherit; }
+  .help-nav { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--rule); background: var(--paper-2); }
+  .help-nav button {
+    border: 1px solid var(--rule-2); background: var(--white); border-radius: 12px; padding: 3px 9px;
+    font-size: 11px; color: var(--ink-soft); font-family: inherit;
+  }
+  .help-nav button:hover { border-color: var(--measure); color: var(--ink); }
+  .help-bd { overflow-y: auto; padding: 4px 14px 24px; flex: 1; min-height: 0; }
+  .help-bd h3 {
+    font-family: 'Azeret Mono', monospace; font-size: 10px; letter-spacing: .13em; text-transform: uppercase;
+    color: var(--muted); margin: 18px 0 4px; font-weight: 700;
+  }
+  .help-bd .tip { padding: 9px 10px 10px; border-left: 3px solid var(--rule); margin: 6px 0; border-radius: 0 4px 4px 0; }
+  .help-bd .tip.now { border-left-color: var(--measure); background: #fdf6e6; }
+  .help-bd .tip h4 { margin: 0 0 4px; font-size: 13px; font-weight: 700; }
+  .help-bd .tip p { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--ink-soft); }
+  .help-bd .tip kbd, .board-help .tip kbd, .steps kbd {
+    font-family: 'Azeret Mono', monospace; font-size: 10.5px; background: var(--paper-2);
+    border: 1px solid var(--rule-2); padding: 1px 5px; border-radius: 3px; color: var(--ink);
+  }
+  .help-bd .tip .mono, .board-help .tip .mono { font-family: 'Azeret Mono', monospace; font-size: 11px; }
+  .help-bd .empty { color: var(--muted); font-size: 13px; padding: 20px 4px; }
+  @media (max-width: 860px) { .helpPane { width: 100%; } }
+
   .btn {
     background: var(--graphite); color: var(--paper); border: 1px solid var(--graphite);
     border-radius: 4px; padding: 10px 17px; font-weight: 600; font-size: 13px; min-height: 40px;
@@ -285,6 +340,8 @@
     font-weight: 600; font-size: 13px; color: var(--ink); min-width: 34px;
   }
   .zoomer button:hover { background: var(--paper-2); }
+  .zoomer button.on { background: var(--measure); color: #241a00; }
+  .zoomer button.on:hover { background: #f0b53a; }
   .zoomer .lvl {
     background: var(--white); padding: 0 9px; height: 32px; display: flex; align-items: center;
     font-family: 'Azeret Mono', monospace; font-size: 11.5px; color: var(--muted);
@@ -678,6 +735,7 @@
     <button class="tb" id="bConcept" title="Concept layout — place plant and loads on a grid, type pipe lengths. No drawing needed.">Concept</button>
     <button class="tb" id="bProj">Pipe &amp; basis</button>
     <button class="tb" id="bSteps">How to use</button>
+    <button class="tb" id="bHelp" title="What do I do when&hellip; &mdash; searchable tips (? or F1)">? Help</button>
     <button class="tb" id="bUndo" disabled title="Nothing to undo">&#8630; Undo</button>
     <div class="sp"></div>
     <button class="tb" id="bName" disabled>Rename runs</button>
@@ -714,7 +772,18 @@
             <button class="btn ghost" id="bPickConcept" style="margin-left:8px">Start a concept</button>
             <div style="margin-top:12px;font-size:12px;color:var(--muted)">or drop a file here</div>
           </div>
+          <div class="board-help" id="boardHelp"></div>
         </div>
+      </div>
+
+      <div class="helpPane" id="helpPane" aria-label="Help">
+        <div class="help-hd">
+          <h3>What do I do when&hellip;</h3>
+          <input id="helpQ" type="search" placeholder="Search &mdash; e.g. header, riser, duplicate, valve&hellip;" autocomplete="off">
+          <button class="btn ghost sm" id="helpClose">Close</button>
+        </div>
+        <div class="help-nav" id="helpNav"></div>
+        <div class="help-bd" id="helpBody"></div>
       </div>
 
       <div class="hint" id="hint">
@@ -758,6 +827,8 @@
         <div class="lvl" id="zLvl">100%</div>
         <button id="zIn" title="Zoom in">+</button>
         <button id="zFit" title="Fit the drawing">Fit</button>
+        <button id="zLbl" title="Labels">Aa</button>
+        <button id="zTrue" class="on" title="Components and pipes at true size at every zoom">1:1</button>
       </div>
 
       <div class="drawer" id="drawer">
@@ -1403,6 +1474,13 @@ function defaultSettings() {
     loadHeight: 2.5,
     /* How flow is typed and shown. Always stored as l/s. */
     volUnit: 'lps',              // 'lps' | 'm3h'
+    /* Components and pipes at their real footprint at every zoom, in 3D and
+       on the report — a 600 FCU never grows to cover a room when the sheet
+       is zoomed out. Off gives the old legibility minimum back. */
+    trueSize: true,
+    /* How much is written on the plan: 'auto' drops duties when zoomed out,
+       'all' writes everything at every zoom, 'none' leaves the warnings. */
+    labels: 'auto',
   };
 }
 S.settings = defaultSettings();
@@ -1458,8 +1536,11 @@ function pushUndo(label) {
    entry between them rather than one each. */
 function asOneUndo(label, fn) {
   pushUndo(label);
+  // restored rather than cleared, so one grouped action inside another does
+  // not switch the outer group's suspension off half-way through
+  const was = undoSuspended;
   undoSuspended = true;
-  try { return fn(); } finally { undoSuspended = false; refreshUndoBtn(); }
+  try { return fn(); } finally { undoSuspended = was; refreshUndoBtn(); }
 }
 function undo() {
   const step = undoStack.pop();
@@ -1688,13 +1769,84 @@ function nodeHalfPx(n) {
   const m = nodeSizeM(n);
   return { hw: m.x * S.pxPerM / 2, hh: m.y * S.pxPerM / 2 };
 }
-/* Half the size to draw it at. */
+/* True size is the default: a component is the size it is at every zoom, in
+   3D and on the report plates, so a 600 FCU never grows to cover a room when
+   the sheet is zoomed out and the plan can be read against the drawing under
+   it. Turn it off in Pipe & basis to get the legibility minimum back. */
+function trueSizeOn() { return S.settings.trueSize !== false; }
+/* At true size the only floor is a dot big enough to find with the cursor. */
+const TRUE_SIZE_MIN_PX = 7;
+
+/* ---------- how much is written on the plan ----------
+   Zoomed out over a whole floor at true size the names and duties pile on
+   top of each other. Level 2 is everything, 1 is names only, 0 is nothing
+   but the warnings. `auto` drops to 1 below about 22 px to the metre on
+   screen. Exports always get everything — the plate is drawn at a fixed
+   zoom. */
+let exporting = false;
+function labelLevel() {
+  if (exporting) return 2;
+  const m = S.settings.labels || 'auto';
+  if (m === 'all') return 2;
+  if (m === 'none') return 0;
+  return (S.pxPerM > 0 && S.pxPerM * zoom < 22) ? 1 : 2;
+}
+const LABEL_MODES = [
+  { key: 'auto', short: 'Aa', title: 'Labels: automatic \u2014 names only when zoomed out (click to show all)' },
+  { key: 'all',  short: 'AA', title: 'Labels: everything at every zoom (click to hide)' },
+  { key: 'none', short: '\u2014',  title: 'Labels: hidden, warnings only (click for automatic)' },
+];
+function cycleLabels() {
+  const i = LABEL_MODES.findIndex(x => x.key === (S.settings.labels || 'auto'));
+  S.settings.labels = LABEL_MODES[(i + 1) % LABEL_MODES.length].key;
+  refreshLabelBtn();
+  render();
+  toast(LABEL_MODES.find(x => x.key === S.settings.labels).title.split(' (')[0]);
+}
+function refreshLabelBtn() {
+  const b = el('zLbl');
+  if (!b) return;
+  const m = LABEL_MODES.find(x => x.key === (S.settings.labels || 'auto')) || LABEL_MODES[0];
+  b.textContent = m.short;
+  b.title = m.title;
+}
+function refreshTrueSizeBtn() {
+  const b = el('zTrue');
+  if (!b) return;
+  b.classList.toggle('on', trueSizeOn());
+  b.title = trueSizeOn()
+    ? 'Components and pipes at true size at every zoom (click for the legible minimum)'
+    : 'Components held at a legible size when zoomed out (click for true size)';
+}
+function toggleTrueSize() {
+  S.settings.trueSize = !trueSizeOn();
+  refreshTrueSizeBtn();
+  render();
+  toast(trueSizeOn() ? 'True size \u2014 what you see is the footprint on the drawing'
+                     : 'Legible size \u2014 components held at a minimum on screen');
+}
+
+/* Half the size to draw it at. At true size that is the real half-size with
+   a dot as the only floor, aspect kept; otherwise the old max(legible, real). */
 function nodeDrawHalf(n, k) {
   const mn = NODE_MIN_PX[n && n.type] || NODE_MIN_PX.consumer;
   const kk = (k === undefined) ? 1 / zoom : k;
-  const min = { hw: mn.x * kk / 2, hh: mn.y * kk / 2 };
   const real = nodeHalfPx(n);
+  if (real && trueSizeOn()) {
+    const f = Math.max(1, (TRUE_SIZE_MIN_PX * kk) / Math.max(2 * real.hw, 2 * real.hh, 1e-9));
+    return { hw: real.hw * f, hh: real.hh * f };
+  }
+  const min = { hw: mn.x * kk / 2, hh: mn.y * kk / 2 };
   return real ? { hw: Math.max(min.hw, real.hw), hh: Math.max(min.hh, real.hh) } : min;
+}
+/* How a component's writing is laid out for the box it is drawn in. Inside
+   the box when there is room, above and below it when there is not — a duty
+   written across a 9 px dot is a smudge. */
+function nodeLabelPlan(hf, k) {
+  const wPx = 2 * hf.hw / k, hPx = 2 * hf.hh / k;
+  const lv = labelLevel();
+  const inside = wPx >= 56 && hPx >= 26;
+  return { inside, name: lv >= 1, sub: lv >= 2 && (inside || wPx >= 22), lv };
 }
 
 /* ==========================================================================
@@ -3148,6 +3300,429 @@ let sel = null;               // { kind:'node'|'seg', id }
 let draft = null;             // in-progress trace or calibration
 let hoverPt = null;
 let clipboard = null;         // duplicated component settings
+let marquee = null;           // the lasso being dragged out with Select: { x0, y0, x1, y1, moved }
+
+/* ==========================================================================
+   SEVERAL THINGS AT ONCE
+   A lasso dragged out over open paper, or Shift-clicks, build a selection of
+   many components, runs, valves and tapes:
+     { kind: 'multi', nodes: [], segs: [], items: [], measures: [] }
+   Everything that draws a "picked" state asks isSel(), so one thing selected
+   and many look the same on the sheet. The same model as AC Trace, so a
+   row of fan coils with their branches can be picked up, copied and set
+   down together instead of one box at a time.
+   ========================================================================== */
+function emptyMulti() { return { kind: 'multi', nodes: [], segs: [], items: [], measures: [] }; }
+function multiList(m, kind) {
+  return kind === 'node' ? m.nodes : kind === 'seg' ? m.segs
+       : kind === 'item' ? m.items : kind === 'tape' ? m.measures : null;
+}
+function multiCount(m) { return m.nodes.length + m.segs.length + m.items.length + m.measures.length; }
+function isSel(kind, id) {
+  if (!sel) return false;
+  if (sel.kind === 'multi') { const l = multiList(sel, kind); return !!l && l.indexOf(id) >= 0; }
+  return sel.kind === kind && sel.id === id;
+}
+/* A multi selection of one thing is just that thing; of nothing, nothing. */
+function settleMulti(m) {
+  const c = multiCount(m);
+  if (!c) return null;
+  if (c === 1) {
+    if (m.nodes.length) return { kind: 'node', id: m.nodes[0] };
+    if (m.segs.length) return { kind: 'seg', id: m.segs[0] };
+    if (m.items.length) return { kind: 'item', id: m.items[0] };
+    return { kind: 'tape', id: m.measures[0] };
+  }
+  return m;
+}
+/* The current selection as a multi, whatever it is now. */
+function selAsMulti() {
+  const m = emptyMulti();
+  if (!sel) return m;
+  if (sel.kind === 'multi') {
+    m.nodes = sel.nodes.slice(); m.segs = sel.segs.slice();
+    m.items = sel.items.slice(); m.measures = sel.measures.slice();
+    return m;
+  }
+  const l = multiList(m, sel.kind);
+  if (l) l.push(sel.id);
+  return m;
+}
+function toggleInSelection(kind, id) {
+  const m = selAsMulti();
+  const l = multiList(m, kind);
+  if (!l) return;
+  const i = l.indexOf(id);
+  const adding = i < 0;
+  if (adding) l.push(id); else l.splice(i, 1);
+  /* A load and the branch into it are one set-out, the same as the lasso
+     takes them: Shift-clicking a fan coil brings its branch and the valves
+     on it, and takes them away again. */
+  const n = kind === 'node' ? nodeById(id) : null;
+  if (n && n.type === 'consumer') {
+    S.segs.forEach(s => {
+      if (s.a !== id && s.b !== id) return;
+      const si = m.segs.indexOf(s.id);
+      if (adding && si < 0) m.segs.push(s.id);
+      if (!adding && si >= 0) m.segs.splice(si, 1);
+      S.items.forEach(it => {
+        if (it.seg !== s.id) return;
+        const ii = m.items.indexOf(it.id);
+        if (adding && ii < 0) m.items.push(it.id);
+        if (!adding && ii >= 0) m.items.splice(ii, 1);
+      });
+    });
+  }
+  sel = settleMulti(m);
+  if (sel) openInspector(); else closeInspector();
+  render();
+}
+/* Everything the lasso encloses: a component by its centre, a run or a tape
+   when every point of it is inside or when both of its end components are,
+   and the valves sitting on a run that is taken. */
+function selectInBox(bx) {
+  const x0 = Math.min(bx.x0, bx.x1), x1 = Math.max(bx.x0, bx.x1);
+  const y0 = Math.min(bx.y0, bx.y1), y1 = Math.max(bx.y0, bx.y1);
+  const inside = p => p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+  const m = emptyMulti();
+  S.nodes.forEach(n => { if (inside(n)) m.nodes.push(n.id); });
+  const nodeIn = {};
+  m.nodes.forEach(id => { nodeIn[id] = true; });
+  /* A run is in when all of it is, or when both its end components are — or
+     when it lands on a selected component and everything but its far end is
+     inside — or, whatever its shape, when it is the branch into a selected
+     load. That last case is the one that matters here: the branch into a fan
+     coil leaves a tee on the main outside the box you drew round the unit,
+     and the corner under that tee is usually outside it too. The branch is
+     part of the unit's set-out: it comes with the unit, stretching from the
+     tee when the group is moved and getting a tee of its own when it is
+     copied. A main between a selected plant and an unselected header is not
+     taken that way — only a run that ends at a load. */
+  const isLoad = id => { const n = nodeById(id); return !!n && n.type === 'consumer'; };
+  S.segs.forEach(s => {
+    const pts = s.pts || [];
+    if (!pts.length) return;
+    if (pts.every(inside) || (nodeIn[s.a] && nodeIn[s.b])) { m.segs.push(s.id); return; }
+    if ((nodeIn[s.a] && !nodeIn[s.b] && isLoad(s.a)) || (nodeIn[s.b] && !nodeIn[s.a] && isLoad(s.b))) {
+      m.segs.push(s.id); return;
+    }
+    const butLast = pts.slice(0, -1), butFirst = pts.slice(1);
+    if ((nodeIn[s.a] && !nodeIn[s.b] && butLast.every(inside))
+     || (nodeIn[s.b] && !nodeIn[s.a] && butFirst.every(inside))) m.segs.push(s.id);
+  });
+  const segIn = {};
+  m.segs.forEach(id => { segIn[id] = true; });
+  S.items.forEach(it => { if (segIn[it.seg]) m.items.push(it.id); });
+  (S.measures || []).forEach(t => { if ((t.pts || []).length && t.pts.every(inside)) m.measures.push(t.id); });
+  sel = settleMulti(m);
+  if (sel) openInspector(); else closeInspector();
+  render();
+  if (sel && sel.kind === 'multi') toast(multiSummary(sel) + ' selected \u2014 drag any of them to move the lot');
+}
+function selectAll() {
+  const m = emptyMulti();
+  m.nodes = S.nodes.map(n => n.id);
+  m.segs = S.segs.map(s => s.id);
+  m.items = S.items.map(it => it.id);
+  m.measures = (S.measures || []).map(t => t.id);
+  sel = settleMulti(m);
+  if (sel) openInspector(); else closeInspector();
+  render();
+}
+function plural(n, one, many) { return n + ' ' + (n === 1 ? one : (many || one + 's')); }
+function multiSummary(m) {
+  const nodes = m.nodes.map(nodeById).filter(Boolean);
+  const bits = [];
+  const count = (n, one, many) => { if (n) bits.push(plural(n, one, many)); };
+  count(nodes.filter(n => n.type === 'source').length, 'plant item');
+  count(nodes.filter(n => n.type === 'consumer').length, 'load');
+  count(nodes.filter(n => isVessel(n)).length, 'vessel');
+  count(nodes.filter(n => n.type === 'pump' || n.type === 'drycooler').length, 'inline item');
+  count(nodes.filter(n => n.type === 'junction').length, 'tee');
+  count(m.segs.length, 'run');
+  count(m.items.length, 'valve');
+  count(m.measures.length, 'tape');
+  return bits.join(', ') || 'nothing';
+}
+/* Move everything selected by (dx, dy) in drawing pixels. Runs whose end
+   components are not in the selection are stretched, because syncSegEnds()
+   at the top of the next solve puts their ends back on the components that
+   did not move. Valves ride on their run as a fraction, so they need nothing. */
+function moveSelection(dx, dy) {
+  const m = selAsMulti();
+  m.nodes.forEach(id => { const n = nodeById(id); if (n) { n.x += dx; n.y += dy; } });
+  const movePts = r => { if (r && r.pts) r.pts.forEach(p => { p.x += dx; p.y += dy; }); };
+  m.segs.forEach(id => movePts(segById(id)));
+  m.measures.forEach(id => movePts(measureById(id)));
+}
+/* The extent of the selection, components by their drawn box rather than
+   their centre — two fan coils one above the other have a width, so a copy
+   set down beside them is beside them and not on top. */
+function selectionBox() {
+  const m = selAsMulti();
+  const xs = [], ys = [];
+  m.nodes.forEach(id => {
+    const n = nodeById(id);
+    if (!n) return;
+    const h = isUnitCasing(n) ? nodeDrawHalf(n) : { hw: 0, hh: 0 };
+    const r = Math.hypot(h.hw, h.hh);   // any rotation fits inside this
+    xs.push(n.x - r, n.x + r); ys.push(n.y - r, n.y + r);
+  });
+  const take = r => { if (r && r.pts) r.pts.forEach(p => { xs.push(p.x); ys.push(p.y); }); };
+  m.segs.forEach(id => take(segById(id)));
+  m.measures.forEach(id => take(measureById(id)));
+  if (!xs.length) return null;
+  const x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+  const y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+  return { x0, y0, x1, y1, w: x1 - x0, h: y1 - y0 };
+}
+
+/* ---------- a pack: a selection lifted off the sheet ----------
+   Everything selected, in METRES about the centre of its own extent rather
+   than in pixels of this drawing, so it can be set down on a sheet at a
+   different scale — the next floor — and come out the same size. The old
+   ids stay in it so run ends and valves can be tied back together when it
+   lands. Derived figures are stripped; solve() works them out again. */
+function packSelection(m) {
+  const box = selectionBox();
+  if (!box) return null;
+  const s = S.pxPerM > 0 ? S.pxPerM : 1;
+  const cx = (box.x0 + box.x1) / 2, cy = (box.y0 + box.y1) / 2;
+  const rel = p => {
+    const q = { x: (p.x - cx) / s, y: (p.y - cy) / s };
+    if (p.h !== undefined) q.h = p.h;
+    return q;
+  };
+  const strip = (o, keys) => { keys.forEach(k => delete o[k]); return o; };
+  const pack = { app: 'adi-pipe-trace', kind: 'pack', w: box.w / s, h: box.h / s,
+                 nodes: [], segs: [], items: [], measures: [] };
+  m.nodes.forEach(id => {
+    const n = nodeById(id);
+    if (!n) return;
+    const c = strip(JSON.parse(JSON.stringify(n)), NODE_DERIVED);
+    if (c.cool) delete c.cool.sharedLps;
+    const q = rel(n); c.x = q.x; c.y = q.y;
+    pack.nodes.push(c);
+  });
+  m.segs.forEach(id => {
+    const r = segById(id);
+    if (!r) return;
+    const c = strip(JSON.parse(JSON.stringify(r)), SEG_DERIVED);
+    c.pts = r.pts.map(rel);
+    pack.segs.push(c);
+  });
+  const segIn = {};
+  m.segs.forEach(id => { segIn[id] = true; });
+  m.items.forEach(id => {
+    const it = itemById(id);
+    if (it && segIn[it.seg]) pack.items.push(JSON.parse(JSON.stringify(it)));
+  });
+  m.measures.forEach(id => {
+    const t = measureById(id);
+    if (t) pack.measures.push({ pts: t.pts.map(rel), name: t.name || '', note: t.note || '' });
+  });
+  return pack;
+}
+/* Set a pack down with its centre at (cx, cy) on this drawing. Runs between
+   two packed components land between the copies; a run whose other end was
+   not packed gets a tee at that end, so the copy is complete and can be
+   joined up from there. Names and tags are minted fresh. Returns the new
+   selection. */
+function placePack(pack, cx, cy) {
+  const s = S.pxPerM > 0 ? S.pxPerM : 1;
+  const abs = p => {
+    const q = { x: cx + p.x * s, y: cy + p.y * s };
+    if (p.h !== undefined) q.h = p.h;
+    return q;
+  };
+  const out = emptyMulti();
+  const idMap = {};
+  const stems = {};
+  const nthName = (type, stem) => {
+    const key = type + '|' + stem;
+    if (stems[key] === undefined) {
+      let n = 0;
+      S.nodes.forEach(x => {
+        if (x.type !== type) return;
+        const mm = String(x.name || '').match(new RegExp('^' + stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(\\d+)$'));
+        if (mm) n = Math.max(n, parseInt(mm[1], 10));
+      });
+      stems[key] = n;
+    }
+    stems[key]++;
+    return stem + ' ' + stems[key];
+  };
+  (pack.nodes || []).forEach(n => {
+    const c = JSON.parse(JSON.stringify(n));
+    const q = abs(n);
+    c.id = nid(); c.x = q.x; c.y = q.y;
+    if (c.type === 'junction') c.name = 'Tee';
+    else {
+      // "AHU 3" copies as the next AHU; a hand-typed name keeps its stem too
+      const stem = String(c.name || '').replace(/\s*\d+$/, '').trim()
+        || (c.type === 'source' ? 'Plant' : c.type === 'consumer' ? 'Load'
+            : c.type === 'llh' ? 'LLH' : c.type === 'hx' ? 'HX' : c.type === 'pump' ? 'Pump'
+            : c.type === 'drycooler' ? 'Dry cooler' : 'Buffer');
+      c.name = nthName(c.type, stem);
+    }
+    S.nodes.push(c);
+    idMap[n.id] = c.id;
+    out.nodes.push(c.id);
+  });
+  /* Two branches that left one tee still leave one tee in the copy: the
+     stand-in is minted once per unselected end and shared. */
+  const endFor = (endId, at) => {
+    if (idMap[endId] !== undefined) return idMap[endId];
+    const j = { id: nid(), type: 'junction', x: at.x, y: at.y, name: 'Tee',
+                height: at.h !== undefined ? at.h : defaultPipeHeight() };
+    S.nodes.push(j);
+    out.nodes.push(j.id);
+    idMap[endId] = j.id;
+    return j.id;
+  };
+  const segMap = {};
+  (pack.segs || []).forEach(r => {
+    const c = JSON.parse(JSON.stringify(r));
+    c.id = nid();
+    c.pts = r.pts.map(abs);
+    c.a = endFor(r.a, c.pts[0]);
+    c.b = endFor(r.b, c.pts[c.pts.length - 1]);
+    if (idMap[r.a] === undefined) delete c.aPort;
+    if (idMap[r.b] === undefined) delete c.bPort;
+    c.ref = '';
+    S.segs.push(c);
+    segMap[r.id] = c.id;
+    out.segs.push(c.id);
+  });
+  (pack.items || []).forEach(it => {
+    if (segMap[it.seg] === undefined) return;
+    const c = JSON.parse(JSON.stringify(it));
+    c.id = nid(); c.seg = segMap[it.seg];
+    const d = valveDef(c.type);
+    c.tag = d ? nextValveTag(d.tag) : '';
+    S.items.push(c);
+    out.items.push(c.id);
+  });
+  (pack.measures || []).forEach(t => {
+    const c = { id: nid(), pts: t.pts.map(abs), name: '', ref: nextTapeName(), note: t.note || '' };
+    S.measures = S.measures || [];
+    S.measures.push(c);
+    out.measures.push(c.id);
+  });
+  if (S.settings.autoName !== false) autoNameRuns(true);
+  return out;
+}
+function duplicateSelection() {
+  const m = selAsMulti();
+  if (!multiCount(m)) { toast('Select something to duplicate first'); return; }
+  if (!m.nodes.length && !m.segs.length && !m.measures.length) {
+    // a valve on its own is duplicated along its run, as it always was
+    const b = el('insDupItem');
+    if (b) b.click();
+    return;
+  }
+  const pack = packSelection(m);
+  const box = selectionBox();
+  if (!pack || !box) return;
+  const gap = S.pxPerM > 0 ? Math.max(S.pxPerM * 0.6, box.w * 0.25) : 40;
+  let out = null;
+  asOneUndo('duplicate ' + multiSummary(m), () => {
+    out = placePack(pack, (box.x0 + box.x1) / 2 + box.w + gap, (box.y0 + box.y1) / 2);
+  });
+  sel = settleMulti(out);
+  if (sel) openInspector();
+  render();
+  toast('Copied ' + multiSummary(out) + ' \u2014 drag it into place');
+}
+
+/* ---------- the clipboard ----------
+   Kept in the browser as well as in memory, so a set of fan coils copied on
+   one floor can be pasted on the next after Change drawing — or tomorrow.
+   It is in metres, so a different scale on the next sheet does not matter. */
+const CLIP_KEY = 'adi-pipe-trace-clipboard';
+let packClip = null;
+function clipboardRead() {
+  if (packClip) return packClip;
+  try {
+    const raw = localStorage.getItem(CLIP_KEY);
+    const p = raw ? JSON.parse(raw) : null;
+    if (p && p.kind === 'pack') packClip = p;
+  } catch (e) {}
+  return packClip;
+}
+function clipSummary(p) {
+  const bits = [];
+  const units = (p.nodes || []).filter(n => n.type !== 'junction').length;
+  if (units) bits.push(plural(units, 'component'));
+  if ((p.segs || []).length) bits.push(plural(p.segs.length, 'run'));
+  if ((p.items || []).length) bits.push(plural(p.items.length, 'valve'));
+  if ((p.measures || []).length) bits.push(plural(p.measures.length, 'tape'));
+  return bits.join(', ') || 'nothing';
+}
+function copySelection() {
+  const m = selAsMulti();
+  if (!multiCount(m)) { toast('Select something to copy first'); return; }
+  const pack = packSelection(m);
+  if (!pack) { toast('A valve is copied with its run \u2014 select the run too'); return; }
+  packClip = pack;
+  try { localStorage.setItem(CLIP_KEY, JSON.stringify(pack)); } catch (e) {}
+  toast('Copied ' + clipSummary(pack) + ' \u2014 Ctrl+V pastes it here or on the next drawing');
+}
+/* Where the cursor last was on the sheet, whatever the tool, so a paste
+   lands under it. Outside the sheet, the middle of the view. */
+let lastPointer = null;
+function pasteAt() {
+  if (lastPointer && S.img && lastPointer.x >= 0 && lastPointer.y >= 0
+      && lastPointer.x <= S.img.w && lastPointer.y <= S.img.h) return lastPointer;
+  const sc2 = el('scroller');
+  return { x: (sc2.scrollLeft + sc2.clientWidth / 2) / zoom, y: (sc2.scrollTop + sc2.clientHeight / 2) / zoom };
+}
+function pasteClipboard(at) {
+  if (!S.img) { toast(S.concept ? 'Start a concept first' : 'Load a drawing first'); return; }
+  if (scaleNeeded()) { scaleGate(); return; }
+  const pack = clipboardRead();
+  if (!pack) { toast('Nothing on the clipboard \u2014 select something and press Ctrl+C'); return; }
+  const p = at || pasteAt();
+  let out = null;
+  asOneUndo('paste ' + clipSummary(pack), () => { out = placePack(pack, p.x, p.y); });
+  setTool('select');
+  sel = settleMulti(out);
+  if (sel) openInspector();
+  render();
+  toast('Pasted ' + clipSummary(pack) + ' \u2014 drag it into place');
+}
+/* Arrow keys move what is selected; a run of presses is one undo step. */
+let lastNudgeAt = 0;
+function nudgeSelection(dx, dy) {
+  if (!sel) return false;
+  const m = selAsMulti();
+  if (!m.nodes.length && !m.segs.length && !m.measures.length) return false;
+  const now = Date.now();
+  if (now - lastNudgeAt > 1500) pushUndo('nudge ' + multiSummary(m));
+  lastNudgeAt = now;
+  moveSelection(dx, dy);
+  render();
+  return true;
+}
+function deleteMulti() {
+  const m = selAsMulti();
+  if (!multiCount(m)) return;
+  asOneUndo('delete ' + multiSummary(m), () => {
+    const gone = {};
+    m.nodes.forEach(id => { gone[id] = true; });
+    const dropRun = r => m.segs.indexOf(r.id) >= 0 || gone[r.a] || gone[r.b];
+    const runGone = {};
+    S.segs.forEach(r => { if (dropRun(r)) runGone[r.id] = true; });
+    S.segs = S.segs.filter(s => !runGone[s.id]);
+    S.items = S.items.filter(it => !runGone[it.seg] && m.items.indexOf(it.id) < 0);
+    S.measures = (S.measures || []).filter(t => m.measures.indexOf(t.id) < 0);
+    S.nodes = S.nodes.filter(x => !gone[x.id]);
+    // a tee left joining nothing is not a tee
+    S.nodes = S.nodes.filter(x => x.type !== 'junction' || neighbours(x.id).length > 0);
+    if (S.settings.autoName !== false) autoNameRuns(true);
+  });
+  sel = null; closeInspector(); render();
+}
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 function mk(tag, attrs, txt) {
@@ -3200,8 +3775,29 @@ function toDwg(ev) {
 /* ---------- what's under the cursor ---------- */
 /* A connection ring under the cursor. Small, so it gets a generous tolerance
    and is tested before the component it sits on. */
+/* The component whose drawn box the point is inside, if any. Used to keep a
+   click on the body of a small unit for the unit: at true size a fan coil is
+   under 40 px across at 100%, so its connection ring and the valve on its
+   edge are both within a normal tolerance of its centre and used to swallow
+   the click. */
+function nodeUnder(p) {
+  let best = null;
+  S.nodes.forEach(n => {
+    if (!isUnitCasing(n)) return;
+    const h = nodeDrawHalf(n);
+    const r = -nodeRot(n) * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+    const dx = p.x - n.x, dy = p.y - n.y;
+    const lx = Math.abs(dx * cs - dy * sn), ly = Math.abs(dx * sn + dy * cs);
+    if (lx < h.hw && ly < h.hh) {
+      const inset = Math.min(h.hw - lx, h.hh - ly);   // how far in from the nearest edge
+      if (!best || inset > best.inset) best = { node: n, inset, h };
+    }
+  });
+  return best;
+}
 function hitPort(p, tolPx) {
   const tol = (tolPx || 16) / zoom;
+  const under = nodeUnder(p);
   let best = null;
   S.segs.forEach(sg => {
     ['a', 'b'].forEach(end => {
@@ -3210,7 +3806,11 @@ function hitPort(p, tolPx) {
       const n = nodeById(end === 'a' ? sg.a : sg.b);
       if (!n || !nodeHalfPx(n)) return;
       const d = dist(portPoint(n, port, { draw: true }), p);
-      if (d < tol && (!best || d < best.d)) best = { d, seg: sg, end, nodeId: n.id };
+      /* From inside the box the ring only takes the click when the cursor is
+         close to the edge; the middle of the box belongs to the box. */
+      const t = (under && under.node === n)
+        ? Math.min(tol, Math.max(3 / zoom, Math.min(under.h.hw, under.h.hh) * 0.45)) : tol;
+      if (d < t && (!best || d < best.d)) best = { d, seg: sg, end, nodeId: n.id };
     });
   });
   return best;
@@ -3344,7 +3944,7 @@ function finishDraftInPlace() {
 function drawMeasure(g, m, k, live) {
   const pts = m.pts;
   if (!pts || pts.length < 2) return;
-  const picked = !live && sel && sel.kind === 'tape' && sel.id === m.id;
+  const picked = !live && isSel('tape', m.id);
   const ink = 'var(--measure)';
   if (picked) {
     g.appendChild(mk('path', { d: pathOf(pts), fill: 'none', stroke: ink,
@@ -3422,6 +4022,9 @@ function pipeWidthDraw(sg, k) {
   const kk = (k === undefined) ? 1 / zoom : k;
   const onScreen = (sg && sg.pipe ? clamp(1.6 + sg.pipe.od / 90, 1.8, 7) : 2.2) * kk;
   if (!(S.pxPerM > 0) || !sg || !sg.pipe) return onScreen;
+  /* At true size the pipe is its outside diameter at every zoom, with a
+     hairline as the only floor so an unzoomed main is still a line. */
+  if (trueSizeOn()) return Math.max(1.5 * kk, (sg.pipe.od / 1000) * S.pxPerM);
   return Math.max(onScreen, (sg.pipe.od / 1000) * S.pxPerM);
 }
 
@@ -3545,13 +4148,37 @@ function hitItem(p, tolPx) {
     const d = dist(q, p);
     if (d < tol && (!best || d < best.d)) best = { d, item: it };
   });
+  /* A click inside a small unit's box is for the unit, unless the valve is
+     right under the cursor — a terminal valve on the edge of a true-size fan
+     coil used to take every click on the coil. */
+  if (best && best.d > 5 / zoom && nodeUnder(p)) return null;
   return best ? best.item : null;
 }
 
 /* ==========================================================================
    DRAW
    ========================================================================== */
+/* Every redraw solves the whole take-off. If anything in that throws — a run
+   with a bad point, a valve on a run that has gone — the overlay used to stop
+   updating and the tool looked frozen, with the reason only in the console.
+   The failure is now said on screen, once, and the pointer state is dropped so
+   the next click works; Undo nearly always puts the job back. */
+let renderFailedMsg = '';
 function render() {
+  try {
+    renderInner();
+    renderFailedMsg = '';
+  } catch (err) {
+    console.error('render failed', err);
+    drag = null; panning = null; pendingPan = null; marquee = null;
+    const msg = (err && err.message) || String(err);
+    if (msg !== renderFailedMsg) {
+      renderFailedMsg = msg;
+      toast('The sheet could not be redrawn (' + msg + '). Ctrl+Z steps back; Save keeps a copy.');
+    }
+  }
+}
+function renderInner() {
   const ov = el('ov');
   if (!S.img) { ov.innerHTML = ''; return; }
   ov.setAttribute('width', S.img.w);
@@ -3584,7 +4211,7 @@ function render() {
 
   // ---- segments ----
   S.segs.forEach(sg => {
-    const picked = sel && sel.kind === 'seg' && sel.id === sg.id;
+    const picked = isSel('seg', sg.id);
     const d = sg.pts.map((p, i) => (i ? 'L' : 'M') + p.x + ' ' + p.y).join(' ');
     const single = sg.mode === 'single';
     const pw = pipeWidthDraw(sg, k);
@@ -3659,7 +4286,7 @@ function render() {
   S.items.slice().sort((a, b) => (a.seg - b.seg) || (a.t - b.t)).forEach(it => {
     const q = itemPos(it, k);
     if (!q) return;
-    const picked = sel && sel.kind === 'item' && sel.id === it.id;
+    const picked = isSel('item', it.id);
     /* A valve lies along the pipe it is on, which is nearly always right and
        follows the run if a node is dragged. The offset is for the cases it is
        not — a valve on a tee, or one that reads better turned — and the flip
@@ -3765,7 +4392,7 @@ function render() {
 
   // ---- nodes ----
   S.nodes.forEach(n => {
-    const picked = sel && sel.kind === 'node' && sel.id === n.id;
+    const picked = isSel('node', n.id);
     if (n.type === 'junction') {
       drawJunction(g, n, k, picked);
       return;
@@ -3795,29 +4422,65 @@ function render() {
       stroke: src ? 'var(--graphite)' : (n.reached ? 'var(--live)' : 'var(--alarm)'),
       'stroke-width': 1.8 * k, 'fill-opacity': src ? 1 : 0.94 }));
     g.appendChild(box);
-    g.appendChild(mk('text', { x: n.x, y: n.y - 2 * k, 'text-anchor': 'middle',
-      'font-size': 10 * k, 'font-weight': 600, 'font-family': 'Archivo, sans-serif',
-      fill: src ? 'var(--paper)' : 'var(--ink)' }, String(n.name || '').slice(0, 13)));
+    /* At true size a small load is a small box, so the writing moves off it:
+       name above, duty below, and the duty goes first when zoomed out. */
+    const lp = nodeLabelPlan(hf, k);
+    const nameY = lp.inside ? n.y - 2 * k : n.y - (hf.hh + 4 * k);
+    const subY = lp.inside ? n.y + 9 * k : n.y + (hf.hh + 10 * k);
+    if (lp.name) {
+      g.appendChild(mk('text', { x: n.x, y: nameY, 'text-anchor': 'middle',
+        'font-size': 10 * k, 'font-weight': 600, 'font-family': 'Archivo, sans-serif',
+        fill: (src && lp.inside) ? 'var(--paper)' : 'var(--ink)' }, String(n.name || '').slice(0, 13)));
+    }
     const sub = src
       ? (fmt(n.kw, 0) + ' kW' + (plantRole(n) === 'duty' ? '' : '  ' + SOURCE_ROLES[plantRole(n)]))
       : isFourPipe(n)
         ? ('H ' + fmt(consumerKw(n, 'heat'), 0) + ' / C ' + fmt(consumerKw(n, 'cool'), 0) + ' kW')
         : (fmt(consumerKw(n), 0) + ' kW  ' + fmtVol(consumerFlow(n)));
-    g.appendChild(mk('text', { x: n.x, y: n.y + 9 * k, 'text-anchor': 'middle',
-      'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace',
-      fill: src ? '#9aa3b1' : 'var(--ink-soft)' }, sub));
-    if (!src && isFourPipe(n)) {
-      g.appendChild(mk('text', { x: n.x, y: n.y + (hf.hh + 8 * k), 'text-anchor': 'middle',
+    if (lp.sub) {
+      g.appendChild(mk('text', { x: n.x, y: subY, 'text-anchor': 'middle',
+        'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace',
+        fill: (src && lp.inside) ? '#9aa3b1' : 'var(--ink-soft)' }, sub));
+    }
+    const belowY = lp.inside ? n.y + (hf.hh + 8 * k) : subY + (lp.sub ? 9 * k : 0);
+    if (!src && isFourPipe(n) && lp.lv >= 2) {
+      g.appendChild(mk('text', { x: n.x, y: belowY, 'text-anchor': 'middle',
         'font-size': 7.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
         fill: 'var(--ink-soft)' }, '4-PIPE'));
     }
     if (!src && !n.reached) {
-      g.appendChild(mk('text', { x: n.x, y: n.y - (hf.hh + 5 * k), 'text-anchor': 'middle',
+      const warnY = lp.inside || !lp.name ? n.y - (hf.hh + 5 * k) : nameY - 10 * k;
+      g.appendChild(mk('text', { x: n.x, y: warnY, 'text-anchor': 'middle',
         'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
         fill: 'var(--alarm)' }, 'NOT CONNECTED'));
     }
     drawPorts(g, n, k, picked);
   });
+
+  /* ---- a selection of several things gets one frame round the lot, so it
+     reads as a group that will move together ---- */
+  if (sel && sel.kind === 'multi') {
+    const bx = selectionBox();
+    if (bx) {
+      const pad = 14 * k;
+      g.appendChild(mk('rect', { x: bx.x0 - pad, y: bx.y0 - pad, width: bx.w + 2 * pad, height: bx.h + 2 * pad,
+        rx: 4 * k, fill: 'none', stroke: 'var(--measure)', 'stroke-width': 1.4 * k,
+        'stroke-dasharray': (6 * k) + ' ' + (4 * k), opacity: .85 }));
+      const lbl = multiSummary(sel);
+      g.appendChild(mk('rect', { x: bx.x0 - pad, y: bx.y0 - pad - 17 * k, width: (lbl.length * 6.2 + 14) * k,
+        height: 15 * k, rx: 2 * k, fill: 'var(--measure)' }));
+      g.appendChild(mk('text', { x: bx.x0 - pad + 7 * k, y: bx.y0 - pad - 6 * k,
+        'font-size': 10 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+        fill: '#241a00' }, lbl));
+    }
+  }
+  // ---- the lasso being dragged out ----
+  if (marquee && marquee.moved) {
+    const x = Math.min(marquee.x0, marquee.x1), y = Math.min(marquee.y0, marquee.y1);
+    const w = Math.abs(marquee.x1 - marquee.x0), h = Math.abs(marquee.y1 - marquee.y0);
+    g.appendChild(mk('rect', { x, y, width: w, height: h, fill: 'rgba(224,164,34,.10)',
+      stroke: 'var(--measure)', 'stroke-width': 1.2 * k, 'stroke-dasharray': (5 * k) + ' ' + (3 * k) }));
+  }
 
   ov.innerHTML = '';
   ov.appendChild(g);
@@ -4050,7 +4713,8 @@ function drawInline(g, n, k, picked) {
   }
   g.appendChild(box);
   drawPorts(g, n, k, picked);
-  g.appendChild(mk('text', { x: n.x, y: y - 6 * k, 'text-anchor': 'middle',
+  const lv = labelLevel();
+  if (lv >= 1) g.appendChild(mk('text', { x: n.x, y: y - 6 * k, 'text-anchor': 'middle',
     'font-size': 10 * k, 'font-weight': 700, 'font-family': 'Archivo, sans-serif',
     fill: 'var(--ink)' }, String(n.name || '').slice(0, 14)));
   const th = pump ? pumpThrough(n) : null;
@@ -4059,7 +4723,7 @@ function drawInline(g, n, k, picked) {
     : ((parseFloat(n.rejectKw) || 0) > 0
         ? fmt(n.rejectKw, 0) + ' kW rejected'
         : (n.leaveTemp != null && n.leaveTemp !== '' ? 'leaves ' + fmt(n.leaveTemp, 0) + ' °C' : 'dry cooler'));
-  g.appendChild(mk('text', { x: n.x, y: n.y + hf.hh + 12 * k, 'text-anchor': 'middle',
+  if (lv >= 2) g.appendChild(mk('text', { x: n.x, y: n.y + hf.hh + 12 * k, 'text-anchor': 'middle',
     'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace',
     fill: 'var(--ink-soft)' }, sub));
   if (!n.reached) {
@@ -4111,7 +4775,8 @@ function drawVessel(g, n, k, picked) {
   g.appendChild(box);
   drawPorts(g, n, k, picked);
   const label = String(n.name || '').slice(0, 12);
-  g.appendChild(mk('text', { x: n.x, y: y - 6 * k, 'text-anchor': 'middle',
+  const lv = labelLevel();
+  if (lv >= 1) g.appendChild(mk('text', { x: n.x, y: y - 6 * k, 'text-anchor': 'middle',
     'font-size': 10 * k, 'font-weight': 700, 'font-family': 'Archivo, sans-serif',
     fill: 'var(--ink)' }, label));
   const sub = hx
@@ -4121,10 +4786,10 @@ function drawVessel(g, n, k, picked) {
     : llh
     ? (n.shell && n.shell.pipe ? n.shell.pipe.nom + '  ' + fmt(n.shell.vPri, 2) + ' m/s' : 'header')
     : (fmt(parseFloat(n.litres) || 0, 0) + ' L' + (n.ports === 4 ? '  4-port' : '  in ' + (n.leg || 'return')));
-  g.appendChild(mk('text', { x: n.x, y: y + (h + 15) * k, 'text-anchor': 'middle',
+  if (lv >= 2) g.appendChild(mk('text', { x: n.x, y: y + (h + 15) * k, 'text-anchor': 'middle',
     'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace',
     fill: 'var(--ink-soft)' }, sub));
-  if (sep) {
+  if (sep && lv >= 2) {
     g.appendChild(mk('text', { x: n.x, y: y + (h + 25) * k, 'text-anchor': 'middle',
       'font-size': 8 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
       fill: 'var(--measure-ink, #8a5d00)' }, hx ? 'SEPARATES \u2014 two waters' : 'SEPARATES'));
@@ -4346,6 +5011,9 @@ function setTool(t) {
   if (t === 'valve') buildValvePalette();
   syncTracePalette();
   setTraceHeight(traceHeight);
+  // the help follows the armed tool, so it is always open on what you are doing
+  const hp = el('helpPane');
+  if (hp && hp.classList.contains('on')) renderHelp();
   render();
 }
 
@@ -5100,20 +5768,27 @@ function placeArmedAt(sn, opts) {
   const label = (opts && opts.label) || (set ? set.label : (valveDef(armed) || {}).label || 'valve');
   const made = [];
   if (!(opts && opts.quiet)) pushUndo('place ' + label.toLowerCase());
+  /* Suspended so the items are one undo step, and restored in a finally:
+     an exception half-way through a set used to leave undo switched off for
+     the rest of the session, with nothing on screen to say so. */
+  const wasSuspended = undoSuspended;
   undoSuspended = true;
-  setLayout(sn.seg, sn.t, slots, undefined, opts && opts.anchor).forEach(L => {
-    const d = valveDef(L.type);
-    if (!d) return;
-    const it = { id: nid(), type: L.type, seg: sn.seg.id, t: L.t, leg: L.leg,
-                 tag: nextValveTag(d.tag), note: '' };
-    // placed as "the standard isolating valve", so it keeps following the size
-    if (L.autoIso) it.autoIso = true;
-    if (L.atLoad) it.atLoad = true;
-    S.items.push(it);
-    made.push(it);
-  });
-  undoSuspended = false;
-  refreshUndoBtn();
+  try {
+    setLayout(sn.seg, sn.t, slots, undefined, opts && opts.anchor).forEach(L => {
+      const d = valveDef(L.type);
+      if (!d) return;
+      const it = { id: nid(), type: L.type, seg: sn.seg.id, t: L.t, leg: L.leg,
+                   tag: nextValveTag(d.tag), note: '' };
+      // placed as "the standard isolating valve", so it keeps following the size
+      if (L.autoIso) it.autoIso = true;
+      if (L.atLoad) it.atLoad = true;
+      S.items.push(it);
+      made.push(it);
+    });
+  } finally {
+    undoSuspended = wasSuspended;
+    refreshUndoBtn();
+  }
   if (!made.length) return null;
   if (opts && opts.quiet) return made[0];
   const first = made[0];
@@ -5179,6 +5854,7 @@ function deleteItem(id) {
 
 function deleteSelected() {
   if (!sel) return;
+  if (sel.kind === 'multi') { deleteMulti(); return; }
 
   /* Deleting a tee means "I put this tee in the wrong place" — it must take
      the tee out and heal the pipework, not take the runs with it. Removing a
@@ -5193,10 +5869,7 @@ function deleteSelected() {
     if (n && n.type === 'junction') {
       const nb = neighbours(n.id);
       if (nb.length === 2) {
-        pushUndo('remove a tee');
-        undoSuspended = true;
-        const ok = mergeAtJunction(n);
-        undoSuspended = false; refreshUndoBtn();
+        const ok = asOneUndo('remove a tee', () => mergeAtJunction(n));
         if (ok) {
           if (S.settings.autoName !== false) autoNameRuns(true);
           sel = null; closeInspector(); render();
@@ -5262,6 +5935,13 @@ function openInspector() {
   if (!sel) { closeInspector(); return; }
   el('body').classList.add('insp');
   const b = el('insBody');
+  if (sel.kind === 'multi') {
+    el('insKind').textContent = 'Selection';
+    el('insName').textContent = multiSummary(sel);
+    b.innerHTML = multiForm(sel);
+    wireMultiForm();
+    return;
+  }
   if (sel.kind === 'tape') {
     const m = measureById(sel.id);
     if (!m) { closeInspector(); return; }
@@ -6288,7 +6968,72 @@ function rowBtns(dup) {
     + '<button class="btn ghost sm" id="insDel" style="color:var(--alarm)">Delete</button></div>';
 }
 
+/* ---------- several things selected ----------
+   What the lasso picked up, with the few things that make sense for the
+   lot: move it an exact distance, set every load's height, copy, duplicate,
+   delete. Anything else is done one at a time — click the thing. */
+function multiForm(m) {
+  const nodes = m.nodes.map(nodeById).filter(Boolean);
+  const loads = nodes.filter(n => n.type === 'consumer');
+  const kw = loads.reduce((s, n) => s + consumerKw(n), 0);
+  const box = selectionBox();
+  const rows = [
+    ['Selected', multiSummary(m)],
+  ];
+  if (loads.length) rows.push(['Load duty', fmt(kw, 1) + ' kW across ' + plural(loads.length, 'load')]);
+  if (box && S.pxPerM > 0) rows.push(['Extent', fmt(box.w / S.pxPerM, 1) + ' \u00d7 ' + fmt(box.h / S.pxPerM, 1) + ' m']);
+  let html = derivedBox(rows);
+  html += '<div class="fld"><span>Move by <em>metres on the plan; right and down are positive</em></span>'
+    + '<div style="display:flex;gap:6px;align-items:center">'
+    + '<input type="number" id="mvX" step="0.1" value="0" style="width:70px"> <span style="font-size:12px">across</span>'
+    + '<input type="number" id="mvY" step="0.1" value="0" style="width:70px"> <span style="font-size:12px">down</span>'
+    + '<button class="btn ghost sm" id="mvGo">Move</button></div></div>';
+  if (loads.length) {
+    const hs = loads.map(n => heightOf(n));
+    const same = hs.every(h => Math.abs(h - hs[0]) < 0.005);
+    html += '<label class="fld"><span>Height of every load <em>' + (same ? 'all at ' + fmt(hs[0], 2) + ' m' : 'they differ') + '</em></span>'
+      + '<div style="display:flex;gap:6px;align-items:center">'
+      + '<input type="number" id="mhH" step="0.05" value="' + (same ? fmt(hs[0], 2) : '') + '" placeholder="m"> '
+      + '<button class="btn ghost sm" id="mhGo">Set</button></div></label>';
+  }
+  html += '<div class="note">Drag any selected thing to move the lot; arrow keys nudge 50&nbsp;mm '
+    + '(<kbd>Shift</kbd> 0.5&nbsp;m). <kbd>Shift</kbd>-click adds or removes one thing. Runs whose other end '
+    + 'is not selected stretch to keep up. Click one thing on its own to edit its figures.</div>';
+  html += '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
+    + '<button class="btn ghost sm" id="insMultiDup" title="Set a copy down beside these (Ctrl+D)">Duplicate</button>'
+    + '<button class="btn ghost sm" id="insMultiCopy" title="Copy to the clipboard, in metres (Ctrl+C)">Copy</button>'
+    + '<button class="btn ghost sm" id="insDel" style="color:var(--alarm)">Delete</button></div>';
+  return html;
+}
+function wireMultiForm() {
+  const go = el('mvGo');
+  if (go) go.addEventListener('click', () => {
+    const mx = parseFloat(el('mvX').value) || 0, my = parseFloat(el('mvY').value) || 0;
+    if (!mx && !my) return;
+    const s = S.pxPerM > 0 ? S.pxPerM : 1;
+    pushUndo('move ' + multiSummary(selAsMulti()));
+    moveSelection(mx * s, my * s);
+    render(); openInspector();
+  });
+  const mh = el('mhGo');
+  if (mh) mh.addEventListener('click', () => {
+    const v = parseFloat(el('mhH').value);
+    if (isNaN(v)) { toast('Enter a height'); return; }
+    const m = selAsMulti();
+    pushUndo('set the height of ' + plural(m.nodes.length, 'component'));
+    m.nodes.forEach(id => { const n = nodeById(id); if (n && n.type === 'consumer') n.height = v; });
+    render(); openInspector();
+  });
+  const dup = el('insMultiDup');
+  if (dup) dup.addEventListener('click', duplicateSelection);
+  const cp = el('insMultiCopy');
+  if (cp) cp.addEventListener('click', copySelection);
+  const del = el('insDel');
+  if (del) del.addEventListener('click', deleteSelected);
+}
+
 function inspectorTarget(elInp) {
+  if (!sel || sel.kind === 'multi') return null;
   let obj = sel.kind === 'item' ? itemById(sel.id)
           : sel.kind === 'tape' ? measureById(sel.id)
           : sel.kind === 'node' ? nodeById(sel.id) : segById(sel.id);
@@ -6354,6 +7099,11 @@ function wireInspector() {
       });
     }
     inp.addEventListener('change', () => {
+      /* The change fires on blur, and the inspector may have been closed
+         between the keystroke and the blur — a click on the sheet does it.
+         Reading sel.kind off a null here was a crash that took the whole
+         handler down. */
+      if (!sel) return;
       const node = sel.kind === 'node' ? nodeById(sel.id) : null;
       const obj = inspectorTarget(inp);
       if (!obj) return;
@@ -7234,8 +7984,131 @@ function formatDateGB(iso) {
    geometry, valves placed by hand, and the index path. Concept and a scaled
    drawing use the same button; Concept says the lengths were typed.
    ========================================================================== */
-function exportTracePDFReport() {
+/* ---------- the plan plate ----------
+   The take-off drawn over the sheet at a fixed scale, cropped to what was
+   traced. This is the picture that answers "where is it" — the 3D answers
+   "how high". The overlay is re-rendered with `exporting` set so every label
+   is written whatever the screen was showing, and at true size the units
+   and pipes are the size they are on the drawing, the same as on screen. */
+const EXPORT_VARS = ['--measure', '--measure-ink', '--muted', '--white', '--rule-2', '--rule',
+  '--ink-soft', '--ink', '--graphite', '--alarm', '--paper-2', '--paper', '--return', '--flow',
+  '--live', '--rail', '--rail-2', '--tool-accent'];
+
+/* The box the plan plate is cut from: everything traced and placed, grown
+   by a margin big enough to carry the labels that hang off it. The whole
+   sheet when the take-off already covers most of it, or is empty. */
+function planCrop() {
+  const full = { x: 0, y: 0, w: S.img.w, h: S.img.h };
+  const xs = [], ys = [];
+  S.nodes.forEach(n => {
+    const h = nodeDrawHalf(n, 1);
+    const r = Math.hypot(h.hw, h.hh);
+    xs.push(n.x - r, n.x + r); ys.push(n.y - r, n.y + r);
+  });
+  S.segs.forEach(sg => (sg.pts || []).forEach(p => { xs.push(p.x); ys.push(p.y); }));
+  (S.measures || []).forEach(m => (m.pts || []).forEach(p => { xs.push(p.x); ys.push(p.y); }));
+  if (S.calib) { xs.push(S.calib.a.x, S.calib.b.x); ys.push(S.calib.a.y, S.calib.b.y); }
+  if (xs.length < 2) return full;
+  let x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+  let y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+  const pad = Math.max(60, Math.max(x1 - x0, y1 - y0) * 0.10, S.pxPerM > 0 ? S.pxPerM * 2 : 0);
+  x0 = Math.max(0, Math.floor(x0 - pad)); y0 = Math.max(0, Math.floor(y0 - pad));
+  x1 = Math.min(S.img.w, Math.ceil(x1 + pad)); y1 = Math.min(S.img.h, Math.ceil(y1 + pad));
+  const w = x1 - x0, h = y1 - y0;
+  if (w < 40 || h < 40) return full;
+  if (w > S.img.w * 0.88 && h > S.img.h * 0.88) return full;
+  return { x: x0, y: y0, w, h };
+}
+
+function planImage() {
+  return new Promise((resolve, reject) => {
+    if (!S.img) { reject(new Error('no drawing')); return; }
+    /* Re-drawn at a fixed scale rather than whatever the screen is at, so
+       the labels come out the same size on the sheet however far the drawing
+       happened to be zoomed when the report was asked for. */
+    const crop = planCrop();
+    const savedZoom = zoom, savedSel = sel, savedHover = hoverPt, savedMarquee = marquee;
+    sel = null; hoverPt = null; marquee = null;
+    zoom = clamp(1500 / Math.max(crop.w, crop.h), 0.15, 2);
+    exporting = true;
+    let svg;
+    try {
+      renderInner();
+      const css = getComputedStyle(document.documentElement);
+      const vars = EXPORT_VARS.map(v => v + ':' + css.getPropertyValue(v).trim() + ';').join('');
+      const clone = el('ov').cloneNode(true);
+      clone.setAttribute('xmlns', SVGNS);
+      clone.setAttribute('width', S.img.w);
+      clone.setAttribute('height', S.img.h);
+      clone.removeAttribute('style');
+      const st = document.createElementNS(SVGNS, 'style');
+      st.textContent = 'svg{' + vars + 'font-family:Archivo,Segoe UI,Arial,sans-serif}';
+      clone.insertBefore(st, clone.firstChild);
+      svg = new XMLSerializer().serializeToString(clone);
+    } catch (e) {
+      exporting = false;
+      zoom = savedZoom; sel = savedSel; hoverPt = savedHover; marquee = savedMarquee;
+      applyZoom(); render();
+      reject(e);
+      return;
+    }
+    exporting = false;
+    zoom = savedZoom; sel = savedSel; hoverPt = savedHover; marquee = savedMarquee;
+    applyZoom(); render();
+
+    /* The plate is drawn at a fixed pixel width so a big sheet does not make
+       a hundred-megapixel PNG and a small one is not a thumbnail. */
+    const outW = clamp(Math.round(crop.w), 600, 2400);
+    const f = outW / crop.w;
+    const outH = Math.max(1, Math.round(crop.h * f));
+    const cv = document.createElement('canvas');
+    cv.width = outW; cv.height = outH;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    const finish = () => {
+      try { resolve({ url: cv.toDataURL('image/png'), w: outW, h: outH, crop }); }
+      catch (e) { reject(e); }
+    };
+    const drawOver = () => {
+      const over = new Image();
+      over.onload = () => { ctx.drawImage(over, -crop.x * f, -crop.y * f, S.img.w * f, S.img.h * f); finish(); };
+      over.onerror = finish;
+      over.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    };
+    const base = new Image();
+    base.onload = () => { ctx.drawImage(base, -crop.x * f, -crop.y * f, S.img.w * f, S.img.h * f); drawOver(); };
+    base.onerror = drawOver;
+    base.src = S.img.src;
+  });
+}
+
+async function exportTracePDFReport() {
   if (!S.img) { toast(S.concept ? 'Start a concept first' : 'Load a drawing first'); return; }
+  /* The window is opened on the click, before anything asynchronous, so a
+     pop-up blocker does not swallow it while the plates are being drawn. */
+  const win = window.open('', '_blank');
+  if (!win) { alert('Please allow pop-ups to generate the PDF report.'); return; }
+  win.document.write('<!DOCTYPE html><title>Building the report\u2026</title>'
+    + '<p style="font-family:sans-serif;padding:24px;color:#5c6069">Building the report\u2026</p>');
+  toast('Building the report\u2026');
+  let plan = null;
+  try { plan = await planImage(); } catch (e) { console.error('plan plate', e); plan = null; }
+  let html;
+  try { html = buildTraceReportHtml(plan); }
+  catch (e) {
+    console.error('report', e);
+    win.close();
+    toast('The report could not be built: ' + ((e && e.message) || e));
+    return;
+  }
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  toast('Report ready \u2014 Save as PDF in the print dialog');
+}
+
+function buildTraceReportHtml(plan) {
   solve();
   const t = totals();
   const project = S.ref || 'Untitled';
@@ -7428,7 +8301,19 @@ function exportTracePDFReport() {
       : 'Route is one way on the plan. Riser is one way vertical. Pipe metres is every leg as installed \u2014 route plus riser, times the number of pipes.')
     + ' Sizes are indicative against ' + S.settings.limitPd + ' Pa/m on ' + esc(mat.toLowerCase())
     + ', ' + esc(cond.toLowerCase()) + '. Send the take-off to the sizer for the full calculation.</p>'
-    + '<h2>2. 3D view</h2>'
+    + '<h2>2. Plan</h2>'
+    + (plan && plan.url
+      ? '<div class="view3"><img src="' + plan.url + '" alt="Plan of the take-off">'
+        + '<div class="leg"><span class="sw" style="background:#c0392b;margin-left:0"></span>Flow'
+        + '<span class="sw" style="background:#2471a3"></span>Return'
+        + ' &nbsp;\u00b7&nbsp; ' + (trueSizeOn()
+            ? 'components and pipes drawn at true size on the ' + (S.concept ? 'grid' : 'drawing')
+            : 'components held at a legible minimum')
+        + (S.pxPerM > 0 && plan.crop ? ' &nbsp;\u00b7&nbsp; ' + fmt(plan.crop.w / S.pxPerM, 1) + ' m \u00d7 '
+            + fmt(plan.crop.h / S.pxPerM, 1) + ' m shown' : '')
+        + '</div></div>'
+      : '<div class="view3"><p>The plan could not be drawn.</p></div>')
+    + '<h2>3. 3D view</h2>'
     + '<div class="view3">'
     + (png ? '<img src="' + png + '" alt="Isometric 3D of the take-off">'
          : '<p>The 3D view could not be drawn.</p>')
@@ -7437,7 +8322,7 @@ function exportTracePDFReport() {
     + ' &nbsp;\u00b7&nbsp; ' + fmt(lo, 2) + ' m to ' + fmt(hi, 2) + ' m above finished floor'
     + ' &nbsp;\u00b7&nbsp; ' + risers + ' run' + (risers === 1 ? '' : 's') + ' with a riser'
     + ' &nbsp;\u00b7&nbsp; isometric, true height</div></div>'
-    + '<h2>3. Pipework schedule</h2>'
+    + '<h2>4. Pipework schedule</h2>'
     + '<table class="rpt"><thead><tr>'
     + '<th>Run</th><th class="n">Size</th><th class="n">Route m</th><th class="n">Riser m</th>'
     + '<th class="n">Pipes</th><th class="n">Pipe m</th><th class="n">kW</th><th class="n">l/s</th>'
@@ -7446,7 +8331,7 @@ function exportTracePDFReport() {
     + '<tbody>' + (pipeBody || '<tr><td colspan="15">Nothing traced yet.</td></tr>') + pipeFoot + '</tbody></table>'
     + '<p style="font-size:8.5pt;color:#5c6069">Route and riser are one way. Pipe metres is what gets ordered. '
     + NAMING_NOTE + '</p>'
-    + '<h2>4. Material take-off</h2>'
+    + '<h2>5. Material take-off</h2>'
     + '<p>Metres to order, grouped by material and size. A paired run counts both legs.</p>'
     + '<table class="rpt"><thead><tr><th>Material</th><th class="n">Size</th><th class="n">Pipes</th>'
     + '<th class="n">Runs</th><th class="n">Route m</th><th class="n">Riser m</th>'
@@ -7461,7 +8346,7 @@ function exportTracePDFReport() {
           + '<td class="n">' + nf + '</td></tr>'
         : '')
     + '</tbody></table>'
-    + '<h2>5. Fittings counted off the geometry</h2>'
+    + '<h2>6. Fittings counted off the geometry</h2>'
     + '<p>Elbows, bends, tees and assumed terminal sets, at the size of the run they sit on. '
     + 'Valves placed by hand on a typical or fixed kPa are on the next sheet, not here.</p>'
     + '<table class="rpt"><thead><tr><th>Item</th><th class="n">Size</th><th class="n">Qty</th></tr></thead>'
@@ -7470,7 +8355,7 @@ function exportTracePDFReport() {
         ? '<tr class="sub"><td>All counted fittings</td><td class="n"></td><td class="n">' + fitQty + '</td></tr>'
         : '')
     + '</tbody></table>'
-    + '<h2>6. Valves &amp; fittings placed</h2>'
+    + '<h2>7. Valves &amp; fittings placed</h2>'
     + (vRows.length
       ? '<p>What has been dropped on the drawing. ' + vQty + ' item' + (vQty === 1 ? '' : 's')
         + ', ' + fmt(vKpa, 1) + ' kPa across the network.</p>'
@@ -7485,7 +8370,7 @@ function exportTracePDFReport() {
         + '</td><td class="n"></td><td class="n">' + fmt(vKpa, 2) + '</td></tr>'
         + '</tbody></table>'
       : '<p>No valves placed yet. Elbows and tees are on the fittings sheet above.</p>')
-    + '<h2>7. Index run</h2>'
+    + '<h2>8. Index run</h2>'
     + idxHtml
     + '<div class="disc"><strong>Disclaimer:</strong> This take-off is a design aid. Lengths, sizes and '
     + 'pressures are based on the inputs on the drawing or schematic and on standard reference data. '
@@ -7494,12 +8379,7 @@ function exportTracePDFReport() {
     + 'certified data and applicable standards before construction. The sizer is the next step for '
     + 'the full hydraulic calculation.</div>'
     + '</div></body></html>';
-
-  const win = window.open('', '_blank');
-  if (!win) { alert('Please allow pop-ups to generate the PDF report.'); return; }
-  win.document.write(html);
-  win.document.close();
-  toast('Report ready \u2014 Save as PDF in the print dialog');
+  return html;
 }
 
 /* ==========================================================================
@@ -8178,15 +9058,25 @@ function autosave() {
       }
       return;
     }
+    /* The drawing is several megabytes and does not change when a load is
+       dragged, so it is written once per sheet rather than after every edit.
+       Serialising it every 900 ms was a visible stall on every pause, and on a
+       sheet too big for the store it failed the same way every time. */
+    if (!S.img) { autosavedImg = null; return; }
+    const key = S.img.tok + ':' + S.img.src.length + ':' + (S.img.rot || 0);
+    if (autosavedImg === key) return;
     try {
-      if (S.img) localStorage.setItem(AUTO_IMG_KEY, JSON.stringify(imgForSave()));
+      localStorage.setItem(AUTO_IMG_KEY, JSON.stringify(imgForSave()));
+      autosavedImg = key;
     } catch (e) {
       // the drawing alone is too big for the store; the take-off is still safe
+      autosavedImg = key;
       try { localStorage.removeItem(AUTO_IMG_KEY); } catch (e2) {}
     }
   }, 900);
 }
 let autosaveWarned = false;
+let autosavedImg = null;
 
 function readAutosave() {
   try {
@@ -8202,6 +9092,7 @@ function readAutosave() {
   } catch (e) { return null; }
 }
 function clearAutosave() {
+  autosavedImg = null;
   try { localStorage.removeItem(AUTO_KEY); localStorage.removeItem(AUTO_IMG_KEY); } catch (e) {}
 }
 
@@ -8353,6 +9244,7 @@ function loadProject(data) {
   closeInspector();
   refreshUndoBtn();
   el('orthoChk').checked = !!S.settings.ortho;   // the file may hold its own answer
+  refreshLabelBtn(); refreshTrueSizeBtn();
   syncConceptUi();
   buildRail(); render();
   toast('Opened ' + (S.ref || 'project') + revLabel(S));
@@ -8796,6 +9688,269 @@ function askScale(a, b) {
   setTimeout(() => el('calM').select(), 40);
 }
 
+/* ==========================================================================
+   HELP
+   Every tip in one list, phrased as the situation you are in — "what do I do
+   when…" — and tagged with the tool it belongs to, so the pane opens on what
+   you are doing. The same list fills the start page, the searchable pane and
+   the How to use dialog, so the three cannot drift. `done` is a check the
+   dialog uses to tick what this job has already done.
+   ========================================================================== */
+const HELP = [
+  { id: 'start', title: 'Getting started', tips: [
+    { id: 'dwg', t: 'I have a drawing to trace', b: '<b>Open drawing</b> takes a PDF (its first page) or an '
+      + 'image, or drop the file on the board. If it arrives sideways or a scan is off square, <b>Rotate</b> by '
+      + 'the zoom controls (<kbd>R</kbd>, or <kbd>[</kbd> and <kbd>]</kbd> for quarter turns) turns the sheet '
+      + 'and everything traced on it together. The scale does not change.', done: () => !!S.img && !S.concept },
+    { id: 'concept', t: 'I have no drawing yet \u2014 just a concept', b: '<b>Concept</b> opens a faint grid instead of '
+      + 'a sheet. Place plant, loads, headers and the rest the same way, draw the runs between them, then '
+      + '<b>type the installed length</b> on each run in the inspector, because there is nothing to measure. '
+      + 'Concept pipe sizes before a layout exists.', done: () => !!S.concept },
+    { id: 'basis', t: 'The sizes look wrong for the pipe I am using', b: '<b>Pipe &amp; basis</b> sets material, '
+      + 'condition, jointing, the Pa/m limit and the velocity band. The same tables as the Pipework Sizer, so '
+      + 'nothing changes when the project moves across. Roughness is the first thing to check if the two ever '
+      + 'disagree.', done: () => !!S.setupDone },
+    { id: 'scale', t: 'Nothing will place \u2014 it keeps asking for a scale', tool: ['calib'], b: 'A length off an '
+      + 'uncalibrated drawing means nothing, so plant, loads and Trace stay off until it is set. <b>Scale</b> '
+      + '<kbd>S</kbd>: click two points a known distance apart \u2014 a grid line, a bay, a printed dimension \u2014 '
+      + 'and type the real metres. The longer the reference, the smaller the error.', done: () => S.pxPerM > 0 },
+    { id: 'files', t: 'I need to save, or pick up where I left off', b: '<b>Save</b> <kbd>Ctrl</kbd>+<kbd>S</kbd> '
+      + 'writes the whole take-off, drawing included, as <span class="mono">Trace \u2014 ref \u2014 date.json</span>, '
+      + 'and <b>Open</b> reads it back. Every save is a revision. The take-off is also kept in this browser after '
+      + 'every change and offered back on the next visit. A file that has been through several hands is put '
+      + 'straight on the way in and a note says what was repaired.' },
+  ] },
+  { id: 'place', title: 'Placing plant and loads', tips: [
+    { id: 'plant', t: 'I want to put the plant down', tool: ['source'], b: '<b>Plant</b> <kbd>P</kbd> \u2014 boiler, '
+      + 'chiller, heat pump. Its kW is the stream total and its height is the datum risers are measured from. '
+      + 'Several plants onto one header are one primary: set duty / assist / standby on each; standby is sized '
+      + 'to take over but carries nothing at design.', done: () => S.nodes.some(n => n.type === 'source') },
+    { id: 'load', t: 'I want to add a fan coil, AHU or radiator', tool: ['consumer'], b: '<b>Load</b> <kbd>C</kbd>. '
+      + 'Type kW or l/s, \u0394T, coil drop, control valve and height. Left at 0 it shares what is left of the '
+      + 'plant stream after anything pinned. Its <b>kind</b> (FCU, AHU, rad, plate\u2026) names the box. Tick '
+      + '<b>4-pipe</b> for heating and cooling into one unit \u2014 two circuits, two feeds, two terminal sets.',
+      done: () => S.nodes.some(n => n.type === 'consumer') },
+    { id: 'size', t: 'The box is not the size of the real unit', tool: ['select'], b: 'Every component has a real '
+      + 'width and depth in metres and an angle \u2014 the placement block on its panel. A pipe joins it where you land '
+      + 'it on the outline, so a connection on the side of a big AHU is real metres. At <b>true size</b> the box is '
+      + 'drawn at that footprint at every zoom; the <b>1:1</b> button by the zoom toggles the legible minimum back.' },
+    { id: 'llh', t: 'There is a low loss header or a heat exchanger on the job', tool: ['llh', 'hx', 'buffer'], b: '<b>Header</b> <kbd>L</kbd>, '
+      + '<b>HX</b> <kbd>X</kbd> or <b>Buffer</b> <kbd>U</kbd> \u2014 place it between the plant and the loads. A <b>header</b> or a <b>heat exchanger</b> splits the job into separate '
+      + 'circuits, each with its own pump and its own index run \u2014 their losses never add. The header holds the '
+      + 'primary above the secondary by a margin (10% by default) and is sized on velocity alone at 0.4 m/s. An HX '
+      + 'is two waters: set both sides\u2019 flow and return. A <b>four-port buffer</b> is asked whether it separates; '
+      + 'a two-port one sits in the line.', done: () => S.nodes.some(isVessel) },
+    { id: 'inline', t: 'I need an inline pump or a dry cooler', tool: ['pump', 'drycooler'], b: '<b>Pump</b> <kbd>K</kbd> '
+      + 'sits in the line and shows the flow through it, that circuit\u2019s index head and an indicative kW \u2014 paste the '
+      + 'real curve in the simulator. <b>Cooler</b> <kbd>Y</kbd> with two runs is in the line; with one run off the '
+      + 'return it is an off-loader, sized from the reject kW, and it is not another load on the plant.' },
+  ] },
+  { id: 'pipe', title: 'Tracing the runs', tips: [
+    { id: 'trace', t: 'I want to draw a run', tool: ['trace'], b: '<b>Trace</b> <kbd>T</kbd> asks <b>Two pipes</b> or '
+      + '<b>Single pipe</b> (flow or return) at once. Start on a component or a hover-dot, click each corner, finish on '
+      + 'the ring on the edge of a load or vessel \u2014 that click joins and drops the pencil. <b>Double-click</b>, '
+      + '<kbd>Enter</kbd> or <b>Finish</b> stops in mid-air with a tee to carry on from. <kbd>Esc</kbd> abandons the run.',
+      done: () => S.segs.length > 0 },
+    { id: 'branch', t: 'I want to tee off a run I have already drawn', tool: ['trace'], b: 'There is no Tee tool. '
+      + 'Hover the run and dots appear on the pipe you can branch from \u2014 a pair shows flow and return. Click a '
+      + 'dot to start or finish there. A branch can only leave from a component, a tee or a traced corner, so a '
+      + 'run cannot end up joined a few centimetres from where it looks joined. A tee takes the height of the run it '
+      + 'lands on.' },
+    { id: 'corners', t: 'The corner will not go where I want it', tool: ['trace', 'tape'], b: 'Corners pull to 90\u00b0 '
+      + 'and 45\u00b0 because pipework runs square far more often than not. Hold <kbd>Alt</kbd> for one free corner \u2014 '
+      + 'it is costed as a made set of two 90\u00b0 elbows. <kbd>O</kbd>, or the switch in the hint bar, turns the lock '
+      + 'off for a job traced free-form; <kbd>Alt</kbd> then gives one square corner.' },
+    { id: 'height', t: 'This section runs at a different height', tool: ['trace'], b: 'Change <b>Height</b> in the '
+      + 'hint bar \u2014 or press <kbd>[</kbd> and <kbd>]</kbd> \u2014 before a click and that click starts a riser. Every '
+      + 'point on a run carries its own height. Click the run afterwards for the point-by-point list, <b>Level the '
+      + 'whole run</b> and <b>Set all to\u2026</b>. 3D check draws the walk.' },
+    { id: 'conlen', t: 'It is a concept \u2014 how does it know the length?', tool: ['trace', 'select'], b: 'It does not '
+      + 'until you tell it. Click the run and type <b>Installed length</b>; the inspector focuses that box. Rise is '
+      + 'not added on top of a typed length. The schedule and the PDF say the lengths were typed.' },
+    { id: 'buffer', t: 'The run goes through a two-port buffer', tool: ['trace'], b: 'The buffer is a piece of the '
+      + 'main. Click its edge ring to finish the run and drop the pencil, then start again from the far edge for the '
+      + 'run out. The load past it is still on that pipe. A second run onto a load already reached is the other leg '
+      + 'of the same circuit, not a loop.' },
+    { id: 'names', t: 'What do PM, SM, SB and B mean?', b: '<span class="mono">PM1, PM2</span> primary mains from '
+      + 'the plant; <span class="mono">SM</span> secondary mains leaving a header or exchanger; <span class="mono">SB</span> '
+      + 'sub-mains that still feed more than one load; <span class="mono">B</span> branches into a load; '
+      + '<span class="mono">X</span> not connected. A main cut by a tee is numbered in sections, '
+      + '<span class="mono">PM1.1, PM1.2</span>. <b>Rename runs</b> renumbers the lot.' },
+    { id: 'lengths', t: 'Which length is which?', b: '<b>Route</b> is one way on the plan. <b>Riser</b> is one way '
+      + 'vertical \u2014 the height difference plus any extra rise over an obstruction. <b>Pipe m</b> is every leg as '
+      + 'installed: route plus riser, times the number of pipes. That is what gets ordered.' },
+  ] },
+  { id: 'sel', title: 'Selecting, moving and copying', tips: [
+    { id: 'lasso', t: 'I want to pick up several fan coils at once', tool: ['select'], b: 'With <b>Select</b> '
+      + '<kbd>V</kbd> armed, drag a box on open paper to lasso everything inside it \u2014 loads, the runs into them, '
+      + 'the valves on those runs. A component counts by its centre; a run when all of it is inside, or when both '
+      + 'its end components are. <kbd>Shift</kbd>-click adds one thing or takes it out; <kbd>Ctrl</kbd>+<kbd>A</kbd> '
+      + 'selects everything; <kbd>Esc</kbd> clears.' },
+    { id: 'move', t: 'I want to move the lot together', tool: ['select'], b: 'Drag any selected thing and the whole '
+      + 'selection moves; runs whose other end was not selected stretch to keep up. Arrow keys nudge by 50 mm, '
+      + '<kbd>Shift</kbd> + arrow by 0.5 m. <b>Move by</b> in the inspector moves an exact distance in metres.' },
+    { id: 'dup', t: 'I want a copy of this set-out beside the original', tool: ['select'], b: '<b>Duplicate</b> in the '
+      + 'inspector, <kbd>D</kbd> or <kbd>Ctrl</kbd>+<kbd>D</kbd>, sets a copy down beside the selection with new names '
+      + 'and tags, its own runs and valves, still selected and ready to drag into place. A run whose other end was '
+      + 'not selected gets a tee at that end in the copy.' },
+    { id: 'clip', t: 'I want the same set-out on the next floor', tool: ['select'], b: '<kbd>Ctrl</kbd>+<kbd>C</kbd> '
+      + 'copies the selection to a clipboard kept in metres, so it survives a change of drawing and a different '
+      + 'scale. <kbd>Ctrl</kbd>+<kbd>V</kbd> pastes it under the cursor (or mid-view) on whatever sheet is loaded. '
+      + 'The clipboard is kept in this browser, so it works between two open tabs.' },
+    { id: 'del', t: 'I want to delete or undo', b: '<kbd>Delete</kbd> removes what is selected \u2014 one thing or a '
+      + 'whole lasso. Deleting a tee joining two runs in line heals them back into one and keeps every metre. '
+      + '<b>Undo</b> <kbd>Ctrl</kbd>+<kbd>Z</kbd> steps back \u2014 a rotation of the sheet included.' },
+  ] },
+  { id: 'valves', title: 'Valves', tips: [
+    { id: 'palette', t: 'I want to put valves on the pipework', tool: ['valve'], b: '<b>Valves</b> <kbd>F</kbd> opens the palette. '
+      + 'Pick a valve or a set and click the run it goes on: it snaps to the pipe and stays armed, so a line of '
+      + 'isolating valves is a line of clicks. Nothing is dropped when a run reaches a load \u2014 place them, or use '
+      + '<b>Fit the terminal set</b> on the load. Double-click empty paper to zoom in on the spot first.',
+      done: () => S.items.length > 0 },
+    { id: 'termset', t: 'Which set goes with which control valve?', b: 'A <b>PICV</b> holds its own flow, so it never '
+      + 'gets a regulating valve. <b>2-port</b> and <b>3-port</b> control valves are the regulation on that run, so nor '
+      + 'do they. Only the two <b>bypass</b> arrangements carry a DRV or a commissioning set. Changing the control '
+      + 'valve on a load refits that run\u2019s set.' },
+    { id: 'iso', t: 'Why did my ball valve turn into a butterfly?', b: 'adi standard: ball valves to DN50, butterfly '
+      + 'from DN65 up. A set places the pseudo-type <span class="mono">iso</span>, which resolves against the run\u2019s '
+      + 'size on every solve, so a branch that grows past the break refits itself. Pick a specific valve from the '
+      + 'palette and it stays put.' },
+    { id: 'kpa', t: 'Where does the valve pressure figure come from?', b: 'Each valve carries a <b>typical kPa</b> '
+      + '(the figure a supplier quotes) until you type a real one; or switch the project to the <b>K basis</b> in '
+      + 'Pipe &amp; basis and it is worked from the run\u2019s size and velocity. PICV, control valves and DPCVs are a '
+      + 'fixed kPa on the drop they hold. Anything marked <em>assumed</em> is a placeholder.' },
+  ] },
+  { id: 'view', title: 'Views, labels and 3D', tips: [
+    { id: 'zoom', t: 'I need to zoom or move about', tool: ['pan'], b: '<kbd>Ctrl</kbd> + wheel zooms about the '
+      + 'cursor; <b>+</b>, <b>\u2212</b> and <b>Fit</b> are in the corner. <b>Double-click</b> empty paper zooms in on '
+      + 'that spot (<kbd>Shift</kbd> to zoom out). Drag empty paper, hold <kbd>Space</kbd>, or use the middle button '
+      + 'to pan. Zoom goes to 60\u00d7, where valve symbols are life size.' },
+    { id: 'truesize', t: 'The FCUs look huge when I zoom out', b: 'They should not: at <b>true size</b> (the default) '
+      + 'every component and pipe is the size it is on the drawing at every zoom, in 3D and on the PDF \u2014 an FCU '
+      + 'is a small box when a whole floor is on screen. If someone has turned it off, the <b>1:1</b> button by the '
+      + 'zoom, or Pipe &amp; basis, turns it back on.' },
+    { id: 'labels', t: 'The plan is unreadable zoomed out', b: 'The <b>Aa</b> button beside the zoom cycles what is '
+      + 'written on the plan: automatic (names only when zoomed out past about 22 px to the metre), everything, or '
+      + 'nothing but the warnings. Reports always carry everything.' },
+    { id: '3d', t: 'I want to check the heights', b: '<b>3D check</b> lifts the network off the sheet: plant, mains '
+      + 'and drops at their real heights and real footprints, flow red and return blue, a staff to read heights off. '
+      + 'Drag to orbit, exaggerate the vertical to read small differences. Read-only \u2014 come back to the plan to '
+      + 'change a point height.' },
+    { id: 'tape', t: 'I just want to measure something', tool: ['tape'], b: '<b>Tape</b> <kbd>M</kbd> is a ruler, '
+      + 'not a pipe. Click along the route with the same square lock, <kbd>Alt</kbd> frees one corner, double-click '
+      + 'or <b>Finish</b> to keep it. Plan metres only \u2014 no rise, not on the schedule.',
+      done: () => (S.measures || []).length > 0 },
+  ] },
+  { id: 'out', title: 'Check, schedule and sending on', tips: [
+    { id: 'check', t: 'Check says a run does not reach, or has no size', b: 'The click near the load did not join it. '
+      + 'Finish on the ringed edge of the box, not a free point beside it. <b>Tidy</b> repairs what is unambiguous '
+      + '\u2014 a tee sitting on a component, two tees in one place, a run of no length \u2014 and never moves a '
+      + 'component or changes a duty.' },
+    { id: 'header', t: 'Check says the header mixes the wrong way', b: 'The primary flow is below the secondary, so '
+      + 'return is coming back up the header into the flow. Raise the margin or the primary l/s on the header panel. '
+      + 'Under 5% is thin; over 25% is over-pumped.' },
+    { id: 'sched', t: 'I want the schedule or the PDF', b: '<b>Schedule</b> opens the pipework and valve schedules '
+      + 'with the index run written out. <b>PDF</b> opens a printable report: the plan at true size, the 3D isometric, '
+      + 'the pipework schedule, metres by material and size, fittings counted off the geometry, placed valves and '
+      + 'the index run. Save as PDF in the print dialog.' },
+    { id: 'send', t: 'I am done \u2014 how does it get to the sizer?', b: '<b>Send to Sizer</b> runs Check first, then '
+      + 'opens the sizer with the project already in it and downloads a copy of the file as the fallback. The sizer '
+      + 'should show the same sizes and fitting counts and tick the same index run. If a size differs, look at '
+      + 'roughness first.' },
+    { id: 'stuck', t: 'The board stopped responding', b: 'A redraw that fails is caught and reported in a toast rather '
+      + 'than freezing the sheet; <kbd>Ctrl</kbd>+<kbd>Z</kbd> steps back past whatever caused it and <b>Save</b> keeps a '
+      + 'copy. If a drag is stuck, click once on empty paper or press <kbd>Esc</kbd>. The autosave in this browser '
+      + 'has the last state either way.' },
+  ] },
+];
+const HELP_KEYS = [
+  ['V H S M', 'select, pan, scale, tape'],
+  ['P C T F', 'plant, load, trace, valves'],
+  ['L U X', 'header, buffer, heat exchanger'],
+  ['K Y', 'inline pump, dry cooler'],
+  ['Alt', 'held: flip the corner lock for one click'],
+  ['Shift', 'held with a click: add to or remove from the selection; with an arrow, nudge 0.5 m'],
+  ['O', 'square corners on or off'],
+  ['[ ]', 'while tracing: lower or raise the next point\u2019s height; otherwise turn the sheet a quarter'],
+  ['R', 'rotate the sheet'],
+  ['Enter / Esc', 'finish or abandon the run being traced; Esc also clears the selection and closes help'],
+  ['Arrows', 'nudge what is selected 50 mm'],
+  ['D / Ctrl+D', 'duplicate what is selected'],
+  ['Ctrl+A', 'select everything on the sheet'],
+  ['Ctrl+C / Ctrl+V', 'copy the selection; paste it here or on the next drawing'],
+  ['Delete', 'delete what is selected'],
+  ['Ctrl+Z', 'undo'],
+  ['Ctrl+S', 'save the take-off'],
+  ['Ctrl + wheel', 'zoom about the cursor'],
+  ['? or F1', 'this help'],
+];
+
+function helpTipHtml(tip, secId, cls) {
+  return '<div class="tip' + (cls ? ' ' + cls : '') + '" id="tip-' + secId + '-' + tip.id + '" data-tools="'
+    + (tip.tool || []).join(' ') + '"><h4>' + tip.t + '</h4><p>' + tip.b + '</p></div>';
+}
+function helpKeysHtml() {
+  return '<table class="mini keys-tbl"><tbody>'
+    + HELP_KEYS.map(r => '<tr><td class="mono">' + esc(r[0]) + '</td><td>' + esc(r[1]) + '</td></tr>').join('')
+    + '</tbody></table>';
+}
+function helpMatches(tip, q) {
+  if (!q) return true;
+  const hay = (tip.t + ' ' + tip.b).replace(/<[^>]+>/g, ' ').toLowerCase();
+  return q.split(/\s+/).filter(Boolean).every(w => hay.indexOf(w) >= 0);
+}
+
+/* ---- the start page ---- */
+function buildBoardHelp() {
+  const box = el('boardHelp');
+  if (!box) return;
+  box.innerHTML = '<h2>What do I do when\u2026 \u2014 every tip, also under <b>? Help</b> at any time</h2>'
+    + '<div class="help-grid">'
+    + HELP.map(sec => '<div class="help-sec"><h3>' + sec.title + '</h3>'
+        + sec.tips.map(t => helpTipHtml(t, 'b' + sec.id)).join('') + '</div>').join('')
+    + '<div class="help-sec keys"><h3>Keys</h3>' + helpKeysHtml() + '</div>'
+    + '</div>';
+}
+
+/* ---- the help pane ---- */
+function renderHelp() {
+  const q = (el('helpQ').value || '').trim().toLowerCase();
+  let html = '';
+  HELP.forEach(sec => {
+    const tips = sec.tips.filter(t => helpMatches(t, q));
+    if (!tips.length) return;
+    html += '<h3 id="help-sec-' + sec.id + '">' + sec.title + '</h3>'
+      + tips.map(t => helpTipHtml(t, sec.id, (t.tool || []).indexOf(tool) >= 0 ? 'now' : '')).join('');
+  });
+  if (!q || 'keys shortcuts keyboard'.indexOf(q) >= 0
+      || HELP_KEYS.some(r => (r[0] + ' ' + r[1]).toLowerCase().indexOf(q) >= 0)) {
+    html += '<h3 id="help-sec-keys">Keys</h3>' + helpKeysHtml();
+  }
+  if (!html) html = '<div class="empty">Nothing matches \u201c' + esc(q) + '\u201d. Try a shorter word.</div>';
+  el('helpBody').innerHTML = html;
+  el('helpNav').innerHTML = HELP.map(sec => '<button data-sec="' + sec.id + '">' + sec.title + '</button>').join('')
+    + '<button data-sec="keys">Keys</button>';
+  el('helpNav').querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    el('helpQ').value = ''; renderHelp();
+    const h = el('help-sec-' + b.dataset.sec);
+    if (h) h.scrollIntoView({ block: 'start' });
+  }));
+}
+function toggleHelp(on) {
+  const pane = el('helpPane');
+  const want = on === undefined ? !pane.classList.contains('on') : !!on;
+  pane.classList.toggle('on', want);
+  if (want) {
+    el('helpQ').value = '';
+    renderHelp();
+    // the armed tool's tips first, so the help opens on what you are doing
+    const now = el('helpBody').querySelector('.tip.now');
+    if (now) now.scrollIntoView({ block: 'start' });
+    else el('helpBody').scrollTop = 0;
+    el('helpQ').focus();
+  }
+}
+
 function stepsDialog() {
   const s = S.settings;
   const done = {
@@ -8899,13 +10054,19 @@ function stepsDialog() {
     + 'Heights are how the risers and their elbows get counted \u2014 each point on a run has its own, '
     + 'and each plant or load has one too. Change the box in the hint bar before a click to start a '
     + 'riser; 3D check is where you read them.</div>'
+    + '<div class="note">Stuck on something in particular? <b>? Help</b> in the bar (or <kbd>?</kbd> / '
+    + '<kbd>F1</kbd>) is the same guidance as a searchable list of situations \u2014 lasso, duplicate, '
+    + 'header, riser, valve set, true size \u2014 and it opens on whatever tool is armed.</div>'
+    + '<h4 style="margin:14px 0 4px;font-size:12px">Keys</h4>' + helpKeysHtml()
     + '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'
     + '<button class="btn go" id="stGo">' + (S.setupDone ? 'Close' : 'Set the pipe basis') + '</button>'
+    + '<button class="btn ghost" id="stHelp">Open Help</button>'
     + (S.setupDone ? '' : '<button class="btn ghost" onclick="closeModal()">Later</button>') + '</div>');
   el('stGo').addEventListener('click', () => {
     closeModal();
     if (!S.setupDone) setTimeout(projectDialog, 120);
   });
+  el('stHelp').addEventListener('click', () => { closeModal(); toggleHelp(true); });
 }
 
 function projectDialog() {
@@ -8948,6 +10109,13 @@ function projectDialog() {
     +   'Branch from an edge ring or from the dots that appear when you hover a run. '
     +   'A pair shows flow and return; a single pipe shows one. '
     +   'Hold <kbd>Alt</kbd> for a free-angle corner.</span></label>'
+    + '<label class="fld" style="display:flex;align-items:center;gap:9px">'
+    +   '<input type="checkbox" id="pTrue" ' + (s.trueSize !== false ? 'checked' : '')
+    +   ' style="width:17px;height:17px;min-height:0"><span style="margin:0;text-transform:none;letter-spacing:0;font-size:12.5px;color:var(--ink)">'
+    +   'Draw components and pipes at true size at every zoom, in 3D and on the PDF. '
+    +   'An FCU is then the size it is on the drawing when you zoom out, not a box held '
+    +   'legible on screen. Off gives the legible minimum back. The <kbd>1:1</kbd> button '
+    +   'by the zoom does the same.</span></label>'
 
     + '<div style="font-family:Azeret Mono,monospace;font-size:9px;letter-spacing:.13em;'
     +   'text-transform:uppercase;color:var(--muted);margin:14px 0 6px">Valves</div>'
@@ -9037,6 +10205,8 @@ function projectDialog() {
     s.ortho = el('pOrtho').checked;
     el('orthoChk').checked = s.ortho;            // the hint bar says the same thing
     s.snapPoints = el('pSnap').checked;
+    s.trueSize = el('pTrue').checked;
+    refreshTrueSizeBtn();
     s.autoTermSet = el('pAutoSet').checked;
     s.valveBasis = el('pVBasis').value;
     s.setSpacingM = Math.max(0.05, parseFloat(el('pSetSp').value) || 0.6);
@@ -9166,13 +10336,18 @@ function offsetPoly3D(poly, off) {
   return out;
 }
 
-function cuboid3D(c, w, d, h, fill, stroke) {
-  const x0 = c.X - w / 2, x1 = c.X + w / 2;
-  const y0 = c.Y - d / 2, y1 = c.Y + d / 2;
+function cuboid3D(c, w, d, h, fill, stroke, rot) {
+  /* Turned in plan by the component's own angle, so the box in 3D sits the
+     way the box on the drawing does. The plan's y runs down the sheet and
+     the world's Y is the same axis, so the angle carries straight across. */
+  const r = (rot || 0) * Math.PI / 180;
+  const co = Math.cos(r), si = Math.sin(r);
+  const at = (lx, ly, z) => ({ X: c.X + lx * co - ly * si, Y: c.Y + lx * si + ly * co, Z: z });
+  const x0 = -w / 2, x1 = w / 2, y0 = -d / 2, y1 = d / 2;
   const z0 = c.Z - h / 2, z1 = c.Z + h / 2;
   const v = [
-    { X: x0, Y: y0, Z: z0 }, { X: x1, Y: y0, Z: z0 }, { X: x1, Y: y1, Z: z0 }, { X: x0, Y: y1, Z: z0 },
-    { X: x0, Y: y0, Z: z1 }, { X: x1, Y: y0, Z: z1 }, { X: x1, Y: y1, Z: z1 }, { X: x0, Y: y1, Z: z1 },
+    at(x0, y0, z0), at(x1, y0, z0), at(x1, y1, z0), at(x0, y1, z0),
+    at(x0, y0, z1), at(x1, y0, z1), at(x1, y1, z1), at(x0, y1, z1),
   ];
   const f = [[0,1,2,3],[4,5,6,7],[0,1,5,4],[1,2,6,5],[2,3,7,6],[3,0,4,7]];
   // the top face catches the light, the sides are progressively darker
@@ -9180,6 +10355,31 @@ function cuboid3D(c, w, d, h, fill, stroke) {
   return f.map((ix, i) => ({
     t: 'poly', pts: ix.map(k => v[k]), fill, stroke, over: shade[i],
   }));
+}
+
+/* The box a component gets in 3D at true size: the plan footprint and angle
+   from `nodeSizeM()` / `nodeRot()`, and a nominal height per type. A header
+   or a buffer stands up — the plan draws its length down the sheet, so that
+   length becomes the height and the shell's diameter is the footprint. */
+const NODE_3D_HEIGHT = {
+  source: 1.6, consumer: 0.35, hx: 1.2, pump: 0.6, drycooler: 1.1,
+};
+const CONSUMER_3D_HEIGHT = { ahu: 1.8, fcu: 0.3, rad: 0.6, plate: 1.2, drycooler: 1.1, other: 0.5, load: 0.35 };
+function node3DHeight(n) {
+  if (n.type === 'consumer') {
+    const h = CONSUMER_3D_HEIGHT[n.kind];
+    return h || NODE_3D_HEIGHT.consumer;
+  }
+  return NODE_3D_HEIGHT[n.type] || 0.5;
+}
+function node3DFoot(n) {
+  const m = nodeSizeM(n);
+  const rot = nodeRot(n);
+  if (n.type === 'llh' || n.type === 'buffer') {
+    const dia = Math.min(m.x, m.y), len = Math.max(m.x, m.y);
+    return { w: dia, d: dia, h: len, rot };
+  }
+  return { w: m.x, d: m.y, h: node3DHeight(n), rot };
 }
 
 /* Everything to be drawn, in metres. Built once when the view opens; the
@@ -9201,26 +10401,34 @@ function build3D() {
       c: major ? '#c6c0b2' : '#dfdad0', w: major ? 1.3 : 1 });
   }
 
+  const trueSize = trueSizeOn();
+
   // ---- runs ----
   S.segs.forEach(sg => {
     const poly = segPoly3D(sg, W);
     if (poly.length < 2) return;
     const od = sg.pipe ? sg.pipe.od : 40;
     const lw = clamp(1.4 + od / 60, 1.6, 7);
+    /* At true size the stroke is the pipe's outside diameter in metres, and
+       the painter turns that into pixels at whatever the camera is doing;
+       `w` is then only the hairline floor. */
+    const wM = trueSize && sg.pipe ? od / 1000 : 0;
     const single = sg.mode === 'single';
     if (single) {
-      items.push({ t: 'line', pts: poly, w: lw,
+      items.push({ t: 'line', pts: poly, w: wM ? 1.2 : lw, wM,
         c: sg.leg === 'return' ? '#2471a3' : '#c0392b', seg: sg.id, bundle: sg.id, leg: 0,
         centre: poly });
     } else {
       /* Each section's offset is local to its own centreline. Both legs of
          this pair are tagged with the same bundle so the painter keeps them
          together — drawing all the reds then all the blues is what made two
-         pairs that meet look like a stack of one colour and then the other. */
-      const off = Math.max(0.12, od / 1000 * 1.5);
-      items.push({ t: 'line', pts: offsetPoly3D(poly, -off), w: lw, c: '#c0392b',
+         pairs that meet look like a stack of one colour and then the other.
+         At true size the legs sit on the same 0.35 m centres the plan uses,
+         held clear of their own diameter on a big main. */
+      const off = trueSize ? Math.max(PAIR_REAL_M / 2, od / 1000 * 0.8) : Math.max(0.12, od / 1000 * 1.5);
+      items.push({ t: 'line', pts: offsetPoly3D(poly, -off), w: wM ? 1.2 : lw, wM, c: '#c0392b',
         seg: sg.id, bundle: sg.id, leg: 0, centre: poly });
-      items.push({ t: 'line', pts: offsetPoly3D(poly, off), w: lw, c: '#2471a3',
+      items.push({ t: 'line', pts: offsetPoly3D(poly, off), w: wM ? 1.2 : lw, wM, c: '#2471a3',
         seg: sg.id, bundle: sg.id, leg: 1, centre: poly });
     }
     if (sg.orphan) items.push({ t: 'line', pts: poly, w: 1.4, c: '#bb3b2e', dash: [4, 4] });
@@ -9245,19 +10453,28 @@ function build3D() {
     if (Math.abs(z) > 0.01) items.push({ t: 'line', pts: [foot, c], w: 1.2, c: '#9c958a', dash: [3, 3] });
 
     if (n.type === 'junction') {
-      cuboid3D(c, bs * 0.3, bs * 0.3, bs * 0.3 * zk, '#f4f2ec', '#4a5059').forEach(f => items.push(f));
+      const jb = trueSize ? 0.16 : bs * 0.3;
+      cuboid3D(c, jb, jb, jb * zk, '#f4f2ec', '#4a5059').forEach(f => items.push(f));
       if (V3.labels) labels.push({
-        at: { X: c.X, Y: c.Y, Z: c.Z + bs * 0.2 * zk }, text: '', sub: fmt(z, 2) + ' m', small: true });
+        at: { X: c.X, Y: c.Y, Z: c.Z + jb * 0.7 * zk }, text: '', sub: fmt(z, 2) + ' m', small: true });
       return;
     }
-    /* A header stands up rather than lying down, which is what it does on
-       site and what makes it recognisable from any angle in here. */
+    /* At true size every casing is the footprint the plan draws — the same
+       `nodeSizeM()` and the same angle — so the two views cannot disagree
+       about how big a unit is or which way it faces. Its height is nominal:
+       nothing here is told how tall a real unit is, so each type stands off
+       a figure that reads right beside the others (`node3DHeight()`). Off
+       true size the old extent-scaled boxes are kept. */
+    const ft = trueSize ? node3DFoot(n) : null;
     if (n.type === 'pump' || n.type === 'drycooler') {
       const pump = n.type === 'pump';
-      cuboid3D(c, bs * (pump ? 0.7 : 1.25), bs * (pump ? 0.7 : 0.8), bs * 0.55 * zk,
-        '#ffffff', n.reached ? '#4a5059' : '#bb3b2e').forEach(f => items.push(f));
+      const bw = ft ? ft.w : bs * (pump ? 0.7 : 1.25);
+      const bd = ft ? ft.d : bs * (pump ? 0.7 : 0.8);
+      const bh = ft ? ft.h : bs * 0.55;
+      cuboid3D(c, bw, bd, bh * zk, '#ffffff', n.reached ? '#4a5059' : '#bb3b2e', ft ? ft.rot : 0)
+        .forEach(f => items.push(f));
       if (V3.labels) labels.push({
-        at: { X: c.X, Y: c.Y, Z: c.Z + bs * 0.35 * zk },
+        at: { X: c.X, Y: c.Y, Z: c.Z + (bh / 2 + 0.1) * zk },
         text: String(n.name || ''), sub: fmt(z, 2) + ' m',
       });
       return;
@@ -9266,11 +10483,14 @@ function build3D() {
       const sep = isSeparator(n);
       const hx = n.type === 'hx';
       const tall = n.type === 'llh' ? 1.9 : hx ? 0.85 : 1.5;
-      cuboid3D(c, bs * (hx ? 1.35 : 0.8), bs * (hx ? 0.7 : 0.8), bs * tall * zk,
-        sep ? '#fdf3dd' : '#ffffff', n.reached ? (sep ? '#b07d12' : '#4a5059') : '#bb3b2e')
+      const bw = ft ? ft.w : bs * (hx ? 1.35 : 0.8);
+      const bd = ft ? ft.d : bs * (hx ? 0.7 : 0.8);
+      const bh = ft ? ft.h : bs * tall;
+      cuboid3D(c, bw, bd, bh * zk,
+        sep ? '#fdf3dd' : '#ffffff', n.reached ? (sep ? '#b07d12' : '#4a5059') : '#bb3b2e', ft ? ft.rot : 0)
         .forEach(f => items.push(f));
       if (V3.labels) labels.push({
-        at: { X: c.X, Y: c.Y, Z: c.Z + bs * tall * 0.6 * zk },
+        at: { X: c.X, Y: c.Y, Z: c.Z + (bh / 2 + 0.1) * zk },
         text: String(n.name || ''),
         sub: (hx ? ((hxKind(n) === 'shell' ? 'S&T  ' : 'plate  ')
                     + fmt(hxPriSup(n), 0) + '/' + fmt(hxPriRet(n), 0)
@@ -9283,10 +10503,13 @@ function build3D() {
     const src = n.type === 'source';
     const fill = src ? '#39404b' : (n.reached ? '#ffffff' : '#fdecea');
     const stroke = src ? '#1c1f26' : (n.reached ? '#2f8f5b' : '#bb3b2e');
-    cuboid3D(c, bs * (src ? 1.5 : 1.05), bs * (src ? 1.1 : 0.75), bs * (src ? 1.1 : 0.7) * zk, fill, stroke)
+    const bw = ft ? ft.w : bs * (src ? 1.5 : 1.05);
+    const bd = ft ? ft.d : bs * (src ? 1.1 : 0.75);
+    const bh = ft ? ft.h : bs * (src ? 1.1 : 0.7);
+    cuboid3D(c, bw, bd, bh * zk, fill, stroke, ft ? ft.rot : 0)
       .forEach(f => items.push(f));
     if (V3.labels) labels.push({
-      at: { X: c.X, Y: c.Y, Z: c.Z + bs * (src ? 0.62 : 0.4) * zk },
+      at: { X: c.X, Y: c.Y, Z: c.Z + (bh / 2 + 0.12) * zk },
       text: String(n.name || ''), sub: fmt(z, 2) + ' m',
     });
   });
@@ -9390,7 +10613,13 @@ function draw3DOnto(cv) {
   sorted.sort((a, b) => (b._d - a._d) || ((a.bundle || 0) - (b.bundle || 0)) || ((a.leg || 0) - (b.leg || 0)));
 
   sorted.forEach(it => {
-    if (it.t === 'line') { stroke(it.pts, it.c, it.w, it.dash); return; }
+    if (it.t === 'line') {
+      /* a pipe at true size is its outside diameter at this camera scale,
+         never thinner than the hairline it was given */
+      const w = it.wM ? Math.max(it.w, it.wM * V3.s) : it.w;
+      stroke(it.pts, it.c, w, it.dash);
+      return;
+    }
     ctx.beginPath();
     it.pts.forEach((p, i) => { const q = screen3D(p); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
     ctx.closePath();
@@ -9574,14 +10803,54 @@ function canPendingPan() {
 
 const sc = el('scroller');
 
+/* The nearest thing under the cursor with Select armed, in the order a click
+   is meant: a valve (small, on top of a run), a connection ring, a component,
+   a tape, then the run itself. */
+function hitAny(p) {
+  const it = hitItem(p);
+  if (it) return { kind: 'item', id: it.id, item: it };
+  const pt = hitPort(p);
+  if (pt) return { kind: 'seg', id: pt.seg.id, port: pt };
+  const n = hitNode(p);
+  if (n) return { kind: 'node', id: n.id, node: n };
+  const tm = hitMeasure(p);
+  if (tm) return { kind: 'tape', id: tm.measure.id };
+  const h = hitSeg(p);
+  if (h) return { kind: 'seg', id: h.seg.id };
+  return null;
+}
+
 sc.addEventListener('pointerdown', ev => {
   if (!S.img) return;
   setOverride(ev.altKey);
   const p = toDwg(ev);
 
-  if (tool === 'pan' || ev.button === 1 || ev.shiftKey || spacePan) {
+  /* Shift-drag pans everywhere except Select, where Shift-click is what adds
+     a thing to the selection; Shift on open paper there still pans. */
+  if (tool === 'pan' || ev.button === 1 || spacePan || (ev.shiftKey && tool !== 'select')) {
     beginPan(ev);
     return;
+  }
+
+  if (tool === 'select' && ev.button === 0) {
+    const hit = hitAny(p);
+    if (ev.shiftKey) {
+      if (hit) { toggleInSelection(hit.kind, hit.id); return; }
+      beginPan(ev); return;
+    }
+    // anything that is part of a selection of several picks the lot up
+    if (hit && sel && sel.kind === 'multi' && isSel(hit.kind, hit.id)) {
+      drag = { group: true, ox: p.x, oy: p.y, moved: false };
+      sc.setPointerCapture(ev.pointerId);
+      return;
+    }
+    if (!hit) {
+      /* Open paper: a drag from here is a lasso; a plain click clears the
+         selection. Which it was is only known when the pointer comes up. */
+      marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, moved: false };
+      sc.setPointerCapture(ev.pointerId);
+      return;
+    }
   }
 
   if (canPendingPan() && !drawingHit(p)) {
@@ -9714,7 +10983,35 @@ function applyToolPointer(ev, p) {
   }
 }
 
+/* Pointer moves arrive faster than the sheet can be redrawn, and every
+   redraw solves the whole take-off. Coalescing them to one redraw a frame is
+   what keeps a big job from feeling stuck under the cursor. */
+let renderReq = 0;
+function scheduleRender() {
+  if (renderReq) return;
+  renderReq = requestAnimationFrame(() => { renderReq = 0; render(); });
+}
+
 sc.addEventListener('pointermove', ev => {
+  if (S.img) lastPointer = toDwg(ev);
+  // ---- the lasso ----
+  if (marquee) {
+    const p = toDwg(ev);
+    marquee.x1 = p.x; marquee.y1 = p.y;
+    if (!marquee.moved && dist({ x: marquee.x0, y: marquee.y0 }, p) * zoom > 4) marquee.moved = true;
+    if (marquee.moved) scheduleRender();
+    return;
+  }
+  // ---- carrying a whole selection ----
+  if (drag && drag.group) {
+    const p = toDwg(ev);
+    if (!drag.moved) pushUndo('move ' + multiSummary(selAsMulti()));
+    drag.moved = true;
+    moveSelection(p.x - drag.ox, p.y - drag.oy);
+    drag.ox = p.x; drag.oy = p.y;
+    scheduleRender();
+    return;
+  }
   if (pendingPan && !panning) {
     const dx = ev.clientX - pendingPan.sx, dy = ev.clientY - pendingPan.sy;
     if (Math.hypot(dx, dy) > 6) {
@@ -9736,10 +11033,11 @@ sc.addEventListener('pointermove', ev => {
     if (n) {
       const port = portAt(n, p, { edge: true, magnet: false });
       if (port) {
+        if (!drag.moved) pushUndo('move a connection');
         if (d.end === 'a') d.seg.aPort = port; else d.seg.bPort = port;
         reseatSeg(d.seg);
         drag.moved = true;
-        render();
+        scheduleRender();
       }
     }
     return;
@@ -9752,7 +11050,10 @@ sc.addEventListener('pointermove', ev => {
     const sg = it ? segById(it.seg) : null;
     if (it && sg) {
       const r = nearestOnPoly(sg.pts, p);
-      if (r) { it.t = polyTOf(sg.pts, r.i, r.t); drag.moved = true; render(); }
+      if (r) {
+        if (!drag.moved) pushUndo('move ' + (it.tag || 'a valve'));
+        it.t = polyTOf(sg.pts, r.i, r.t); drag.moved = true; scheduleRender();
+      }
     }
     return;
   }
@@ -9760,11 +11061,14 @@ sc.addEventListener('pointermove', ev => {
     const p = toDwg(ev);
     const n = nodeById(drag.id);
     if (n) {
+      // the snapshot goes in before the first movement, so one Ctrl+Z puts
+      // the component back where it was picked up
+      if (!drag.moved) pushUndo('move ' + (n.name || nodeWord(n)));
       n.x = p.x - drag.dx; n.y = p.y - drag.dy;
       drag.moved = true;
       // every run into it stays on the point of it that it was joined to
       reseatNode(n);
-      render();
+      scheduleRender();
     }
     return;
   }
@@ -9772,11 +11076,17 @@ sc.addEventListener('pointermove', ev => {
   // cursor whether or not anything is under way
   if (draft || tool === 'trace' || tool === 'valve' || tool === 'tape') {
     setOverride(ev.altKey);
-    hoverPt = toDwg(ev); render();
+    hoverPt = toDwg(ev); scheduleRender();
   }
 });
 
 function endPointer(ev) {
+  if (marquee) {
+    const m = marquee;
+    marquee = null;
+    if (m.moved) selectInBox(m);
+    else { sel = null; closeInspector(); }
+  }
   if (pendingPan && !panning) {
     const held = pendingPan;
     pendingPan = null;
@@ -9789,6 +11099,16 @@ function endPointer(ev) {
 }
 sc.addEventListener('pointerup', endPointer);
 sc.addEventListener('pointercancel', endPointer);
+/* Losing the window mid-drag — Alt-Tab, a notification, the file dialog —
+   means the pointer never comes up here. Without this the drag carried on
+   with no button held, whatever was grabbed followed the mouse, and the tool
+   looked stuck until the next click. */
+function dropPointerState() {
+  const had = drag || panning || pendingPan || marquee;
+  drag = null; panning = null; pendingPan = null; marquee = null;
+  syncPanCursor();
+  if (had) render();
+}
 
 function zoomInto(ev, factor) {
   const scroller = el('scroller');
@@ -9857,11 +11177,28 @@ document.addEventListener('keydown', ev => {
   if ((ev.ctrlKey || ev.metaKey) && k === 'z') { ev.preventDefault(); undo(); return; }
   if ((ev.ctrlKey || ev.metaKey) && k === 's') { ev.preventDefault(); saveProject(); return; }
   if ((ev.ctrlKey || ev.metaKey) && k === 'o') { ev.preventDefault(); el('fProj').click(); return; }
+  if ((ev.ctrlKey || ev.metaKey) && k === 'a') { if (S.img) { ev.preventDefault(); selectAll(); } return; }
+  if ((ev.ctrlKey || ev.metaKey) && k === 'c') { if (sel) { ev.preventDefault(); copySelection(); } return; }
+  if ((ev.ctrlKey || ev.metaKey) && k === 'v') { ev.preventDefault(); pasteClipboard(); return; }
+  if ((ev.ctrlKey || ev.metaKey) && k === 'd') { ev.preventDefault(); duplicateSelection(); return; }
+  if (ev.key === '?' || ev.key === 'F1') { ev.preventDefault(); toggleHelp(); return; }
 
   if (ev.key === 'Escape') {
     if (el('modal').classList.contains('on')) { closeModal(); return; }
+    if (el('helpPane').classList.contains('on')) { toggleHelp(false); return; }
+    // a drag or a lasso that lost its pointerup is dropped here too
+    if (drag || panning || pendingPan || marquee) { dropPointerState(); render(); return; }
     if (draft) { draft = null; render(); return; }
+    if (sel) { sel = null; closeInspector(); return; }
     setTool('select'); return;
+  }
+  /* Arrow keys nudge what is selected: 50 mm, or 0.5 m with Shift. Without
+     a scale, a few pixels. */
+  if (/^Arrow(Left|Right|Up|Down)$/.test(ev.key) && sel && !V3.on) {
+    const step = S.pxPerM > 0 ? S.pxPerM * (ev.shiftKey ? 0.5 : 0.05) : (ev.shiftKey ? 20 : 3);
+    const dx = ev.key === 'ArrowLeft' ? -step : ev.key === 'ArrowRight' ? step : 0;
+    const dy = ev.key === 'ArrowUp' ? -step : ev.key === 'ArrowDown' ? step : 0;
+    if (nudgeSelection(dx, dy)) { ev.preventDefault(); return; }
   }
   if (ev.code === 'Space' || ev.key === ' ') {
     ev.preventDefault();
@@ -9879,18 +11216,18 @@ document.addEventListener('keydown', ev => {
   const t = TOOLS.find(x => x.key.toLowerCase() === k);
   if (t) { setTool(t.id); return; }
 
-  if (k === 'd' && sel && sel.kind === 'item') {
-    const b = el('insDupItem');
-    if (b) b.click();
-    return;
-  }
-  if (k === 'd' && sel && sel.kind === 'node') {
-    const n = nodeById(sel.id);
-    if (n && n.type === 'consumer') {
-      clipboard = Object.assign({}, n);
-      select('node', addConsumer({ x: n.x + 90, y: n.y + 50 }, n).id);
-      toast('Duplicated \u2014 drag it into place');
+  if (k === 'd' && sel) {
+    if (sel.kind === 'item') { const b = el('insDupItem'); if (b) b.click(); return; }
+    if (sel.kind === 'node') {
+      const n = nodeById(sel.id);
+      if (n && n.type === 'consumer') {
+        clipboard = Object.assign({}, n);
+        select('node', addConsumer({ x: n.x + 90, y: n.y + 50 }, n).id);
+        toast('Duplicated \u2014 drag it into place');
+        return;
+      }
     }
+    duplicateSelection();
     return;
   }
   if (k === 'o') {
@@ -9932,6 +11269,12 @@ el('fDwg').addEventListener('change', e => { loadDrawingFile(e.target.files[0]);
 
 el('bProj').addEventListener('click', projectDialog);
 el('bSteps').addEventListener('click', stepsDialog);
+el('bHelp').addEventListener('click', () => toggleHelp());
+el('helpClose').addEventListener('click', () => toggleHelp(false));
+// a new search reads from its first hit, not from wherever the pane was scrolled to
+el('helpQ').addEventListener('input', () => { renderHelp(); el('helpBody').scrollTop = 0; });
+el('helpQ').addEventListener('keydown', ev => { if (ev.key === 'Escape') { toggleHelp(false); ev.stopPropagation(); } });
+buildBoardHelp();
 el('bSave').addEventListener('click', saveProject);
 el('bLoad').addEventListener('click', () => el('fProj').click());
 /* One reader for every route a project file arrives by — the Open button,
@@ -10036,6 +11379,10 @@ el('zRot').addEventListener('click', rotateDialog);
 el('zIn').addEventListener('click', () => setZoom(zoom * 1.2));
 el('zOut').addEventListener('click', () => setZoom(zoom / 1.2));
 el('zFit').addEventListener('click', zoomFit);
+el('zLbl').addEventListener('click', cycleLabels);
+el('zTrue').addEventListener('click', toggleTrueSize);
+refreshLabelBtn();
+refreshTrueSizeBtn();
 
 el('modal').addEventListener('click', e => { if (e.target === el('modal')) closeModal(); });
 
@@ -10061,7 +11408,7 @@ window.addEventListener('keyup',   e => {
   setOverride(e.altKey);
   if (e.code === 'Space' || e.key === ' ') { spacePan = false; syncPanCursor(); }
 });
-window.addEventListener('blur',    () => { setOverride(false); spacePan = false; syncPanCursor(); });
+window.addEventListener('blur',    () => { setOverride(false); spacePan = false; dropPointerState(); });
 
 window.addEventListener('resize', () => {
   if (S.img) render();
