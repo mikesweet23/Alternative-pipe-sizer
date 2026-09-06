@@ -783,6 +783,134 @@ the drawing, the scale, the traced geometry and any tape measures
   actually on the pipe, and on a big main the bore is wider than the 0.35 m
   leg centres, so `pairOffsetDraw()` also holds the legs clear of their own
   width.
+  **At true size (the default, see below) the pipe and the component skip the
+  on-screen constant**: `pipeWidthDraw()` is the outside diameter with a
+  1.5 px hairline as the only floor, and `nodeDrawHalf()` is the real
+  footprint with a 7 px dot as the only floor. The symbols and the leg gap
+  keep their legibility minimum, because a valve you cannot see is a valve
+  you cannot place.
+- **True size is the default, on the plan, in 3D and on the PDF.** A 600 mm
+  fan coil is 600 mm at every zoom; zoomed out over a floor it is a dot, not
+  a box covering the room. `trueSizeOn()` reads `settings.trueSize`
+  (default `true`); `TRUE_SIZE_MIN_PX` (7) is the floor. The `1:1` button by
+  the zoom and the switch in Pipe & basis turn it off, which gives back the
+  old `max(real, legible)` rule for anyone who wants a whole-floor overview
+  to read as boxes. Three consequences that all have to hold together:
+  - **Labels back off.** At true size the names and duties would pile on top
+    of each other when zoomed out, so `labelLevel()` returns 2 (everything),
+    1 (names only) or 0 (warnings only): `settings.labels` is `auto` (drops
+    to names only below about 22 px to the metre on screen), `all` or
+    `none`, cycled by the `Aa` button (`LABEL_MODES`, `cycleLabels()`).
+    `nodeLabelPlan()` puts the writing inside the box only when it fits and
+    above and below it otherwise — a duty across a 9 px dot is a smudge.
+    `exporting` forces level 2, so a plate always carries every label.
+  - **3D draws the footprint.** `build3D()` asks `node3DFoot()` for each
+    component's real width, depth and rotation (`cuboid3D()` takes the
+    angle) and `node3DHeight()` for a nominal height by type; pipes carry
+    `wM`, their outside diameter in metres. Off, it falls back to the old
+    legible boxes.
+  - **The PDF has a plan plate at a fixed scale.** `planCrop()` finds the
+    extent of the take-off, `planImage()` draws the plan onto an off-screen
+    canvas at a zoom chosen to fit the page, with `exporting` set so the
+    labels come out, then puts the live zoom and scroll back. It is section 2
+    of the report; the isometric is section 3. `exportTracePDFReport()` is
+    `async` and opens the blank window **first**, before either plate is
+    drawn, or the browser's popup blocker eats a window opened after an
+    await.
+  Hit-testing at true size: a fan coil is under 40 px across at 100%, so its
+  connection ring and the terminal valve on its edge were both within tolerance
+  of its centre and swallowed every click on the unit. `nodeUnder(p)` says
+  which unit's drawn box the cursor is inside; `hitPort()` shrinks its
+  tolerance to the outer 45% of that box and `hitItem()` gives a valve up
+  unless it is within 5 px, so the middle of a box belongs to the box.
+- **Several things at once — the lasso.** With **Select** armed, a drag on
+  open paper draws a marquee (`marquee`, drawn in `render()`), and on release
+  `selectInBox()` builds `sel = { kind: 'multi', nodes, segs, items,
+  measures }`. Shift-click toggles one thing in or out
+  (`toggleInSelection()`), Ctrl+A takes the lot (`selectAll()`). A multi of
+  one thing settles to that thing and of nothing to `null`
+  (`settleMulti()`), and **everything that draws a picked state asks
+  `isSel(kind, id)`** rather than reading `sel.kind` / `sel.id`, so one thing
+  and many look the same. `inspectorTarget()` returns `null` for a multi;
+  the inspector shows `multiForm()` instead — move by metres, set every load
+  to a height, Duplicate, Copy, Delete. The same model as AC Trace.
+  What the box takes: a component by its centre; a run when every point is
+  inside, or both its end components are, **or it lands on a selected
+  component and everything but its far end is inside** — that last case is
+  the branch into a fan coil that leaves a tee on the main just outside the
+  box you drew round the unit; the valves sitting on any run taken; a tape
+  when all of it is. Drag any picked component and `drag.group` moves the
+  whole selection (`moveSelection()`): runs whose other end is not selected
+  are stretched, because `syncSegEnds()` at the top of the next `solve()`
+  puts their ends back on the components that did not move. One undo step.
+  **A pack is the selection lifted off the sheet** (`packSelection()`): in
+  metres about the centre of its own extent, not pixels of this drawing, so
+  it can be set down on a sheet at another scale — the next floor — and
+  come out the same size. `NODE_DERIVED` / `SEG_DERIVED` are stripped from
+  it, the same lists a save strips. `placePack(pack, cx, cy)` sets it down:
+  fresh ids; "AHU 3" becomes the next free AHU (`nthName`), a tee stays a
+  tee; a run whose far end was not packed gets **a tee at that end, minted
+  once per unselected end and shared** — two branches that left one tee
+  still leave one tee in the copy, and that tee is where the copy is joined
+  to the main; `aPort` / `bPort` are dropped on those ends; valves get the
+  next free tag; runs are renumbered. Ctrl+D / Duplicate
+  (`duplicateSelection()`) places the copy one gap to the right and selects
+  it ready to drag. Ctrl+C (`copySelection()`) keeps the pack in memory
+  **and** in `localStorage['adi-pipe-trace-clipboard']` (`CLIP_KEY`), so a
+  row of fan coils copied on one floor pastes on the next after Change
+  drawing, or tomorrow; Ctrl+V (`pasteClipboard()`) lands it under the
+  cursor (`lastPointer`, kept by `pointermove`) or mid-view (`pasteAt()`).
+  Arrow keys nudge 50 mm, Shift+arrows 500 mm (`nudgeSelection()`); a run of
+  presses within 1.5 s is one undo step. Delete on a multi
+  (`deleteMulti()`) removes the runs into any deleted component as well and
+  drops a tee left joining nothing. A single valve on its own still
+  duplicates along its run the old way; a multi that is only valves cannot
+  be packed, and says to select the run too.
+  `hitAny(p)` is the one place Select resolves what is under the cursor —
+  item, port, node, tape, run, in that order.
+- **A long session must not lock up.** The report was that after a while
+  nothing responded. Five causes were found and each is now guarded, and
+  the guards are worth keeping in mind when adding anything that renders,
+  drags or saves:
+  - **Every `pointermove` called `render()`, and every render solves the
+    whole take-off.** On a big job the moves arrived faster than the solve,
+    the queue grew, and the sheet fell behind the cursor until it looked
+    stuck. `scheduleRender()` coalesces them to one redraw per animation
+    frame; use it from anything that fires continuously, `render()` from
+    anything discrete.
+  - **`autosave()` serialised the drawing every 900 ms.** Several megabytes
+    of base64 on every pause, and on a sheet too big for the store it threw
+    the same quota error every time. It now writes the take-off each time
+    and the drawing only when `autosavedImg` (token, length, angle) has
+    changed — once per sheet. A drawing that alone will not fit is dropped
+    from the store and the take-off is still kept.
+  - **Losing the window mid-drag left the drag alive.** Alt-Tab, a
+    notification or the file dialog meant `pointerup` never arrived, and
+    whatever was grabbed followed the mouse with no button held.
+    `dropPointerState()` on `blur` clears `drag`, `panning`, `pendingPan`
+    and `marquee`; Escape does the same.
+  - **A throw inside `render()` froze the overlay silently.** A run with a
+    bad point, a valve on a run that has gone — the SVG stopped updating and
+    the reason was only in the console. `render()` now wraps
+    `renderInner()`: it logs, drops the pointer state, and says so on
+    screen once (`renderFailedMsg`), pointing at Ctrl+Z.
+  - **`undoSuspended` could be left on.** `asOneUndo()` set it true and
+    false; a throw inside, or one grouped action inside another, left it
+    stuck and every edit after that was unrecoverable. It now saves and
+    restores what it found in a `finally`, `deleteSelected()` and
+    `placeArmedAt()` go through it rather than toggling the flag by hand,
+    and the drag handlers push undo *before* the first move rather than
+    after it. The inspector's change handler checks `sel` before reading
+    it, because the inspector can close while an input still has focus.
+- **Help is a list, not a manual.** `HELP` is an array of tips written as
+  "I want to…" / "The … will not…" with a body, the tools they belong to
+  and, for the quick-start, a `done` check; `HELP_KEYS` is the shortcuts.
+  The `? Help` button, `?` and F1 open the pane (`toggleHelp()`), the search
+  box filters on title and body (`helpMatches()`, `renderHelp()`) and the
+  tips for the armed tool are lit (`setTool()` re-renders the pane when it
+  is open). The start page lists the same tips (`buildBoardHelp()`), and the
+  How it works dialog (`stepsDialog()`) points at the pane. Add a tip when a
+  question comes up twice; do not write prose anywhere else.
 - **Zoom goes to 60×.** It was 8×, which is not close enough to place a valve
   against the fitting next to it — the symbols are life size long before that
   and there was nowhere further to go.
@@ -1313,6 +1441,41 @@ fluid basis has moved with them.
     set.
 20. Toggle l/s ↔ m³/h: 111 l/s reads 400 m³/h. The stored number does not
     change.
+
+### If you touched selection, true size, the help or anything that renders
+
+`node tests/trace-multiselect-truesize-help-test.mjs` checks the source for
+every piece named below and that this document still describes them. Then, in
+the browser:
+
+21. **Lasso.** Plant, a tee on the main, three fan coils each on its own
+    branch, terminal sets fitted. With Select, drag a box round the lower two
+    units so the tee is *outside* it: the toast says 2 loads, 2 runs and the
+    valves; the two branches are picked even though their tees are not.
+    Shift-click the third unit — on its body, not its ring — and it joins;
+    Shift-click again and it leaves. Drag one of the picked units: all of it
+    moves together, the branches stretch from the tee, the selection
+    survives, and one Ctrl+Z puts it all back.
+22. **Duplicate and paste.** Ctrl+D: two new fan coils with new names (FCU 4,
+    FCU 5), their branches, their valves with new tags, and **one** new tee
+    where the main was — not two. Ctrl+C, move the mouse, Ctrl+V: the same
+    lands under the cursor. Reload the page: Ctrl+V still pastes. Arrow keys
+    move the group 50 mm, Delete removes it whole, Ctrl+A takes everything,
+    Esc clears.
+23. **True size.** At 30% and at 300% a 1.6 m unit is 1.6 m × `pxPerM` wide
+    in drawing pixels — the same number; the pipe is its OD when zoomed in.
+    `1:1` off: zoomed out, the unit is held at the legible minimum. `Aa`
+    cycles the labels; zoomed out on auto the duties are gone and the names
+    stay. 3D shows the same footprints, turned as on the plan. PDF: the plan
+    plate is a real PNG at a fixed scale with every label on it, section 2,
+    and the isometric is section 3.
+24. **Help.** `?` opens the pane; type "duplicate" and the copy tip is what
+    is left; arm Trace and its tips light up; Esc closes it.
+25. **Stability.** Push a run with `pts: null` onto `S.segs` and call
+    `render()`: no throw, one toast, the board still answers. Set `drag` and
+    `marquee` by hand and fire `blur` on the window: both are `null`. Call
+    `autosave()` twice: `autosavedImg` does not change and the drawing is not
+    re-serialised.
 
 ---
 
