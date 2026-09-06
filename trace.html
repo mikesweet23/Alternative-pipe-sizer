@@ -3369,8 +3369,19 @@ function selectInBox(bx) {
   S.nodes.forEach(n => { if (inside(n)) m.nodes.push(n.id); });
   const nodeIn = {};
   m.nodes.forEach(id => { nodeIn[id] = true; });
+  /* A run is in when all of it is, or when both its end components are — or
+     when it lands on a selected component and everything but its far end is
+     inside. That last case is the one that matters here: the branch into a
+     fan coil leaves a tee on the main just outside the box you drew round
+     the unit. It comes with the unit, stretching from the tee when the
+     group is moved and getting a tee of its own when it is copied. */
   S.segs.forEach(s => {
-    if ((s.pts || []).length && (s.pts.every(inside) || (nodeIn[s.a] && nodeIn[s.b]))) m.segs.push(s.id);
+    const pts = s.pts || [];
+    if (!pts.length) return;
+    if (pts.every(inside) || (nodeIn[s.a] && nodeIn[s.b])) { m.segs.push(s.id); return; }
+    const butLast = pts.slice(0, -1), butFirst = pts.slice(1);
+    if ((nodeIn[s.a] && !nodeIn[s.b] && butLast.every(inside))
+     || (nodeIn[s.b] && !nodeIn[s.a] && butFirst.every(inside))) m.segs.push(s.id);
   });
   const segIn = {};
   m.segs.forEach(id => { segIn[id] = true; });
@@ -3522,12 +3533,15 @@ function placePack(pack, cx, cy) {
     idMap[n.id] = c.id;
     out.nodes.push(c.id);
   });
+  /* Two branches that left one tee still leave one tee in the copy: the
+     stand-in is minted once per unselected end and shared. */
   const endFor = (endId, at) => {
     if (idMap[endId] !== undefined) return idMap[endId];
     const j = { id: nid(), type: 'junction', x: at.x, y: at.y, name: 'Tee',
                 height: at.h !== undefined ? at.h : defaultPipeHeight() };
     S.nodes.push(j);
     out.nodes.push(j.id);
+    idMap[endId] = j.id;
     return j.id;
   };
   const segMap = {};
@@ -3725,8 +3739,29 @@ function toDwg(ev) {
 /* ---------- what's under the cursor ---------- */
 /* A connection ring under the cursor. Small, so it gets a generous tolerance
    and is tested before the component it sits on. */
+/* The component whose drawn box the point is inside, if any. Used to keep a
+   click on the body of a small unit for the unit: at true size a fan coil is
+   under 40 px across at 100%, so its connection ring and the valve on its
+   edge are both within a normal tolerance of its centre and used to swallow
+   the click. */
+function nodeUnder(p) {
+  let best = null;
+  S.nodes.forEach(n => {
+    if (!isUnitCasing(n)) return;
+    const h = nodeDrawHalf(n);
+    const r = -nodeRot(n) * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+    const dx = p.x - n.x, dy = p.y - n.y;
+    const lx = Math.abs(dx * cs - dy * sn), ly = Math.abs(dx * sn + dy * cs);
+    if (lx < h.hw && ly < h.hh) {
+      const inset = Math.min(h.hw - lx, h.hh - ly);   // how far in from the nearest edge
+      if (!best || inset > best.inset) best = { node: n, inset, h };
+    }
+  });
+  return best;
+}
 function hitPort(p, tolPx) {
   const tol = (tolPx || 16) / zoom;
+  const under = nodeUnder(p);
   let best = null;
   S.segs.forEach(sg => {
     ['a', 'b'].forEach(end => {
@@ -3735,7 +3770,11 @@ function hitPort(p, tolPx) {
       const n = nodeById(end === 'a' ? sg.a : sg.b);
       if (!n || !nodeHalfPx(n)) return;
       const d = dist(portPoint(n, port, { draw: true }), p);
-      if (d < tol && (!best || d < best.d)) best = { d, seg: sg, end, nodeId: n.id };
+      /* From inside the box the ring only takes the click when the cursor is
+         close to the edge; the middle of the box belongs to the box. */
+      const t = (under && under.node === n)
+        ? Math.min(tol, Math.max(3 / zoom, Math.min(under.h.hw, under.h.hh) * 0.45)) : tol;
+      if (d < t && (!best || d < best.d)) best = { d, seg: sg, end, nodeId: n.id };
     });
   });
   return best;
@@ -4073,6 +4112,10 @@ function hitItem(p, tolPx) {
     const d = dist(q, p);
     if (d < tol && (!best || d < best.d)) best = { d, item: it };
   });
+  /* A click inside a small unit's box is for the unit, unless the valve is
+     right under the cursor — a terminal valve on the edge of a true-size fan
+     coil used to take every click on the coil. */
+  if (best && best.d > 5 / zoom && nodeUnder(p)) return null;
   return best ? best.item : null;
 }
 
