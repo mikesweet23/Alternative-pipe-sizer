@@ -3353,7 +3353,26 @@ function toggleInSelection(kind, id) {
   const l = multiList(m, kind);
   if (!l) return;
   const i = l.indexOf(id);
-  if (i >= 0) l.splice(i, 1); else l.push(id);
+  const adding = i < 0;
+  if (adding) l.push(id); else l.splice(i, 1);
+  /* A load and the branch into it are one set-out, the same as the lasso
+     takes them: Shift-clicking a fan coil brings its branch and the valves
+     on it, and takes them away again. */
+  const n = kind === 'node' ? nodeById(id) : null;
+  if (n && n.type === 'consumer') {
+    S.segs.forEach(s => {
+      if (s.a !== id && s.b !== id) return;
+      const si = m.segs.indexOf(s.id);
+      if (adding && si < 0) m.segs.push(s.id);
+      if (!adding && si >= 0) m.segs.splice(si, 1);
+      S.items.forEach(it => {
+        if (it.seg !== s.id) return;
+        const ii = m.items.indexOf(it.id);
+        if (adding && ii < 0) m.items.push(it.id);
+        if (!adding && ii >= 0) m.items.splice(ii, 1);
+      });
+    });
+  }
   sel = settleMulti(m);
   if (sel) openInspector(); else closeInspector();
   render();
@@ -3371,14 +3390,22 @@ function selectInBox(bx) {
   m.nodes.forEach(id => { nodeIn[id] = true; });
   /* A run is in when all of it is, or when both its end components are — or
      when it lands on a selected component and everything but its far end is
-     inside. That last case is the one that matters here: the branch into a
-     fan coil leaves a tee on the main just outside the box you drew round
-     the unit. It comes with the unit, stretching from the tee when the
-     group is moved and getting a tee of its own when it is copied. */
+     inside — or, whatever its shape, when it is the branch into a selected
+     load. That last case is the one that matters here: the branch into a fan
+     coil leaves a tee on the main outside the box you drew round the unit,
+     and the corner under that tee is usually outside it too. The branch is
+     part of the unit's set-out: it comes with the unit, stretching from the
+     tee when the group is moved and getting a tee of its own when it is
+     copied. A main between a selected plant and an unselected header is not
+     taken that way — only a run that ends at a load. */
+  const isLoad = id => { const n = nodeById(id); return !!n && n.type === 'consumer'; };
   S.segs.forEach(s => {
     const pts = s.pts || [];
     if (!pts.length) return;
     if (pts.every(inside) || (nodeIn[s.a] && nodeIn[s.b])) { m.segs.push(s.id); return; }
+    if ((nodeIn[s.a] && !nodeIn[s.b] && isLoad(s.a)) || (nodeIn[s.b] && !nodeIn[s.a] && isLoad(s.b))) {
+      m.segs.push(s.id); return;
+    }
     const butLast = pts.slice(0, -1), butFirst = pts.slice(1);
     if ((nodeIn[s.a] && !nodeIn[s.b] && butLast.every(inside))
      || (nodeIn[s.b] && !nodeIn[s.a] && butFirst.every(inside))) m.segs.push(s.id);
@@ -3428,10 +3455,19 @@ function moveSelection(dx, dy) {
   m.segs.forEach(id => movePts(segById(id)));
   m.measures.forEach(id => movePts(measureById(id)));
 }
+/* The extent of the selection, components by their drawn box rather than
+   their centre — two fan coils one above the other have a width, so a copy
+   set down beside them is beside them and not on top. */
 function selectionBox() {
   const m = selAsMulti();
   const xs = [], ys = [];
-  m.nodes.forEach(id => { const n = nodeById(id); if (n) { xs.push(n.x); ys.push(n.y); } });
+  m.nodes.forEach(id => {
+    const n = nodeById(id);
+    if (!n) return;
+    const h = isUnitCasing(n) ? nodeDrawHalf(n) : { hw: 0, hh: 0 };
+    const r = Math.hypot(h.hw, h.hh);   // any rotation fits inside this
+    xs.push(n.x - r, n.x + r); ys.push(n.y - r, n.y + r);
+  });
   const take = r => { if (r && r.pts) r.pts.forEach(p => { xs.push(p.x); ys.push(p.y); }); };
   m.segs.forEach(id => take(segById(id)));
   m.measures.forEach(id => take(measureById(id)));
@@ -11235,7 +11271,8 @@ el('bProj').addEventListener('click', projectDialog);
 el('bSteps').addEventListener('click', stepsDialog);
 el('bHelp').addEventListener('click', () => toggleHelp());
 el('helpClose').addEventListener('click', () => toggleHelp(false));
-el('helpQ').addEventListener('input', renderHelp);
+// a new search reads from its first hit, not from wherever the pane was scrolled to
+el('helpQ').addEventListener('input', () => { renderHelp(); el('helpBody').scrollTop = 0; });
 el('helpQ').addEventListener('keydown', ev => { if (ev.key === 'Escape') { toggleHelp(false); ev.stopPropagation(); } });
 buildBoardHelp();
 el('bSave').addEventListener('click', saveProject);

@@ -835,11 +835,18 @@ the drawing, the scale, the traced geometry and any tape measures
   the inspector shows `multiForm()` instead — move by metres, set every load
   to a height, Duplicate, Copy, Delete. The same model as AC Trace.
   What the box takes: a component by its centre; a run when every point is
-  inside, or both its end components are, **or it lands on a selected
-  component and everything but its far end is inside** — that last case is
-  the branch into a fan coil that leaves a tee on the main just outside the
-  box you drew round the unit; the valves sitting on any run taken; a tape
-  when all of it is. Drag any picked component and `drag.group` moves the
+  inside, or both its end components are, or it lands on a selected
+  component and everything but its far end is inside, **or it is the branch
+  into a selected load, whatever its shape** — a box drawn tight round a fan
+  coil leaves the tee on the main and the corner under it outside, and the
+  branch is part of the unit's set-out, so it comes anyway (a main between
+  a selected plant and an unselected header does not: only a run ending at
+  a load); the valves sitting on any run taken; a tape when all of it is.
+  Shift-clicking a load follows the same rule and brings or removes its
+  branch and valves with it. `selectionBox()` measures components by their
+  drawn box, not their centre, so two units one above the other have a
+  width and a copy lands beside them rather than on top — the first
+  walkthrough put it 14 px to the right. Drag any picked component and `drag.group` moves the
   whole selection (`moveSelection()`): runs whose other end is not selected
   are stretched, because `syncSegEnds()` at the top of the next `solve()`
   puts their ends back on the components that did not move. One undo step.
@@ -1449,16 +1456,19 @@ every piece named below and that this document still describes them. Then, in
 the browser:
 
 21. **Lasso.** Plant, a tee on the main, three fan coils each on its own
-    branch, terminal sets fitted. With Select, drag a box round the lower two
-    units so the tee is *outside* it: the toast says 2 loads, 2 runs and the
-    valves; the two branches are picked even though their tees are not.
-    Shift-click the third unit — on its body, not its ring — and it joins;
-    Shift-click again and it leaves. Drag one of the picked units: all of it
+    branch, terminal sets fitted. With Select, drag a box tight round the
+    lower two units so the tee *and the corner under it* are outside: the
+    toast says 2 loads, 2 runs and 8 valves; the two branches are picked
+    even though nothing but their last leg is in the box.
+    Shift-click the third unit — on its body, not its ring — and it joins
+    with its branch and valves (3 loads, 3 runs, 12 valves); Shift-click
+    again and all three leave. Drag one of the picked units: all of it
     moves together, the branches stretch from the tee, the selection
     survives, and one Ctrl+Z puts it all back.
 22. **Duplicate and paste.** Ctrl+D: two new fan coils with new names (FCU 4,
     FCU 5), their branches, their valves with new tags, and **one** new tee
-    where the main was — not two. Ctrl+C, move the mouse, Ctrl+V: the same
+    where the main was — not two. Select two units and no run and Ctrl+D
+    again: the copy lands clear to the right, not on top. Ctrl+C, move the mouse, Ctrl+V: the same
     lands under the cursor. Reload the page: Ctrl+V still pastes. Arrow keys
     move the group 50 mm, Delete removes it whole, Ctrl+A takes everything,
     Esc clears.
