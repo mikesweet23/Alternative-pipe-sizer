@@ -1458,8 +1458,11 @@ function pushUndo(label) {
    entry between them rather than one each. */
 function asOneUndo(label, fn) {
   pushUndo(label);
+  // restored rather than cleared, so one grouped action inside another does
+  // not switch the outer group's suspension off half-way through
+  const was = undoSuspended;
   undoSuspended = true;
-  try { return fn(); } finally { undoSuspended = false; refreshUndoBtn(); }
+  try { return fn(); } finally { undoSuspended = was; refreshUndoBtn(); }
 }
 function undo() {
   const step = undoStack.pop();
@@ -3148,6 +3151,379 @@ let sel = null;               // { kind:'node'|'seg', id }
 let draft = null;             // in-progress trace or calibration
 let hoverPt = null;
 let clipboard = null;         // duplicated component settings
+let marquee = null;           // the lasso being dragged out with Select: { x0, y0, x1, y1, moved }
+
+/* ==========================================================================
+   SEVERAL THINGS AT ONCE
+   A lasso dragged out over open paper, or Shift-clicks, build a selection of
+   many components, runs, valves and tapes:
+     { kind: 'multi', nodes: [], segs: [], items: [], measures: [] }
+   Everything that draws a "picked" state asks isSel(), so one thing selected
+   and many look the same on the sheet. The same model as AC Trace, so a
+   row of fan coils with their branches can be picked up, copied and set
+   down together instead of one box at a time.
+   ========================================================================== */
+function emptyMulti() { return { kind: 'multi', nodes: [], segs: [], items: [], measures: [] }; }
+function multiList(m, kind) {
+  return kind === 'node' ? m.nodes : kind === 'seg' ? m.segs
+       : kind === 'item' ? m.items : kind === 'tape' ? m.measures : null;
+}
+function multiCount(m) { return m.nodes.length + m.segs.length + m.items.length + m.measures.length; }
+function isSel(kind, id) {
+  if (!sel) return false;
+  if (sel.kind === 'multi') { const l = multiList(sel, kind); return !!l && l.indexOf(id) >= 0; }
+  return sel.kind === kind && sel.id === id;
+}
+/* A multi selection of one thing is just that thing; of nothing, nothing. */
+function settleMulti(m) {
+  const c = multiCount(m);
+  if (!c) return null;
+  if (c === 1) {
+    if (m.nodes.length) return { kind: 'node', id: m.nodes[0] };
+    if (m.segs.length) return { kind: 'seg', id: m.segs[0] };
+    if (m.items.length) return { kind: 'item', id: m.items[0] };
+    return { kind: 'tape', id: m.measures[0] };
+  }
+  return m;
+}
+/* The current selection as a multi, whatever it is now. */
+function selAsMulti() {
+  const m = emptyMulti();
+  if (!sel) return m;
+  if (sel.kind === 'multi') {
+    m.nodes = sel.nodes.slice(); m.segs = sel.segs.slice();
+    m.items = sel.items.slice(); m.measures = sel.measures.slice();
+    return m;
+  }
+  const l = multiList(m, sel.kind);
+  if (l) l.push(sel.id);
+  return m;
+}
+function toggleInSelection(kind, id) {
+  const m = selAsMulti();
+  const l = multiList(m, kind);
+  if (!l) return;
+  const i = l.indexOf(id);
+  if (i >= 0) l.splice(i, 1); else l.push(id);
+  sel = settleMulti(m);
+  if (sel) openInspector(); else closeInspector();
+  render();
+}
+/* Everything the lasso encloses: a component by its centre, a run or a tape
+   when every point of it is inside or when both of its end components are,
+   and the valves sitting on a run that is taken. */
+function selectInBox(bx) {
+  const x0 = Math.min(bx.x0, bx.x1), x1 = Math.max(bx.x0, bx.x1);
+  const y0 = Math.min(bx.y0, bx.y1), y1 = Math.max(bx.y0, bx.y1);
+  const inside = p => p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+  const m = emptyMulti();
+  S.nodes.forEach(n => { if (inside(n)) m.nodes.push(n.id); });
+  const nodeIn = {};
+  m.nodes.forEach(id => { nodeIn[id] = true; });
+  S.segs.forEach(s => {
+    if ((s.pts || []).length && (s.pts.every(inside) || (nodeIn[s.a] && nodeIn[s.b]))) m.segs.push(s.id);
+  });
+  const segIn = {};
+  m.segs.forEach(id => { segIn[id] = true; });
+  S.items.forEach(it => { if (segIn[it.seg]) m.items.push(it.id); });
+  (S.measures || []).forEach(t => { if ((t.pts || []).length && t.pts.every(inside)) m.measures.push(t.id); });
+  sel = settleMulti(m);
+  if (sel) openInspector(); else closeInspector();
+  render();
+  if (sel && sel.kind === 'multi') toast(multiSummary(sel) + ' selected \u2014 drag any of them to move the lot');
+}
+function selectAll() {
+  const m = emptyMulti();
+  m.nodes = S.nodes.map(n => n.id);
+  m.segs = S.segs.map(s => s.id);
+  m.items = S.items.map(it => it.id);
+  m.measures = (S.measures || []).map(t => t.id);
+  sel = settleMulti(m);
+  if (sel) openInspector(); else closeInspector();
+  render();
+}
+function plural(n, one, many) { return n + ' ' + (n === 1 ? one : (many || one + 's')); }
+function multiSummary(m) {
+  const nodes = m.nodes.map(nodeById).filter(Boolean);
+  const bits = [];
+  const count = (n, one, many) => { if (n) bits.push(plural(n, one, many)); };
+  count(nodes.filter(n => n.type === 'source').length, 'plant item');
+  count(nodes.filter(n => n.type === 'consumer').length, 'load');
+  count(nodes.filter(n => isVessel(n)).length, 'vessel');
+  count(nodes.filter(n => n.type === 'pump' || n.type === 'drycooler').length, 'inline item');
+  count(nodes.filter(n => n.type === 'junction').length, 'tee');
+  count(m.segs.length, 'run');
+  count(m.items.length, 'valve');
+  count(m.measures.length, 'tape');
+  return bits.join(', ') || 'nothing';
+}
+/* Move everything selected by (dx, dy) in drawing pixels. Runs whose end
+   components are not in the selection are stretched, because syncSegEnds()
+   at the top of the next solve puts their ends back on the components that
+   did not move. Valves ride on their run as a fraction, so they need nothing. */
+function moveSelection(dx, dy) {
+  const m = selAsMulti();
+  m.nodes.forEach(id => { const n = nodeById(id); if (n) { n.x += dx; n.y += dy; } });
+  const movePts = r => { if (r && r.pts) r.pts.forEach(p => { p.x += dx; p.y += dy; }); };
+  m.segs.forEach(id => movePts(segById(id)));
+  m.measures.forEach(id => movePts(measureById(id)));
+}
+function selectionBox() {
+  const m = selAsMulti();
+  const xs = [], ys = [];
+  m.nodes.forEach(id => { const n = nodeById(id); if (n) { xs.push(n.x); ys.push(n.y); } });
+  const take = r => { if (r && r.pts) r.pts.forEach(p => { xs.push(p.x); ys.push(p.y); }); };
+  m.segs.forEach(id => take(segById(id)));
+  m.measures.forEach(id => take(measureById(id)));
+  if (!xs.length) return null;
+  const x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+  const y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+  return { x0, y0, x1, y1, w: x1 - x0, h: y1 - y0 };
+}
+
+/* ---------- a pack: a selection lifted off the sheet ----------
+   Everything selected, in METRES about the centre of its own extent rather
+   than in pixels of this drawing, so it can be set down on a sheet at a
+   different scale — the next floor — and come out the same size. The old
+   ids stay in it so run ends and valves can be tied back together when it
+   lands. Derived figures are stripped; solve() works them out again. */
+function packSelection(m) {
+  const box = selectionBox();
+  if (!box) return null;
+  const s = S.pxPerM > 0 ? S.pxPerM : 1;
+  const cx = (box.x0 + box.x1) / 2, cy = (box.y0 + box.y1) / 2;
+  const rel = p => {
+    const q = { x: (p.x - cx) / s, y: (p.y - cy) / s };
+    if (p.h !== undefined) q.h = p.h;
+    return q;
+  };
+  const strip = (o, keys) => { keys.forEach(k => delete o[k]); return o; };
+  const pack = { app: 'adi-pipe-trace', kind: 'pack', w: box.w / s, h: box.h / s,
+                 nodes: [], segs: [], items: [], measures: [] };
+  m.nodes.forEach(id => {
+    const n = nodeById(id);
+    if (!n) return;
+    const c = strip(JSON.parse(JSON.stringify(n)), NODE_DERIVED);
+    if (c.cool) delete c.cool.sharedLps;
+    const q = rel(n); c.x = q.x; c.y = q.y;
+    pack.nodes.push(c);
+  });
+  m.segs.forEach(id => {
+    const r = segById(id);
+    if (!r) return;
+    const c = strip(JSON.parse(JSON.stringify(r)), SEG_DERIVED);
+    c.pts = r.pts.map(rel);
+    pack.segs.push(c);
+  });
+  const segIn = {};
+  m.segs.forEach(id => { segIn[id] = true; });
+  m.items.forEach(id => {
+    const it = itemById(id);
+    if (it && segIn[it.seg]) pack.items.push(JSON.parse(JSON.stringify(it)));
+  });
+  m.measures.forEach(id => {
+    const t = measureById(id);
+    if (t) pack.measures.push({ pts: t.pts.map(rel), name: t.name || '', note: t.note || '' });
+  });
+  return pack;
+}
+/* Set a pack down with its centre at (cx, cy) on this drawing. Runs between
+   two packed components land between the copies; a run whose other end was
+   not packed gets a tee at that end, so the copy is complete and can be
+   joined up from there. Names and tags are minted fresh. Returns the new
+   selection. */
+function placePack(pack, cx, cy) {
+  const s = S.pxPerM > 0 ? S.pxPerM : 1;
+  const abs = p => {
+    const q = { x: cx + p.x * s, y: cy + p.y * s };
+    if (p.h !== undefined) q.h = p.h;
+    return q;
+  };
+  const out = emptyMulti();
+  const idMap = {};
+  const stems = {};
+  const nthName = (type, stem) => {
+    const key = type + '|' + stem;
+    if (stems[key] === undefined) {
+      let n = 0;
+      S.nodes.forEach(x => {
+        if (x.type !== type) return;
+        const mm = String(x.name || '').match(new RegExp('^' + stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(\\d+)$'));
+        if (mm) n = Math.max(n, parseInt(mm[1], 10));
+      });
+      stems[key] = n;
+    }
+    stems[key]++;
+    return stem + ' ' + stems[key];
+  };
+  (pack.nodes || []).forEach(n => {
+    const c = JSON.parse(JSON.stringify(n));
+    const q = abs(n);
+    c.id = nid(); c.x = q.x; c.y = q.y;
+    if (c.type === 'junction') c.name = 'Tee';
+    else {
+      // "AHU 3" copies as the next AHU; a hand-typed name keeps its stem too
+      const stem = String(c.name || '').replace(/\s*\d+$/, '').trim()
+        || (c.type === 'source' ? 'Plant' : c.type === 'consumer' ? 'Load'
+            : c.type === 'llh' ? 'LLH' : c.type === 'hx' ? 'HX' : c.type === 'pump' ? 'Pump'
+            : c.type === 'drycooler' ? 'Dry cooler' : 'Buffer');
+      c.name = nthName(c.type, stem);
+    }
+    S.nodes.push(c);
+    idMap[n.id] = c.id;
+    out.nodes.push(c.id);
+  });
+  const endFor = (endId, at) => {
+    if (idMap[endId] !== undefined) return idMap[endId];
+    const j = { id: nid(), type: 'junction', x: at.x, y: at.y, name: 'Tee',
+                height: at.h !== undefined ? at.h : defaultPipeHeight() };
+    S.nodes.push(j);
+    out.nodes.push(j.id);
+    return j.id;
+  };
+  const segMap = {};
+  (pack.segs || []).forEach(r => {
+    const c = JSON.parse(JSON.stringify(r));
+    c.id = nid();
+    c.pts = r.pts.map(abs);
+    c.a = endFor(r.a, c.pts[0]);
+    c.b = endFor(r.b, c.pts[c.pts.length - 1]);
+    if (idMap[r.a] === undefined) delete c.aPort;
+    if (idMap[r.b] === undefined) delete c.bPort;
+    c.ref = '';
+    S.segs.push(c);
+    segMap[r.id] = c.id;
+    out.segs.push(c.id);
+  });
+  (pack.items || []).forEach(it => {
+    if (segMap[it.seg] === undefined) return;
+    const c = JSON.parse(JSON.stringify(it));
+    c.id = nid(); c.seg = segMap[it.seg];
+    const d = valveDef(c.type);
+    c.tag = d ? nextValveTag(d.tag) : '';
+    S.items.push(c);
+    out.items.push(c.id);
+  });
+  (pack.measures || []).forEach(t => {
+    const c = { id: nid(), pts: t.pts.map(abs), name: '', ref: nextTapeName(), note: t.note || '' };
+    S.measures = S.measures || [];
+    S.measures.push(c);
+    out.measures.push(c.id);
+  });
+  if (S.settings.autoName !== false) autoNameRuns(true);
+  return out;
+}
+function duplicateSelection() {
+  const m = selAsMulti();
+  if (!multiCount(m)) { toast('Select something to duplicate first'); return; }
+  if (!m.nodes.length && !m.segs.length && !m.measures.length) {
+    // a valve on its own is duplicated along its run, as it always was
+    const b = el('insDupItem');
+    if (b) b.click();
+    return;
+  }
+  const pack = packSelection(m);
+  const box = selectionBox();
+  if (!pack || !box) return;
+  const gap = S.pxPerM > 0 ? Math.max(S.pxPerM * 0.6, box.w * 0.25) : 40;
+  let out = null;
+  asOneUndo('duplicate ' + multiSummary(m), () => {
+    out = placePack(pack, (box.x0 + box.x1) / 2 + box.w + gap, (box.y0 + box.y1) / 2);
+  });
+  sel = settleMulti(out);
+  if (sel) openInspector();
+  render();
+  toast('Copied ' + multiSummary(out) + ' \u2014 drag it into place');
+}
+
+/* ---------- the clipboard ----------
+   Kept in the browser as well as in memory, so a set of fan coils copied on
+   one floor can be pasted on the next after Change drawing — or tomorrow.
+   It is in metres, so a different scale on the next sheet does not matter. */
+const CLIP_KEY = 'adi-pipe-trace-clipboard';
+let packClip = null;
+function clipboardRead() {
+  if (packClip) return packClip;
+  try {
+    const raw = localStorage.getItem(CLIP_KEY);
+    const p = raw ? JSON.parse(raw) : null;
+    if (p && p.kind === 'pack') packClip = p;
+  } catch (e) {}
+  return packClip;
+}
+function clipSummary(p) {
+  const bits = [];
+  const units = (p.nodes || []).filter(n => n.type !== 'junction').length;
+  if (units) bits.push(plural(units, 'component'));
+  if ((p.segs || []).length) bits.push(plural(p.segs.length, 'run'));
+  if ((p.items || []).length) bits.push(plural(p.items.length, 'valve'));
+  if ((p.measures || []).length) bits.push(plural(p.measures.length, 'tape'));
+  return bits.join(', ') || 'nothing';
+}
+function copySelection() {
+  const m = selAsMulti();
+  if (!multiCount(m)) { toast('Select something to copy first'); return; }
+  const pack = packSelection(m);
+  if (!pack) { toast('A valve is copied with its run \u2014 select the run too'); return; }
+  packClip = pack;
+  try { localStorage.setItem(CLIP_KEY, JSON.stringify(pack)); } catch (e) {}
+  toast('Copied ' + clipSummary(pack) + ' \u2014 Ctrl+V pastes it here or on the next drawing');
+}
+/* Where the cursor last was on the sheet, whatever the tool, so a paste
+   lands under it. Outside the sheet, the middle of the view. */
+let lastPointer = null;
+function pasteAt() {
+  if (lastPointer && S.img && lastPointer.x >= 0 && lastPointer.y >= 0
+      && lastPointer.x <= S.img.w && lastPointer.y <= S.img.h) return lastPointer;
+  const sc2 = el('scroller');
+  return { x: (sc2.scrollLeft + sc2.clientWidth / 2) / zoom, y: (sc2.scrollTop + sc2.clientHeight / 2) / zoom };
+}
+function pasteClipboard(at) {
+  if (!S.img) { toast(S.concept ? 'Start a concept first' : 'Load a drawing first'); return; }
+  if (scaleNeeded()) { scaleGate(); return; }
+  const pack = clipboardRead();
+  if (!pack) { toast('Nothing on the clipboard \u2014 select something and press Ctrl+C'); return; }
+  const p = at || pasteAt();
+  let out = null;
+  asOneUndo('paste ' + clipSummary(pack), () => { out = placePack(pack, p.x, p.y); });
+  setTool('select');
+  sel = settleMulti(out);
+  if (sel) openInspector();
+  render();
+  toast('Pasted ' + clipSummary(pack) + ' \u2014 drag it into place');
+}
+/* Arrow keys move what is selected; a run of presses is one undo step. */
+let lastNudgeAt = 0;
+function nudgeSelection(dx, dy) {
+  if (!sel) return false;
+  const m = selAsMulti();
+  if (!m.nodes.length && !m.segs.length && !m.measures.length) return false;
+  const now = Date.now();
+  if (now - lastNudgeAt > 1500) pushUndo('nudge ' + multiSummary(m));
+  lastNudgeAt = now;
+  moveSelection(dx, dy);
+  render();
+  return true;
+}
+function deleteMulti() {
+  const m = selAsMulti();
+  if (!multiCount(m)) return;
+  asOneUndo('delete ' + multiSummary(m), () => {
+    const gone = {};
+    m.nodes.forEach(id => { gone[id] = true; });
+    const dropRun = r => m.segs.indexOf(r.id) >= 0 || gone[r.a] || gone[r.b];
+    const runGone = {};
+    S.segs.forEach(r => { if (dropRun(r)) runGone[r.id] = true; });
+    S.segs = S.segs.filter(s => !runGone[s.id]);
+    S.items = S.items.filter(it => !runGone[it.seg] && m.items.indexOf(it.id) < 0);
+    S.measures = (S.measures || []).filter(t => m.measures.indexOf(t.id) < 0);
+    S.nodes = S.nodes.filter(x => !gone[x.id]);
+    // a tee left joining nothing is not a tee
+    S.nodes = S.nodes.filter(x => x.type !== 'junction' || neighbours(x.id).length > 0);
+    if (S.settings.autoName !== false) autoNameRuns(true);
+  });
+  sel = null; closeInspector(); render();
+}
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 function mk(tag, attrs, txt) {
@@ -3344,7 +3720,7 @@ function finishDraftInPlace() {
 function drawMeasure(g, m, k, live) {
   const pts = m.pts;
   if (!pts || pts.length < 2) return;
-  const picked = !live && sel && sel.kind === 'tape' && sel.id === m.id;
+  const picked = !live && isSel('tape', m.id);
   const ink = 'var(--measure)';
   if (picked) {
     g.appendChild(mk('path', { d: pathOf(pts), fill: 'none', stroke: ink,
@@ -3551,7 +3927,27 @@ function hitItem(p, tolPx) {
 /* ==========================================================================
    DRAW
    ========================================================================== */
+/* Every redraw solves the whole take-off. If anything in that throws — a run
+   with a bad point, a valve on a run that has gone — the overlay used to stop
+   updating and the tool looked frozen, with the reason only in the console.
+   The failure is now said on screen, once, and the pointer state is dropped so
+   the next click works; Undo nearly always puts the job back. */
+let renderFailedMsg = '';
 function render() {
+  try {
+    renderInner();
+    renderFailedMsg = '';
+  } catch (err) {
+    console.error('render failed', err);
+    drag = null; panning = null; pendingPan = null; marquee = null;
+    const msg = (err && err.message) || String(err);
+    if (msg !== renderFailedMsg) {
+      renderFailedMsg = msg;
+      toast('The sheet could not be redrawn (' + msg + '). Ctrl+Z steps back; Save keeps a copy.');
+    }
+  }
+}
+function renderInner() {
   const ov = el('ov');
   if (!S.img) { ov.innerHTML = ''; return; }
   ov.setAttribute('width', S.img.w);
@@ -3584,7 +3980,7 @@ function render() {
 
   // ---- segments ----
   S.segs.forEach(sg => {
-    const picked = sel && sel.kind === 'seg' && sel.id === sg.id;
+    const picked = isSel('seg', sg.id);
     const d = sg.pts.map((p, i) => (i ? 'L' : 'M') + p.x + ' ' + p.y).join(' ');
     const single = sg.mode === 'single';
     const pw = pipeWidthDraw(sg, k);
@@ -3659,7 +4055,7 @@ function render() {
   S.items.slice().sort((a, b) => (a.seg - b.seg) || (a.t - b.t)).forEach(it => {
     const q = itemPos(it, k);
     if (!q) return;
-    const picked = sel && sel.kind === 'item' && sel.id === it.id;
+    const picked = isSel('item', it.id);
     /* A valve lies along the pipe it is on, which is nearly always right and
        follows the run if a node is dragged. The offset is for the cases it is
        not — a valve on a tee, or one that reads better turned — and the flip
@@ -3765,7 +4161,7 @@ function render() {
 
   // ---- nodes ----
   S.nodes.forEach(n => {
-    const picked = sel && sel.kind === 'node' && sel.id === n.id;
+    const picked = isSel('node', n.id);
     if (n.type === 'junction') {
       drawJunction(g, n, k, picked);
       return;
@@ -3818,6 +4214,31 @@ function render() {
     }
     drawPorts(g, n, k, picked);
   });
+
+  /* ---- a selection of several things gets one frame round the lot, so it
+     reads as a group that will move together ---- */
+  if (sel && sel.kind === 'multi') {
+    const bx = selectionBox();
+    if (bx) {
+      const pad = 14 * k;
+      g.appendChild(mk('rect', { x: bx.x0 - pad, y: bx.y0 - pad, width: bx.w + 2 * pad, height: bx.h + 2 * pad,
+        rx: 4 * k, fill: 'none', stroke: 'var(--measure)', 'stroke-width': 1.4 * k,
+        'stroke-dasharray': (6 * k) + ' ' + (4 * k), opacity: .85 }));
+      const lbl = multiSummary(sel);
+      g.appendChild(mk('rect', { x: bx.x0 - pad, y: bx.y0 - pad - 17 * k, width: (lbl.length * 6.2 + 14) * k,
+        height: 15 * k, rx: 2 * k, fill: 'var(--measure)' }));
+      g.appendChild(mk('text', { x: bx.x0 - pad + 7 * k, y: bx.y0 - pad - 6 * k,
+        'font-size': 10 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+        fill: '#241a00' }, lbl));
+    }
+  }
+  // ---- the lasso being dragged out ----
+  if (marquee && marquee.moved) {
+    const x = Math.min(marquee.x0, marquee.x1), y = Math.min(marquee.y0, marquee.y1);
+    const w = Math.abs(marquee.x1 - marquee.x0), h = Math.abs(marquee.y1 - marquee.y0);
+    g.appendChild(mk('rect', { x, y, width: w, height: h, fill: 'rgba(224,164,34,.10)',
+      stroke: 'var(--measure)', 'stroke-width': 1.2 * k, 'stroke-dasharray': (5 * k) + ' ' + (3 * k) }));
+  }
 
   ov.innerHTML = '';
   ov.appendChild(g);
@@ -5100,20 +5521,27 @@ function placeArmedAt(sn, opts) {
   const label = (opts && opts.label) || (set ? set.label : (valveDef(armed) || {}).label || 'valve');
   const made = [];
   if (!(opts && opts.quiet)) pushUndo('place ' + label.toLowerCase());
+  /* Suspended so the items are one undo step, and restored in a finally:
+     an exception half-way through a set used to leave undo switched off for
+     the rest of the session, with nothing on screen to say so. */
+  const wasSuspended = undoSuspended;
   undoSuspended = true;
-  setLayout(sn.seg, sn.t, slots, undefined, opts && opts.anchor).forEach(L => {
-    const d = valveDef(L.type);
-    if (!d) return;
-    const it = { id: nid(), type: L.type, seg: sn.seg.id, t: L.t, leg: L.leg,
-                 tag: nextValveTag(d.tag), note: '' };
-    // placed as "the standard isolating valve", so it keeps following the size
-    if (L.autoIso) it.autoIso = true;
-    if (L.atLoad) it.atLoad = true;
-    S.items.push(it);
-    made.push(it);
-  });
-  undoSuspended = false;
-  refreshUndoBtn();
+  try {
+    setLayout(sn.seg, sn.t, slots, undefined, opts && opts.anchor).forEach(L => {
+      const d = valveDef(L.type);
+      if (!d) return;
+      const it = { id: nid(), type: L.type, seg: sn.seg.id, t: L.t, leg: L.leg,
+                   tag: nextValveTag(d.tag), note: '' };
+      // placed as "the standard isolating valve", so it keeps following the size
+      if (L.autoIso) it.autoIso = true;
+      if (L.atLoad) it.atLoad = true;
+      S.items.push(it);
+      made.push(it);
+    });
+  } finally {
+    undoSuspended = wasSuspended;
+    refreshUndoBtn();
+  }
   if (!made.length) return null;
   if (opts && opts.quiet) return made[0];
   const first = made[0];
@@ -5179,6 +5607,7 @@ function deleteItem(id) {
 
 function deleteSelected() {
   if (!sel) return;
+  if (sel.kind === 'multi') { deleteMulti(); return; }
 
   /* Deleting a tee means "I put this tee in the wrong place" — it must take
      the tee out and heal the pipework, not take the runs with it. Removing a
@@ -5193,10 +5622,7 @@ function deleteSelected() {
     if (n && n.type === 'junction') {
       const nb = neighbours(n.id);
       if (nb.length === 2) {
-        pushUndo('remove a tee');
-        undoSuspended = true;
-        const ok = mergeAtJunction(n);
-        undoSuspended = false; refreshUndoBtn();
+        const ok = asOneUndo('remove a tee', () => mergeAtJunction(n));
         if (ok) {
           if (S.settings.autoName !== false) autoNameRuns(true);
           sel = null; closeInspector(); render();
@@ -5262,6 +5688,13 @@ function openInspector() {
   if (!sel) { closeInspector(); return; }
   el('body').classList.add('insp');
   const b = el('insBody');
+  if (sel.kind === 'multi') {
+    el('insKind').textContent = 'Selection';
+    el('insName').textContent = multiSummary(sel);
+    b.innerHTML = multiForm(sel);
+    wireMultiForm();
+    return;
+  }
   if (sel.kind === 'tape') {
     const m = measureById(sel.id);
     if (!m) { closeInspector(); return; }
@@ -6288,7 +6721,72 @@ function rowBtns(dup) {
     + '<button class="btn ghost sm" id="insDel" style="color:var(--alarm)">Delete</button></div>';
 }
 
+/* ---------- several things selected ----------
+   What the lasso picked up, with the few things that make sense for the
+   lot: move it an exact distance, set every load's height, copy, duplicate,
+   delete. Anything else is done one at a time — click the thing. */
+function multiForm(m) {
+  const nodes = m.nodes.map(nodeById).filter(Boolean);
+  const loads = nodes.filter(n => n.type === 'consumer');
+  const kw = loads.reduce((s, n) => s + consumerKw(n), 0);
+  const box = selectionBox();
+  const rows = [
+    ['Selected', multiSummary(m)],
+  ];
+  if (loads.length) rows.push(['Load duty', fmt(kw, 1) + ' kW across ' + plural(loads.length, 'load')]);
+  if (box && S.pxPerM > 0) rows.push(['Extent', fmt(box.w / S.pxPerM, 1) + ' \u00d7 ' + fmt(box.h / S.pxPerM, 1) + ' m']);
+  let html = derivedBox(rows);
+  html += '<div class="fld"><span>Move by <em>metres on the plan; right and down are positive</em></span>'
+    + '<div style="display:flex;gap:6px;align-items:center">'
+    + '<input type="number" id="mvX" step="0.1" value="0" style="width:70px"> <span style="font-size:12px">across</span>'
+    + '<input type="number" id="mvY" step="0.1" value="0" style="width:70px"> <span style="font-size:12px">down</span>'
+    + '<button class="btn ghost sm" id="mvGo">Move</button></div></div>';
+  if (loads.length) {
+    const hs = loads.map(n => heightOf(n));
+    const same = hs.every(h => Math.abs(h - hs[0]) < 0.005);
+    html += '<label class="fld"><span>Height of every load <em>' + (same ? 'all at ' + fmt(hs[0], 2) + ' m' : 'they differ') + '</em></span>'
+      + '<div style="display:flex;gap:6px;align-items:center">'
+      + '<input type="number" id="mhH" step="0.05" value="' + (same ? fmt(hs[0], 2) : '') + '" placeholder="m"> '
+      + '<button class="btn ghost sm" id="mhGo">Set</button></div></label>';
+  }
+  html += '<div class="note">Drag any selected thing to move the lot; arrow keys nudge 50&nbsp;mm '
+    + '(<kbd>Shift</kbd> 0.5&nbsp;m). <kbd>Shift</kbd>-click adds or removes one thing. Runs whose other end '
+    + 'is not selected stretch to keep up. Click one thing on its own to edit its figures.</div>';
+  html += '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
+    + '<button class="btn ghost sm" id="insMultiDup" title="Set a copy down beside these (Ctrl+D)">Duplicate</button>'
+    + '<button class="btn ghost sm" id="insMultiCopy" title="Copy to the clipboard, in metres (Ctrl+C)">Copy</button>'
+    + '<button class="btn ghost sm" id="insDel" style="color:var(--alarm)">Delete</button></div>';
+  return html;
+}
+function wireMultiForm() {
+  const go = el('mvGo');
+  if (go) go.addEventListener('click', () => {
+    const mx = parseFloat(el('mvX').value) || 0, my = parseFloat(el('mvY').value) || 0;
+    if (!mx && !my) return;
+    const s = S.pxPerM > 0 ? S.pxPerM : 1;
+    pushUndo('move ' + multiSummary(selAsMulti()));
+    moveSelection(mx * s, my * s);
+    render(); openInspector();
+  });
+  const mh = el('mhGo');
+  if (mh) mh.addEventListener('click', () => {
+    const v = parseFloat(el('mhH').value);
+    if (isNaN(v)) { toast('Enter a height'); return; }
+    const m = selAsMulti();
+    pushUndo('set the height of ' + plural(m.nodes.length, 'component'));
+    m.nodes.forEach(id => { const n = nodeById(id); if (n && n.type === 'consumer') n.height = v; });
+    render(); openInspector();
+  });
+  const dup = el('insMultiDup');
+  if (dup) dup.addEventListener('click', duplicateSelection);
+  const cp = el('insMultiCopy');
+  if (cp) cp.addEventListener('click', copySelection);
+  const del = el('insDel');
+  if (del) del.addEventListener('click', deleteSelected);
+}
+
 function inspectorTarget(elInp) {
+  if (!sel || sel.kind === 'multi') return null;
   let obj = sel.kind === 'item' ? itemById(sel.id)
           : sel.kind === 'tape' ? measureById(sel.id)
           : sel.kind === 'node' ? nodeById(sel.id) : segById(sel.id);
@@ -6354,6 +6852,11 @@ function wireInspector() {
       });
     }
     inp.addEventListener('change', () => {
+      /* The change fires on blur, and the inspector may have been closed
+         between the keystroke and the blur — a click on the sheet does it.
+         Reading sel.kind off a null here was a crash that took the whole
+         handler down. */
+      if (!sel) return;
       const node = sel.kind === 'node' ? nodeById(sel.id) : null;
       const obj = inspectorTarget(inp);
       if (!obj) return;
@@ -8178,15 +8681,25 @@ function autosave() {
       }
       return;
     }
+    /* The drawing is several megabytes and does not change when a load is
+       dragged, so it is written once per sheet rather than after every edit.
+       Serialising it every 900 ms was a visible stall on every pause, and on a
+       sheet too big for the store it failed the same way every time. */
+    if (!S.img) { autosavedImg = null; return; }
+    const key = S.img.tok + ':' + S.img.src.length + ':' + (S.img.rot || 0);
+    if (autosavedImg === key) return;
     try {
-      if (S.img) localStorage.setItem(AUTO_IMG_KEY, JSON.stringify(imgForSave()));
+      localStorage.setItem(AUTO_IMG_KEY, JSON.stringify(imgForSave()));
+      autosavedImg = key;
     } catch (e) {
       // the drawing alone is too big for the store; the take-off is still safe
+      autosavedImg = key;
       try { localStorage.removeItem(AUTO_IMG_KEY); } catch (e2) {}
     }
   }, 900);
 }
 let autosaveWarned = false;
+let autosavedImg = null;
 
 function readAutosave() {
   try {
@@ -8202,6 +8715,7 @@ function readAutosave() {
   } catch (e) { return null; }
 }
 function clearAutosave() {
+  autosavedImg = null;
   try { localStorage.removeItem(AUTO_KEY); localStorage.removeItem(AUTO_IMG_KEY); } catch (e) {}
 }
 
@@ -9574,14 +10088,54 @@ function canPendingPan() {
 
 const sc = el('scroller');
 
+/* The nearest thing under the cursor with Select armed, in the order a click
+   is meant: a valve (small, on top of a run), a connection ring, a component,
+   a tape, then the run itself. */
+function hitAny(p) {
+  const it = hitItem(p);
+  if (it) return { kind: 'item', id: it.id, item: it };
+  const pt = hitPort(p);
+  if (pt) return { kind: 'seg', id: pt.seg.id, port: pt };
+  const n = hitNode(p);
+  if (n) return { kind: 'node', id: n.id, node: n };
+  const tm = hitMeasure(p);
+  if (tm) return { kind: 'tape', id: tm.measure.id };
+  const h = hitSeg(p);
+  if (h) return { kind: 'seg', id: h.seg.id };
+  return null;
+}
+
 sc.addEventListener('pointerdown', ev => {
   if (!S.img) return;
   setOverride(ev.altKey);
   const p = toDwg(ev);
 
-  if (tool === 'pan' || ev.button === 1 || ev.shiftKey || spacePan) {
+  /* Shift-drag pans everywhere except Select, where Shift-click is what adds
+     a thing to the selection; Shift on open paper there still pans. */
+  if (tool === 'pan' || ev.button === 1 || spacePan || (ev.shiftKey && tool !== 'select')) {
     beginPan(ev);
     return;
+  }
+
+  if (tool === 'select' && ev.button === 0) {
+    const hit = hitAny(p);
+    if (ev.shiftKey) {
+      if (hit) { toggleInSelection(hit.kind, hit.id); return; }
+      beginPan(ev); return;
+    }
+    // anything that is part of a selection of several picks the lot up
+    if (hit && sel && sel.kind === 'multi' && isSel(hit.kind, hit.id)) {
+      drag = { group: true, ox: p.x, oy: p.y, moved: false };
+      sc.setPointerCapture(ev.pointerId);
+      return;
+    }
+    if (!hit) {
+      /* Open paper: a drag from here is a lasso; a plain click clears the
+         selection. Which it was is only known when the pointer comes up. */
+      marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, moved: false };
+      sc.setPointerCapture(ev.pointerId);
+      return;
+    }
   }
 
   if (canPendingPan() && !drawingHit(p)) {
@@ -9714,7 +10268,35 @@ function applyToolPointer(ev, p) {
   }
 }
 
+/* Pointer moves arrive faster than the sheet can be redrawn, and every
+   redraw solves the whole take-off. Coalescing them to one redraw a frame is
+   what keeps a big job from feeling stuck under the cursor. */
+let renderReq = 0;
+function scheduleRender() {
+  if (renderReq) return;
+  renderReq = requestAnimationFrame(() => { renderReq = 0; render(); });
+}
+
 sc.addEventListener('pointermove', ev => {
+  if (S.img) lastPointer = toDwg(ev);
+  // ---- the lasso ----
+  if (marquee) {
+    const p = toDwg(ev);
+    marquee.x1 = p.x; marquee.y1 = p.y;
+    if (!marquee.moved && dist({ x: marquee.x0, y: marquee.y0 }, p) * zoom > 4) marquee.moved = true;
+    if (marquee.moved) scheduleRender();
+    return;
+  }
+  // ---- carrying a whole selection ----
+  if (drag && drag.group) {
+    const p = toDwg(ev);
+    if (!drag.moved) pushUndo('move ' + multiSummary(selAsMulti()));
+    drag.moved = true;
+    moveSelection(p.x - drag.ox, p.y - drag.oy);
+    drag.ox = p.x; drag.oy = p.y;
+    scheduleRender();
+    return;
+  }
   if (pendingPan && !panning) {
     const dx = ev.clientX - pendingPan.sx, dy = ev.clientY - pendingPan.sy;
     if (Math.hypot(dx, dy) > 6) {
@@ -9736,10 +10318,11 @@ sc.addEventListener('pointermove', ev => {
     if (n) {
       const port = portAt(n, p, { edge: true, magnet: false });
       if (port) {
+        if (!drag.moved) pushUndo('move a connection');
         if (d.end === 'a') d.seg.aPort = port; else d.seg.bPort = port;
         reseatSeg(d.seg);
         drag.moved = true;
-        render();
+        scheduleRender();
       }
     }
     return;
@@ -9752,7 +10335,10 @@ sc.addEventListener('pointermove', ev => {
     const sg = it ? segById(it.seg) : null;
     if (it && sg) {
       const r = nearestOnPoly(sg.pts, p);
-      if (r) { it.t = polyTOf(sg.pts, r.i, r.t); drag.moved = true; render(); }
+      if (r) {
+        if (!drag.moved) pushUndo('move ' + (it.tag || 'a valve'));
+        it.t = polyTOf(sg.pts, r.i, r.t); drag.moved = true; scheduleRender();
+      }
     }
     return;
   }
@@ -9760,11 +10346,14 @@ sc.addEventListener('pointermove', ev => {
     const p = toDwg(ev);
     const n = nodeById(drag.id);
     if (n) {
+      // the snapshot goes in before the first movement, so one Ctrl+Z puts
+      // the component back where it was picked up
+      if (!drag.moved) pushUndo('move ' + (n.name || nodeWord(n)));
       n.x = p.x - drag.dx; n.y = p.y - drag.dy;
       drag.moved = true;
       // every run into it stays on the point of it that it was joined to
       reseatNode(n);
-      render();
+      scheduleRender();
     }
     return;
   }
@@ -9772,11 +10361,17 @@ sc.addEventListener('pointermove', ev => {
   // cursor whether or not anything is under way
   if (draft || tool === 'trace' || tool === 'valve' || tool === 'tape') {
     setOverride(ev.altKey);
-    hoverPt = toDwg(ev); render();
+    hoverPt = toDwg(ev); scheduleRender();
   }
 });
 
 function endPointer(ev) {
+  if (marquee) {
+    const m = marquee;
+    marquee = null;
+    if (m.moved) selectInBox(m);
+    else { sel = null; closeInspector(); }
+  }
   if (pendingPan && !panning) {
     const held = pendingPan;
     pendingPan = null;
@@ -9789,6 +10384,16 @@ function endPointer(ev) {
 }
 sc.addEventListener('pointerup', endPointer);
 sc.addEventListener('pointercancel', endPointer);
+/* Losing the window mid-drag — Alt-Tab, a notification, the file dialog —
+   means the pointer never comes up here. Without this the drag carried on
+   with no button held, whatever was grabbed followed the mouse, and the tool
+   looked stuck until the next click. */
+function dropPointerState() {
+  const had = drag || panning || pendingPan || marquee;
+  drag = null; panning = null; pendingPan = null; marquee = null;
+  syncPanCursor();
+  if (had) render();
+}
 
 function zoomInto(ev, factor) {
   const scroller = el('scroller');
@@ -9857,11 +10462,26 @@ document.addEventListener('keydown', ev => {
   if ((ev.ctrlKey || ev.metaKey) && k === 'z') { ev.preventDefault(); undo(); return; }
   if ((ev.ctrlKey || ev.metaKey) && k === 's') { ev.preventDefault(); saveProject(); return; }
   if ((ev.ctrlKey || ev.metaKey) && k === 'o') { ev.preventDefault(); el('fProj').click(); return; }
+  if ((ev.ctrlKey || ev.metaKey) && k === 'a') { if (S.img) { ev.preventDefault(); selectAll(); } return; }
+  if ((ev.ctrlKey || ev.metaKey) && k === 'c') { if (sel) { ev.preventDefault(); copySelection(); } return; }
+  if ((ev.ctrlKey || ev.metaKey) && k === 'v') { ev.preventDefault(); pasteClipboard(); return; }
+  if ((ev.ctrlKey || ev.metaKey) && k === 'd') { ev.preventDefault(); duplicateSelection(); return; }
+  if (ev.key === '?' || ev.key === 'F1') { ev.preventDefault(); toggleHelp(); return; }
 
   if (ev.key === 'Escape') {
     if (el('modal').classList.contains('on')) { closeModal(); return; }
+    if (el('helpPane').classList.contains('on')) { toggleHelp(false); return; }
     if (draft) { draft = null; render(); return; }
+    if (sel) { sel = null; closeInspector(); return; }
     setTool('select'); return;
+  }
+  /* Arrow keys nudge what is selected: 50 mm, or 0.5 m with Shift. Without
+     a scale, a few pixels. */
+  if (/^Arrow(Left|Right|Up|Down)$/.test(ev.key) && sel && !V3.on) {
+    const step = S.pxPerM > 0 ? S.pxPerM * (ev.shiftKey ? 0.5 : 0.05) : (ev.shiftKey ? 20 : 3);
+    const dx = ev.key === 'ArrowLeft' ? -step : ev.key === 'ArrowRight' ? step : 0;
+    const dy = ev.key === 'ArrowUp' ? -step : ev.key === 'ArrowDown' ? step : 0;
+    if (nudgeSelection(dx, dy)) { ev.preventDefault(); return; }
   }
   if (ev.code === 'Space' || ev.key === ' ') {
     ev.preventDefault();
@@ -9879,18 +10499,18 @@ document.addEventListener('keydown', ev => {
   const t = TOOLS.find(x => x.key.toLowerCase() === k);
   if (t) { setTool(t.id); return; }
 
-  if (k === 'd' && sel && sel.kind === 'item') {
-    const b = el('insDupItem');
-    if (b) b.click();
-    return;
-  }
-  if (k === 'd' && sel && sel.kind === 'node') {
-    const n = nodeById(sel.id);
-    if (n && n.type === 'consumer') {
-      clipboard = Object.assign({}, n);
-      select('node', addConsumer({ x: n.x + 90, y: n.y + 50 }, n).id);
-      toast('Duplicated \u2014 drag it into place');
+  if (k === 'd' && sel) {
+    if (sel.kind === 'item') { const b = el('insDupItem'); if (b) b.click(); return; }
+    if (sel.kind === 'node') {
+      const n = nodeById(sel.id);
+      if (n && n.type === 'consumer') {
+        clipboard = Object.assign({}, n);
+        select('node', addConsumer({ x: n.x + 90, y: n.y + 50 }, n).id);
+        toast('Duplicated \u2014 drag it into place');
+        return;
+      }
     }
+    duplicateSelection();
     return;
   }
   if (k === 'o') {
@@ -10061,7 +10681,7 @@ window.addEventListener('keyup',   e => {
   setOverride(e.altKey);
   if (e.code === 'Space' || e.key === ' ') { spacePan = false; syncPanCursor(); }
 });
-window.addEventListener('blur',    () => { setOverride(false); spacePan = false; syncPanCursor(); });
+window.addEventListener('blur',    () => { setOverride(false); spacePan = false; dropPointerState(); });
 
 window.addEventListener('resize', () => {
   if (S.img) render();
