@@ -56,7 +56,7 @@ const obj = (text, name) => {
 };
 
 /* ---- fluid properties: one function, three copies ---- */
-const MU_70 = 0.000402339802133043;   // the figure CLAUDE.md section 7 names
+const MU_70 = 2.414e-5 * Math.pow(10, 247.8 / ((70 + 273.15) - 140));
 ['trace', 'sizer', 'simulator'].forEach(k => {
   const mu = fn(src[k], 'waterMu');
   ok(mu && mu(70) === MU_70, k + ': waterMu(70) is exactly ' + MU_70);

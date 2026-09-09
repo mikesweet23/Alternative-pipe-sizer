@@ -881,19 +881,30 @@ function roughFor(material) {
 /* ---------- fluid ---------- */
 function waterRho(T) { return ((1.051865e-05*T - 5.171329e-03)*T - 6.179237e-03)*T + 1000.068; }
 function waterCp(T)  { return (((1.606849e-09*T - 4.736562e-07)*T + 5.721385e-05)*T - 2.586464e-03)*T + 4.215269; }
-/* Dynamic viscosity of water at temperature, Pa.s — Vogel form fitted to
-   IAPWS table values over 0-120 C, worst deviation 0.64% at the ends and
-   0.35% at a 70 C mean. Identical function in sizer.html and trace.html; all
-   three must be changed together or the tools disagree on every size.
-   All three were pinned at 0.00131 Pa.s until this was corrected — water at
-   about 10 C, against rho and cp taken at the mean operating temperature.
-   This file is the reason to be careful: it once ran waterMu(FLUID.Tm) while
-   the other two were fixed, and pipe losses came out about 15% under what the
-   sizer reported for the same pipe. The fix then was to pin it; the fix now is
-   that all three correct together. An imported project carries the sizer's own
-   figure in settings.mu, which wins over this function, so a project made with
-   glycol solves on the glycol viscosity rather than on plain water. */
-function waterMu(T)  { return 2.76473e-5 * Math.exp(524.9766 / (T + 126.05)); }
+/* Legacy glycol-table 0% row — water at about 10 C. A project file with no
+   viscosityMode loads on this figure so existing work does not re-size. */
+const LEGACY_MU = 0.00131;
+/* Dynamic viscosity of water at temperature, Pa.s — Al-Shemmeri power-ten
+   form, within about 1.5% of standard water tables across 0–100 °C.
+   Identical function in sizer.html, trace.html and simulator.html; change
+   one and change all three. T outside 0–100 °C falls back to LEGACY_MU.
+   An imported project with viscosityMode set carries the sizer's own figure
+   in settings.mu, which wins so glycol projects solve on the glycol viscosity
+   rather than on plain water. A file with no viscosityMode is fixed, even if
+   a later-era settings.mu is present. */
+function waterMu(T) {
+  if (!(T >= 0 && T <= 100)) return 0.00131;
+  return 2.414e-5 * Math.pow(10, 247.8 / ((T + 273.15) - 140));
+}
+function waterMuOutOfRange(T) { return !(T >= 0 && T <= 100); }
+function projectViscosity(settings, Tm) {
+  const s = settings || {};
+  const mode = s.viscosityMode;
+  if (mode !== 'temperature' && mode !== 'fixed') return 0.00131;
+  const written = parseFloat(s.mu);
+  if (written > 0) return written;
+  return mode === 'temperature' ? waterMu(Tm) : 0.00131;
+}
 
 /* ---------- state ---------- */
 let PROJECT = null;      // imported settings
@@ -941,12 +952,12 @@ function frictionFactor(Re, relRough) {
 // Pressure gradient Pa/m and velocity for a flow through a bore
 function pipeHydraulics(lps, id_mm, roughness) {
   const d = id_mm / 1000;
-  if (d <= 0 || lps <= 0) return { v: 0, paPerM: 0 };
+  if (d <= 0 || lps <= 0) return { v: 0, paPerM: 0, Re: 0, f: 0 };
   const A = Math.PI * d * d / 4;
   const v = (lps / 1000) / A;
   const Re = FLUID.rho * v * d / FLUID.mu;
   const f = frictionFactor(Re, roughness / d);
-  return { v, paPerM: f * (FLUID.rho * v * v) / (2 * d) };
+  return { v, paPerM: f * (FLUID.rho * v * v) / (2 * d), Re, f };
 }
 
 /* The pipe the sizer chose. A file saved by the sizer carries it on each
@@ -1072,7 +1083,9 @@ function applyGroupFluid(gid) {
     FLUID.Tm = (Tsup + Tret) / 2;
     FLUID.rho = waterRho(FLUID.Tm);
     FLUID.cp = waterCp(FLUID.Tm);
-    FLUID.mu = waterMu(FLUID.Tm);
+    /* Secondary water is not the plant glycol. Honour the project's
+       viscosityMode, but evaluate water at this side's mean. */
+    FLUID.mu = (s.viscosityMode === 'temperature') ? waterMu(FLUID.Tm) : LEGACY_MU;
     if (PROJECT) { PROJECT.supply = Tsup; PROJECT.ret = Tret; }
     return;
   }
@@ -1081,7 +1094,7 @@ function applyGroupFluid(gid) {
   FLUID.Tm = (supply + ret) / 2;
   FLUID.rho = parseFloat(s.rho) || waterRho(FLUID.Tm);
   FLUID.cp = parseFloat(s.cp) || waterCp(FLUID.Tm);
-  FLUID.mu = parseFloat(s.mu) || waterMu(FLUID.Tm);
+  FLUID.mu = projectViscosity(s, FLUID.Tm);
   if (PROJECT) { PROJECT.supply = supply; PROJECT.ret = ret; }
 }
 

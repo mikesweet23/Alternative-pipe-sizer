@@ -47,11 +47,21 @@ Break any of these and the tools stop agreeing with each other.
 ### Fluid properties
 - Density and specific heat: polynomial fits to standard water tables, evaluated
   at **mean operating temperature** — `(supply + return) / 2`.
-- **Viscosity is also evaluated at the mean operating temperature**, by
-  `waterMu(T)` — a Vogel fit, `2.76473e-5 · exp(524.9766 / (T + 126.05))` Pa·s,
-  fitted to IAPWS table values over 0–120 °C. Worst deviation 0.64% at the ends
-  of that range, 0.35% at a 70 °C mean, which is about 0.1% on a pipe capacity
-  and an order below the uncertainty in roughness.
+- **Viscosity is chosen by `settings.viscosityMode`**, written on the exchange
+  file and honoured in all three tools:
+  - `"temperature"` (new projects, and a new Pipe Trace take-off) — `waterMu(T)`
+    at the mean operating temperature.
+  - `"fixed"` — the legacy glycol-table 0% row, **0.00131 Pa·s**.
+  - **A file with no `viscosityMode` loads as `"fixed"`** in the sizer and the
+    simulator, so existing saved projects do not re-size on open. Switching
+    to temperature-corrected viscosity is an explicit user action and a
+    non-blocking notice offers it. Schema stays at 1; readers that do not
+    know the field fall back to legacy, which is the safe direction.
+- **`waterMu(T)` is the Al-Shemmeri power-ten form**, identical in all three
+  tools: `2.414e-5 · 10^(247.8 / (T_K − 140))` Pa·s with `T_K = T + 273.15`.
+  Within about 1.5% of standard water tables across 0–100 °C. **T outside
+  0–100 °C falls back to 0.00131** and the sizer says so. Do not change the
+  Swamee-Jain form, the laminar `f = 64/Re` branch, or the Re 2300 transition.
 
 > **`waterMu(T)` is one function with three copies** — `sizer.html`,
 > `trace.html` and `simulator.html` — byte-identical, exactly like
@@ -64,29 +74,42 @@ Break any of these and the tools stop agreeing with each other.
 > it fell out of viscosity being read from a table indexed on glycol
 > percentage and never on temperature. Viscosity falls by a factor of three
 > between 10 °C and 70 °C, so the mixture understated LTHW pipe capacity by
-> **4–11%** and put the tools a size above every other calculation. The history
-> is worth knowing because it ran the other way twice: Pipe Trace originally
-> corrected viscosity and was aligned *down* to the sizer, and the simulator
-> was later found running `waterMu(FLUID.Tm)` against the other two fixed and
-> was pinned to match. Both were the right call at the time — one tool correct
-> and two wrong is worse than three consistent — and both are now undone,
-> because the fix went into all three together.
+> **4–11%** and put the tools a size above every other calculation. A Vogel
+> fit then ran for a while (`2.76473e-5 · exp(524.9766 / (T + 126.05))`)
+> without a compatibility flag, so opening an old file moved the sizes.
+> `viscosityMode` is that flag. The history is worth knowing because it ran
+> the other way twice: Pipe Trace originally corrected viscosity and was
+> aligned *down* to the sizer, and the simulator was later found running
+> `waterMu(FLUID.Tm)` against the other two fixed and was pinned to match.
+> Both were the right call at the time — one tool correct and two wrong is
+> worse than three consistent.
 
 > **Correcting it does not only save pipe.** A run that drops a size sits
 > closer to the 300 Pa/m limit, so it loses more. On the worked example PM1
 > went DN80 → DN65 and the index run went **46.77 → 55.5 kPa**. Smaller pipe,
 > more pump. That is the honest trade and it is what the other calculations
-> were showing all along.
+> were showing all along. LTHW 80/60 Δp/m drops by roughly 12–15% against
+> the fixed 0.00131 figure (about 305 Pa/m against 354 Pa/m on the 16 l/s
+> / 100 mm reference case).
 
 - **Glycol rides on top as a ratio**, `waterMu(Tm) × (μ_glycol / μ_water)` from
   `GLYCOL_TABLE`, which is how ρ and cp are already handled in
-  `onBasisChange()`. The table's own viscosities are at its reference
-  temperature, so using them raw put 30% glycol at 3.4e-3 Pa·s on an 80/60
-  system — five times too viscous at a 70 °C mean. Glycol projects therefore
-  size **10–15% larger in capacity** than they did, a bigger shift than plain
-  water. The ratio is itself an assumption: it treats the glycol multiplier as
-  independent of temperature, which is roughly true and much closer than the
-  raw table. See section 3.
+  `onBasisChange()`. In fixed mode that product is the table's own viscosity.
+  The derived water figure is for water only; a glycol mix that needs a
+  supplier viscosity is a manual override (`muManual`). The table's own
+  viscosities are at its reference temperature, so using them raw put 30%
+  glycol at 3.4e-3 Pa·s on an 80/60 system — five times too viscous at a
+  70 °C mean. See section 3.
+
+- **The sizer shows the calculation basis.** Each circuit has an expandable
+  panel — bore and table, ε with material and condition, ρ and μ with their
+  source, velocity, Re, Darcy f, Δp/m, straight length (paired or not),
+  then straight-pipe kPa and fittings kPa separately. The same fields go
+  into the PDF as an assumptions register. A standalone **Straight-pipe
+  check** card, outside the circuit list, takes bore / flow / temperature /
+  material / condition and returns v, Re, Darcy f and Δp/m with no fittings
+  and no write to the project. DN labels read `DN100 (105.3 mm)`; material
+  and condition selections show ε in mm.
 
 ### Hydraulics
 - `Q = ṁ·cp·ΔT`
@@ -629,12 +652,13 @@ Circuit fields that carry meaning across tools:
 | `hxPriSup`, `hxPriRet`, `hxSecSup`, `hxSecRet`, `hxPriLps`, `hxSecLps`, `hxKw`, `secDT` | Heat exchanger only. Four temperatures, both flows, the duty that crosses, and the secondary ΔT. `dT` on that circuit is the **primary** ΔT so `separatorDutyKw()` rolls the heat up correctly |
 | `sized` | **Written by the sizer on save, read by the simulator.** The pipe the sizer selected — `nom`, `od`, `wall`, `id_mm`, `rough_m`, `lengthTotal`, `effectiveLength`, `pipeLoss_kPa`, `llh`, `sizeOverride`. Derived; rewritten on every save; the sizer never reads it back. See "Pipe tables" in section 2 |
 
-`settings.mu` is written by the sizer alongside `settings.rho` and
-`settings.cp` — the viscosity actually used, derived rather than typed. The
-simulator prefers it over working one out from the temperatures, so a project
-made with glycol solves on the glycol figure instead of on plain water. A file
-written before this carries no `mu` and the simulator falls back to
-`waterMu(Tm)`, which is right for every project without glycol.
+`settings.viscosityMode` is `"temperature"` or `"fixed"`. Missing means
+fixed. `settings.mu` is written by the sizer alongside `settings.rho` and
+`settings.cp` — the viscosity actually used, derived, fixed or typed. When
+`viscosityMode` is present the simulator prefers `settings.mu` so a glycol
+project solves on the glycol figure. When the field is missing the
+simulator uses 0.00131, even if a later-era `settings.mu` is present, so a
+legacy file does not re-size.
 
 A header or heat exchanger crosses as **a circuit of its own**, sitting
 between the run that feeds it and the runs that leave it, with its primary
@@ -1350,9 +1374,11 @@ tests/chain-consistency-test.mjs` does this from the source — it evaluates
 `waterMu`, `waterRho` and `waterCp` out of all three files and fails on a
 single differing digit, and does the same for `FITTING_TYPES`, the authority
 rule, the brand bar and the handoff keys. Run it first. In each of the three
-consoles, `waterMu(70)` must return `0.000402339802133043` — the same digits,
-not the same to three figures. The sizer's `currentViscosity()` must match it
-with glycol at 0%, and be higher by exactly the `GLYCOL_TABLE` ratio above it.
+consoles, `waterMu(70)` must return `0.00040042907094183465` — the same digits,
+not the same to three figures. `waterMu(110)` is the legacy `0.00131`. The
+sizer's `currentViscosity()` in temperature mode with glycol at 0% must match
+`waterMu(Tm)`, and be higher by exactly the `GLYCOL_TABLE` ratio above it.
+A project with no `viscosityMode` must load as fixed.
 
 Then reconcile one pipe through all three. Same bore, same flow, same
 roughness: `calcPD()` in the sizer, `hyd()` in Trace and `pipeHydraulics()` in

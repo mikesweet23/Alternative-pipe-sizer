@@ -24,9 +24,10 @@ node tests/concept-pdf-report-test.mjs
 node tests/chain-consistency-test.mjs
 node tests/persistence-repair-test.mjs
 node tests/trace-multiselect-truesize-help-test.mjs
+node tests/viscosity-basis-test.mjs
 ```
 
-`chain-consistency-test` evaluates the blocks that exist as copies in more than one file — `waterMu` / `waterRho` / `waterCp`, `FITTING_TYPES`, the authority rule, the brand bar, the handoff keys — and fails if any copy has drifted. Run it after touching any of them. `persistence-repair-test` covers what happens when a file that has been through several hands is opened: the id counter, the repairs, the settings reset, the revision stamp. `trace-multiselect-truesize-help-test` covers the lasso and group editing, true size on the plan / 3D / PDF, the help pane and the long-session guards (`scheduleRender`, `dropPointerState`, the autosave image cache, `asOneUndo`).
+`chain-consistency-test` evaluates the blocks that exist as copies in more than one file — `waterMu` / `waterRho` / `waterCp`, `FITTING_TYPES`, the authority rule, the brand bar, the handoff keys — and fails if any copy has drifted. Run it after touching any of them. `viscosity-basis-test` is the acceptance set for `viscosityMode`, the Al-Shemmeri `waterMu`, the calculation-basis panel and the straight-pipe check. `persistence-repair-test` covers what happens when a file that has been through several hands is opened: the id counter, the repairs, the settings reset, the revision stamp. `trace-multiselect-truesize-help-test` covers the lasso and group editing, true size on the plan / 3D / PDF, the help pane and the long-session guards (`scheduleRender`, `dropPointerState`, the autosave image cache, `asOneUndo`).
 
 A headless browser can drive the real pages: Google Chrome is on the VM at `/usr/local/bin/google-chrome`, and `playwright-core` installed outside the repo (for example under `/tmp`) can `page.evaluate()` the tools' own functions — `loadProject`, `projectBundle`, `solve`, `buildSizerProject` in Trace; `applyProjectData`, `buildProjectSnapshot`, `calculateCircuit` in the sizer; `loadProject`, `solve` in the simulator. Nothing browser-based lives in the repo: the tools have no dependencies and that is deliberate.
 
