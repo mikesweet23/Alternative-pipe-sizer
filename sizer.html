@@ -1969,36 +1969,26 @@
 </div>
 
 <script>
-// Carbon Steel — BS EN 10255 medium grade (DN sizes with actual OD/wall)
-// DN8-DN150 are BS EN 10255; DN200+ are BS EN 10220 / DIN 2448 line pipe sizes
+// Carbon steel — adi schedule, September 2026: light-wall welded tube, DN15 to DN350.
+// [DN label, OD mm, wall mm, kg/m]. The weight is the quoted figure and is used
+// as it stands; every other material's weight is worked out from density.
+// ID = OD - 2 x wall, and matches the quoted bore on every row.
 const CARBON = [
-  // [DN label, OD mm, wall mm]
-  ['DN8',   13.5, 2.30],   // ID 8.9
-  ['DN10',  17.2, 2.30],   // ID 12.6
-  ['DN15',  21.3, 2.65],   // ID 16.0
-  ['DN20',  26.9, 2.65],   // ID 21.6
-  ['DN25',  33.7, 3.25],   // ID 27.2
-  ['DN32',  42.4, 3.25],   // ID 35.9
-  ['DN40',  48.3, 3.25],   // ID 41.8
-  ['DN50',  60.3, 3.65],   // ID 53.0
-  ['DN65',  76.1, 3.65],   // ID 68.8
-  ['DN80',  88.9, 4.05],   // ID 80.8
-  ['DN100', 114.3, 4.50],  // ID 105.3
-  ['DN125', 139.7, 4.85],  // ID 130.0
-  ['DN150', 165.1, 4.85],  // ID 155.4 — BS EN 10255 uses 165.1 OD for DN150
-  ['DN200', 219.1, 6.30],  // ID 206.5
-  ['DN250', 273.0, 6.30],  // ID 260.4
-  ['DN300', 323.9, 7.10],  // ID 309.7
-  ['DN350', 355.6, 8.00],  // ID 339.6
-  ['DN400', 406.4, 8.80],  // ID 388.8
-  ['DN450', 457.0, 10.0],  // ID 437.0
-  ['DN500', 508.0, 11.0],  // ID 486.0
-  ['DN550', 559.0, 12.5],  // ID 534.0
-  ['DN600', 610.0, 12.5],  // ID 585.0
-  ['DN650', 660.0, 14.2],  // ID 631.6
-  ['DN700', 711.0, 14.2],  // ID 682.6
-  ['DN750', 762.0, 15.9],  // ID 730.2
-  ['DN800', 813.0, 15.9],  // ID 781.2
+  ['DN15',   21.3, 2.0, 0.947], // 1/2"  ID 17.3
+  ['DN20',   26.9, 2.3, 1.38],  // 3/4"  ID 22.3
+  ['DN25',   33.7, 2.6, 1.98],  // 1"  ID 28.5
+  ['DN32',   42.4, 2.6, 2.54],  // 1-1/4"  ID 37.2
+  ['DN40',   48.3, 2.9, 3.23],  // 1-1/2"  ID 42.5
+  ['DN50',   60.3, 2.9, 4.08],  // 2"  ID 54.5
+  ['DN65',   76.1, 3.2, 5.71],  // 2-1/2"  ID 69.7
+  ['DN80',   88.9, 3.2, 6.72],  // 3"  ID 82.5
+  ['DN100',  114.3, 3.6, 9.75],  // 4"  ID 107.1
+  ['DN125',  139.7, 4.0, 13.39], // 5"  ID 131.7
+  ['DN150',  168.3, 4.5, 18.18], // 6"  ID 159.3
+  ['DN200',  219.1, 5.0, 26.4],  // 8"  ID 209.1
+  ['DN250',  273.0, 5.0, 33.05], // 10"  ID 263.0
+  ['DN300',  323.9, 5.6, 43.97], // 12"  ID 312.7
+  ['DN350',  355.6, 5.6, 48.34], // 14"  ID 344.4
 ];
 
 // Stainless Steel — DIN/EN ISO 1127 with DN nomenclature, schedule 10S typical for HVAC
@@ -2165,17 +2155,19 @@ const MATERIAL_DENSITY = {
 };
 
 // Calculate pipe linear weights
-//   pipe_kg_per_m = ρ_material × cross-sectional area of metal
+//   pipe_kg_per_m = the table's quoted kg/m where the row carries one (carbon),
+//                   otherwise ρ_material × cross-sectional area of metal
 //   water_kg_per_m = ρ_fluid × cross-sectional area of bore
-function calcPipeWeights(od_mm, wall_mm, material, fluid_rho) {
+function calcPipeWeights(od_mm, wall_mm, material, fluid_rho, kg_per_m) {
   const od_m   = od_mm / 1000;
   const wall_m = wall_mm / 1000;
   const id_m   = od_m - 2 * wall_m;
   const area_metal = Math.PI * (od_m * od_m - id_m * id_m) / 4;
   const area_bore  = Math.PI * id_m * id_m / 4;
   const rho_mat = MATERIAL_DENSITY[material] || 7850;
+  const quoted = parseFloat(kg_per_m);
   return {
-    pipe_kg_per_m:   rho_mat * area_metal,    // kg/m of bare pipe
+    pipe_kg_per_m:   (isFinite(quoted) && quoted > 0) ? quoted : rho_mat * area_metal,   // kg/m of bare pipe
     water_kg_per_m:  fluid_rho * area_bore,   // kg/m of water/glycol fill
     water_l_per_m:   area_bore * 1000,        // litres/m
   };
@@ -4528,12 +4520,12 @@ function calculateCircuit(c) {
 
   const pipes = PIPES[material] || CARBON;
   const rows = pipes.map(p => {
-    const [nom, od, wall] = p;
+    const [nom, od, wall, kgm] = p;
     const id_mm = od - 2 * wall;
     const id_m = id_mm / 1000;
     if (id_m <= 0) return null;
     const h = calcPD(vflow_m3s, id_m, material);
-    return { nom, od, wall, id_mm, v: h.v, pd: h.pd, Re: h.Re, f: h.f };
+    return { nom, od, wall, id_mm, v: h.v, pd: h.pd, Re: h.Re, f: h.f, kgm };
   }).filter(Boolean);
 
   const firstOk = rows.find(r => r.pd <= LIMIT && r.v >= V_MIN && r.v <= V_MAX);
@@ -4617,7 +4609,7 @@ function calculateCircuit(c) {
     combined_kg_per_m: 0, combined_kg_total: 0,
   };
   if (recommended) {
-    const w = calcPipeWeights(recommended.od, recommended.wall, material, rho);
+    const w = calcPipeWeights(recommended.od, recommended.wall, material, rho, recommended.kgm);
     weights.pipe_kg_per_m  = w.pipe_kg_per_m;
     weights.water_kg_per_m = w.water_kg_per_m;
     weights.water_l_per_m  = w.water_l_per_m;
