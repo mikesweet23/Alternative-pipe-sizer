@@ -102,10 +102,23 @@ function extractArray(text, name) {
 }
 ['CARBON', 'STAINLESS', 'STAINLESS304', 'TRUBORE', 'TRUBORE_METRIC', 'COPPER', 'MLCP'].forEach(name => {
   const t = { trace: extractArray(src.trace, name), sizer: extractArray(src.sizer, name), simulator: extractArray(src.simulator, name) };
-  const norm = a => a && JSON.stringify(a.map(r => [String(r[0]), +r[1], +r[2]]));
+  // [nom, od, wall] and, where a table carries it, the quoted kg/m as a fourth column
+  const norm = a => a && JSON.stringify(a.map(r => r.length > 3 ? [String(r[0]), +r[1], +r[2], +r[3]] : [String(r[0]), +r[1], +r[2]]));
   ok(t.trace && t.sizer && t.simulator && norm(t.trace) === norm(t.sizer) && norm(t.sizer) === norm(t.simulator),
     name + ' pipe table has the same rows, ODs and walls in all three tools');
 });
+/* The carbon schedule supplied in September 2026: every row's ID and quoted
+   weight, so a wall typed wrong in one copy fails here rather than on site. */
+{
+  const carbon = extractArray(src.sizer, 'CARBON');
+  const want = [['DN15', 17.3, 0.947], ['DN20', 22.3, 1.380], ['DN25', 28.5, 1.980], ['DN32', 37.2, 2.540],
+    ['DN40', 42.5, 3.230], ['DN50', 54.5, 4.080], ['DN65', 69.7, 5.710], ['DN80', 82.5, 6.720], ['DN100', 107.1, 9.750],
+    ['DN125', 131.7, 13.39], ['DN150', 159.3, 18.18], ['DN200', 209.1, 26.40], ['DN250', 263.0, 33.05],
+    ['DN300', 312.7, 43.97], ['DN350', 344.4, 48.34]];
+  ok(carbon && carbon.length === want.length && want.every(([dn, id, kg], i) =>
+      carbon[i][0] === dn && Math.abs((carbon[i][1] - 2 * carbon[i][2]) - id) < 1e-6 && Math.abs(carbon[i][3] - kg) < 1e-6),
+    'CARBON is the supplied light-wall schedule: DN15\u2013DN350 with the quoted bores and kg/m');
+}
 ['trace', 'sizer', 'simulator'].forEach(k => {
   const mapName = k === 'sizer' ? 'PIPES' : 'TABLES';
   const defs = ['CARBON', 'STAINLESS', 'STAINLESS304', 'TRUBORE', 'TRUBORE_METRIC', 'COPPER', 'MLCP']
