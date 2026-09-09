@@ -589,7 +589,18 @@ The four differential valves reach the sizer by a different route again:
 - **DN550 does not exist in the UK.** Steps are 50 mm from DN150 to DN500,
   then 100 mm.
 - **Tru-Bore ISO stops at DN800** — the OSTP datasheet lists nothing above it.
-- Carbon steel BS EN 10255 (DN8–DN500), copper EN 1057.
+- **Carbon steel is the adi light-wall schedule, DN15–DN350**, supplied in
+ September 2026 and replacing the BS EN 10255 medium table (DN8–DN800) that
+ was there before. Rows are `[DN, OD, wall, kg/m]`: the fourth column is the
+ **quoted weight**, and `calcPipeWeights()` uses it as it stands in place of
+ the density calculation, which is what every other material still gets.
+ Walls are 2.0 mm at DN15 rising to 5.6 mm at DN300/350, so bores run
+ 1–4% larger than the old medium-grade table and a carbon run can come out
+ a size smaller than it did. `tests/chain-consistency-test.mjs` checks every
+ row's bore and weight against the supplied schedule. There is no carbon
+ above DN350; a main that needs more comes out as "no fit" rather than a
+ size from a table nobody specified.
+- Copper EN 1057.
 
 ### Heat loss
 - BS EN ISO 12241 cylindrical conduction:
@@ -1535,9 +1546,12 @@ the browser:
   method. The lesson is that "all the tools agree" is a necessary test and not
   a sufficient one: they agreed with each other for a year while all three were
   4–11% out. Reconcile against something that shares none of the code.
-- The same exercise found the sizer's **carbon steel is BS EN 10255 medium**
+- The same exercise found the sizer's **carbon steel was BS EN 10255 medium**
   while the comparison calculation used **ASME Sch 10**, whose bore runs 2.5–4%
   larger at every size. That is a different product, not a different method, and
   both are right for their own market. It is worth stating out loud when
   anybody says the carbon numbers disagree, because the arithmetic will look
-  wrong when the pipe is simply not the same pipe.
+  wrong when the pipe is simply not the same pipe. (The carbon table was
+  replaced in September 2026 with adi's own light-wall schedule — see "Pipe
+  tables" in section 2 — so a carbon size from before that date and one from
+  after are, again, not the same pipe.)
