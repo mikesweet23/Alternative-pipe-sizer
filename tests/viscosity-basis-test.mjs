@@ -138,6 +138,8 @@ ok(/function calcBasisHtml/.test(src.sizer)
 ok(/function sizeLabel/.test(src.sizer) && /function formatEpsMm/.test(src.sizer)
   && /id="roughnessHint"/.test(src.sizer),
   'DN labels show bore and material/condition selections show ε in mm');
+ok(/const MAT_LABEL = \{/.test(src.sizer) && /carbon: 'Carbon Steel'/.test(src.sizer),
+  'MAT_LABEL is defined so the circuit table and straight-pipe check can render');
 ok(/derived value is for <strong>water<\/strong>/.test(src.sizer)
   || /The derived value is for <strong>water<\/strong>/.test(src.sizer),
   'the sizer says the derived viscosity is for water only');

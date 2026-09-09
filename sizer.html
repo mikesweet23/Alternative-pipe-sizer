@@ -2199,29 +2199,7 @@ function getRoughness(material) {
   }
   return (ROUGHNESS_PRESETS[condition] && ROUGHNESS_PRESETS[condition][material]) || 0.000046;
 }
-function roughnessMm(material) { return getRoughness(material) * 1000; }
-function conditionShort() {
-  const cond = (document.getElementById('pipeCondition') || {}).value || 'new';
-  return COND_SHORT[cond] || cond;
-}
-function formatEpsMm(mm) {
-  if (!(mm >= 0)) return '\u2014';
-  if (mm === 0) return '0';
-  if (mm < 0.01) return mm.toFixed(4);
-  return mm.toFixed(3);
-}
-function materialOptionHtml(selected) {
-  return MAT_KEYS.map(k => {
-    const eps = formatEpsMm(roughnessMm(k));
-    return '<option value="' + k + '"' + (selected === k ? ' selected' : '') + '>'
-      + MAT_LABEL[k] + ' \u2014 \u03b5 ' + eps + ' mm</option>';
-  }).join('');
-}
-function sizeLabel(nom, id_mm) {
-  if (!nom) return '\u2014';
-  if (id_mm == null || isNaN(id_mm)) return nom;
-  return nom + ' (' + Number(id_mm).toFixed(1) + ' mm)';
-}
+const MAT_LABEL = { carbon: 'Carbon Steel', copper: 'Copper', stainless: 'Stainless 316', stainless304: 'Stainless 304', trubore: 'TruBore ISO 304L', trubore316: 'TruBore ISO 316L', truboreMetric: 'TruBore Metric 304L', truboreMetric316: 'TruBore Metric 316L', mlcp: 'MLCP' };
 const MAT_TABLE_NAME = {
   carbon: 'Carbon steel BS EN 10255 medium',
   copper: 'Copper EN 1057',
@@ -5198,7 +5176,6 @@ function renderCircuits() {
         const overrideLabel = isOverridden
           ? '<div style="font-size:10px;color:#c28a00;font-weight:600;letter-spacing:0.5px;margin-top:2px">' + (result.sizeOverride > 0 ? '+' : '') + result.sizeOverride + ' from auto (' + result.autoRecommended.nom + ')</div>'
           : '';
-        const idDisplay = '';
         // Peak capacity of the SELECTED size — live headroom guide. Held to
         // whichever limit binds first, and it says which, because "peak at
         // 300 Pa/m" on a pipe that is actually stopped by velocity is a
@@ -5225,7 +5202,7 @@ function renderCircuits() {
         recText = '<div style="display:flex;flex-direction:column;align-items:center;gap:2px">'
           + '<div style="display:flex;align-items:center;gap:6px">'
           +   '<button onclick="updateCircuitField(' + c.id + ',\'sizeOverride\',(parseInt(circuits.find(c=>c.id===' + c.id + ').sizeOverride)||0)-1)" title="Step down one size" style="background:var(--white);border:1px solid var(--line-strong);color:var(--ink);width:22px;height:22px;border-radius:3px;cursor:pointer;font-weight:700;line-height:1;padding:0">−</button>'
-          +   '<div style="display:flex;flex-direction:column;align-items:center;min-width:96px"><span style="font-family:\'Barlow Condensed\',sans-serif;font-weight:700;font-size:16px;color:var(--black);line-height:1.15;text-align:center">' + sizeLabel(result.recommended.nom, result.recommended.id_mm) + '</span>' + idDisplay + '</div>'
+          +   '<div style="display:flex;flex-direction:column;align-items:center;min-width:96px"><span style="font-family:\'Barlow Condensed\',sans-serif;font-weight:700;font-size:16px;color:var(--black);line-height:1.15;text-align:center">' + sizeLabel(result.recommended.nom, result.recommended.id_mm) + '</span></div>'
           +   '<button onclick="updateCircuitField(' + c.id + ',\'sizeOverride\',(parseInt(circuits.find(c=>c.id===' + c.id + ').sizeOverride)||0)+1)" title="Step up one size" style="background:var(--white);border:1px solid var(--line-strong);color:var(--ink);width:22px;height:22px;border-radius:3px;cursor:pointer;font-weight:700;line-height:1;padding:0">+</button>'
           + '</div>'
           + (isOverridden ? '<button onclick="updateCircuitField(' + c.id + ',\'sizeOverride\',0)" title="Reset to auto-recommendation" style="background:transparent;border:none;color:var(--brand-blue-deep);font-size:10px;cursor:pointer;text-decoration:underline;padding:0;margin-top:2px">reset to auto</button>' : '')
