@@ -1082,15 +1082,28 @@ function fittingPa(type, dn, material, v, rho) {
 /* ---------- fluid ---------- */
 function waterRho(T){ return ((1.051865e-05*T - 5.171329e-03)*T - 6.179237e-03)*T + 1000.068; }
 function waterCp(T){ return (((1.606849e-09*T - 4.736562e-07)*T + 5.721385e-05)*T - 2.586464e-03)*T + 4.215269; }
-/* Dynamic viscosity of water at temperature, Pa.s — Vogel form fitted to
-   IAPWS table values over 0-120 C, worst deviation 0.64% at the ends and
-   0.35% at a 70 C mean. Identical function in index.html and simulator.html;
-   all three must be changed together or the tools disagree on every size.
-   It was pinned at 0.00131 Pa.s in all three until this was corrected —
-   water at about 10 C, against rho and cp taken at the mean operating
-   temperature. Viscosity falls by a factor of three between 10 C and 70 C, so
-   that pairing understated LTHW pipe capacity by 4-11%. */
-function waterMu(T){ return 2.76473e-5 * Math.exp(524.9766 / (T + 126.05)); }
+/* Legacy glycol-table 0% row — water at about 10 C. A sizer file with no
+   viscosityMode loads on this figure so existing work does not re-size. */
+const LEGACY_MU = 0.00131;
+/* Dynamic viscosity of water at temperature, Pa.s — Al-Shemmeri power-ten
+   form, within about 1.5% of standard water tables across 0–100 °C.
+   Identical function in sizer.html, trace.html and simulator.html; change
+   one and change all three. T outside 0–100 °C falls back to LEGACY_MU. */
+function waterMu(T) {
+  if (!(T >= 0 && T <= 100)) return 0.00131;
+  return 2.414e-5 * Math.pow(10, 247.8 / ((T + 273.15) - 140));
+}
+function waterMuOutOfRange(T) { return !(T >= 0 && T <= 100); }
+/* This take-off's own default is temperature, so a file written before the
+   field existed keeps the sizes it already showed. The sizer exchange file
+   is the other way round — missing means fixed — and buildSizerProject
+   writes the mode explicitly. */
+function viscosityModeOf(settings) {
+  return settings && settings.viscosityMode === 'fixed' ? 'fixed' : 'temperature';
+}
+function viscosityFor(Tm, settings) {
+  return viscosityModeOf(settings) === 'fixed' ? LEGACY_MU : waterMu(Tm);
+}
 
 /* ---------- plant types ---------- */
 const SOURCE_TYPES = {
@@ -1481,6 +1494,9 @@ function defaultSettings() {
     /* How much is written on the plan: 'auto' drops duties when zoomed out,
        'all' writes everything at every zoom, 'none' leaves the warnings. */
     labels: 'auto',
+    /* New take-offs use temperature-corrected viscosity. An explicit 'fixed'
+       is the legacy 0.00131 Pa.s. Written onto the sizer exchange file. */
+    viscosityMode: 'temperature',
   };
 }
 S.settings = defaultSettings();
@@ -2112,7 +2128,7 @@ function hxPriDT(n) { return Math.max(0.1, Math.abs(hxPriSup(n) - hxPriRet(n)));
 function hxSecDT(n) { return Math.max(0.1, Math.abs(hxSecSup(n) - hxSecRet(n))); }
 function hxPriTm(n) { return (hxPriSup(n) + hxPriRet(n)) / 2; }
 function hxSecTm(n) { return (hxSecSup(n) + hxSecRet(n)) / 2; }
-function fluidAt(Tm) { return { rho: waterRho(Tm), cp: waterCp(Tm), mu: waterMu(Tm), Tm }; }
+function fluidAt(Tm) { return { rho: waterRho(Tm), cp: waterCp(Tm), mu: viscosityFor(Tm, S.settings), Tm }; }
 function flowFromKwAt(kw, dT, Tm) {
   const f = fluidAt(Tm);
   if (kw <= 0 || dT <= 0) return 0;
@@ -2407,7 +2423,7 @@ function nearestOnPoly(pts, p) {
 /* ---------- hydraulics ---------- */
 function fluid() {
   const Tm = (S.settings.supply + S.settings.ret) / 2;
-  return { rho: waterRho(Tm), cp: waterCp(Tm), mu: waterMu(Tm), Tm };
+  return { rho: waterRho(Tm), cp: waterCp(Tm), mu: viscosityFor(Tm, S.settings), Tm };
 }
 function frictionFactor(Re, rel) {
   if (Re < 2300) return 64 / Math.max(Re, 1);
@@ -2415,11 +2431,12 @@ function frictionFactor(Re, rel) {
 }
 function hyd(lps, id_mm, rough, f) {
   const d = id_mm / 1000;
-  if (d <= 0 || lps <= 0) return { v: 0, paPerM: 0 };
+  if (d <= 0 || lps <= 0) return { v: 0, paPerM: 0, Re: 0, f: 0 };
   const A = Math.PI * d * d / 4;
   const v = (lps / 1000) / A;
   const Re = f.rho * v * d / f.mu;
-  return { v, paPerM: frictionFactor(Re, rough / d) * (f.rho * v * v) / (2 * d) };
+  const fr = frictionFactor(Re, rough / d);
+  return { v, paPerM: fr * (f.rho * v * v) / (2 * d), Re, f: fr };
 }
 
 /* Smallest pipe that stays inside the Pa/m limit and the velocity ceiling. */
@@ -8648,6 +8665,8 @@ function buildSizerProject() {
       llhEnabled: S.nodes.some(n => n.type === 'llh'),
       llhVMax: String(S.settings.llhVMax),
       llhMaterial: S.settings.material,
+      viscosityMode: viscosityModeOf(S.settings),
+      mu: viscosityFor((S.settings.supply + S.settings.ret) / 2, S.settings),
     },
     circuits,
     nextId: next,
@@ -10082,6 +10101,12 @@ function projectDialog() {
     +   (s.condition === 'custom' ? s.customRough : roughnessFor(s.material)) + '"'
     +   (s.condition === 'custom' ? '' : ' readonly style="background:var(--paper-2);color:var(--muted)"') + '></label>'
     + '</div>'
+    + '<div class="note" id="pEpsHint"></div>'
+    + '<label class="fld"><span>Dynamic viscosity</span><select id="pMuMode">'
+    +   '<option value="temperature"' + (viscosityModeOf(s) === 'temperature' ? ' selected' : '') + '>Temperature-corrected water at the mean \u00b0C</option>'
+    +   '<option value="fixed"' + (viscosityModeOf(s) === 'fixed' ? ' selected' : '') + '>Legacy fixed \u2014 0.00131 Pa\u00b7s</option>'
+    + '</select></label>'
+    + '<div class="note">The derived value is for water only. A glycol mix needs a supplier viscosity typed in the sizer as a manual override.</div>'
     + '<div class="row2">'
     + '<label class="fld"><span>Jointing</span><select id="pJoint">'
     +   '<option value="welded"' + (s.jointing === 'welded' ? ' selected' : '') + '>Welded</option>'
@@ -10166,6 +10191,15 @@ function projectDialog() {
     + '<button class="btn go" id="pOk">Apply</button>'
     + '<button class="btn ghost" onclick="closeModal()">Cancel</button></div>');
 
+  const refreshEpsHint = () => {
+    const hint = el('pEpsHint');
+    if (!hint) return;
+    const cond = el('pCond').value, mat = el('pMat').value;
+    const rough = parseFloat(el('pRough').value) || roughnessFor(mat);
+    const condLab = (CONDITION_LABEL[cond] || cond).replace(/ \(design\)/, '').toLowerCase();
+    hint.innerHTML = (MAT_LABEL[mat] || mat) + ', ' + condLab
+      + ' \u2014 \u03b5 ' + (rough * 1000).toFixed(rough * 1000 < 0.01 ? 4 : 3) + ' mm';
+  };
   el('pCond').addEventListener('change', () => {
     const cond = el('pCond').value, mat = el('pMat').value;
     const r = el('pRough');
@@ -10174,12 +10208,15 @@ function projectDialog() {
       r.readOnly = true; r.style.background = 'var(--paper-2)'; r.style.color = 'var(--muted)';
       r.value = (ROUGHNESS_PRESETS[cond] && ROUGHNESS_PRESETS[cond][mat]) || 0.000046;
     }
+    refreshEpsHint();
   });
   el('pMat').addEventListener('change', () => {
     const cond = el('pCond').value;
     if (cond !== 'custom') el('pRough').value =
       (ROUGHNESS_PRESETS[cond] && ROUGHNESS_PRESETS[cond][el('pMat').value]) || 0.000046;
+    refreshEpsHint();
   });
+  refreshEpsHint();
 
   el('pFitAll').addEventListener('click', () => {
     S.settings.setSpacingM = Math.max(0.05, parseFloat(el('pSetSp').value) || 0.6);
@@ -10211,6 +10248,7 @@ function projectDialog() {
     s.valveBasis = el('pVBasis').value;
     s.setSpacingM = Math.max(0.05, parseFloat(el('pSetSp').value) || 0.6);
     s.setOffsetM = Math.max(0, parseFloat(el('pSetOff').value) || 0.6);
+    s.viscosityMode = el('pMuMode').value === 'fixed' ? 'fixed' : 'temperature';
     s.limitPd = parseFloat(el('pLim').value) || 300;
     s.vMin = parseFloat(el('pVn').value) || 0.3;
     s.vMax = parseFloat(el('pVx').value) || 3.0;

@@ -43,6 +43,36 @@
     --amber: #b37800;
   }
 
+  details.calc-basis {
+    background: var(--off-white);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 6px 10px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  details.calc-basis > summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--brand-blue-deep);
+    list-style: none;
+  }
+  details.calc-basis > summary::-webkit-details-marker { display: none; }
+  details.calc-basis > summary::before {
+    content: '\25b8 ';
+    color: var(--brand-blue);
+  }
+  details.calc-basis[open] > summary::before { content: '\25be '; }
+  .calc-basis-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 6px 16px;
+    margin-top: 8px;
+  }
+  .calc-basis-grid .k { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.4px; }
+  .calc-basis-grid .v { color: var(--ink); font-weight: 600; }
+  tr.calc-basis-row td { background: var(--off-white); padding: 4px 10px 10px; }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
   html, body {
@@ -1201,6 +1231,33 @@
           <input type="number" id="cp" value="4.182" step="0.001" oninput="renderCircuits()">
         </div>
       </div>
+
+      <div class="field" style="margin-top:12px">
+        <label>Dynamic viscosity μ <span class="unit">Pa·s</span> <span id="muTag" style="font-size:9px;background:var(--brand-blue);color:var(--black);padding:1px 5px;border-radius:2px;font-weight:700;letter-spacing:0.5px">CALC</span></label>
+        <select id="viscosityMode" onchange="onViscosityModeChange()">
+          <option value="temperature" selected>Temperature-corrected (water at mean °C)</option>
+          <option value="fixed">Legacy fixed — 0.00131 Pa·s</option>
+        </select>
+      </div>
+      <div class="row2" style="margin-top:8px">
+        <div class="field">
+          <label>μ used <span class="unit">Pa·s</span></label>
+          <input type="number" id="mu" value="0.000400" step="0.000001" min="0.00005" oninput="onMuTyped()">
+        </div>
+        <div class="field" style="display:flex;align-items:flex-end">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0 0 6px">
+            <input type="checkbox" id="muManual" onchange="onBasisChange()"
+                   style="width:18px;height:18px;accent-color:var(--brand-blue);cursor:pointer;flex-shrink:0">
+            <span style="font-size:12.5px;font-weight:600;text-transform:none;letter-spacing:0">Manual override</span>
+          </label>
+        </div>
+      </div>
+      <div id="muRangeWarn" style="display:none;margin-top:8px;background:#fff8e6;border-left:3px solid #c28a00;padding:8px 11px;font-size:12px;line-height:1.5;color:#8a6100"></div>
+      <div style="margin-top:8px;font-size:12px;color:var(--ink-soft);line-height:1.55">
+        The derived value is for <strong>water</strong> at the mean operating temperature.
+        Glycol uses the table ratio on top of that water figure. A glycol mix that needs a
+        supplier viscosity should be typed as a manual override.
+      </div>
     </div>
 
     <div class="card">
@@ -1246,6 +1303,7 @@
           <option value="corroded">Older / corroded</option>
           <option value="custom">Custom roughness</option>
         </select>
+        <div id="roughnessHint" style="margin-top:8px;font-size:12px;color:var(--ink-soft);line-height:1.55"></div>
       </div>
 
       <div class="row2" id="customRoughnessRow" style="display:none">
@@ -1327,6 +1385,20 @@
       <div id="topologySummary" style="font-size:12.5px;line-height:1.6"></div>
     </div>
 
+    <div id="viscosityLegacyNotice" style="display:none;background:#fff8e6;border:1px solid #e0b95c;border-left:4px solid #c28a00;border-radius:4px;padding:14px 16px;margin-bottom:16px;font-size:13px;line-height:1.6">
+      <strong style="color:#8a6100;font-size:13.5px">This project is using the legacy fixed viscosity</strong>
+      <div style="margin:6px 0 10px;color:var(--ink-soft)">
+        It was saved before temperature-corrected viscosity, so it has been opened on the
+        fixed value of <strong>0.00131&nbsp;Pa·s</strong> and will reproduce the pressure drops
+        you last saw. Switching to temperature-corrected viscosity will change calculated
+        pressure drops and may change pipe sizes. That is an explicit choice — it is never
+        applied automatically.
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" onclick="acceptTemperatureViscosity()" style="background:var(--brand-blue-deep);color:var(--white);border:none;border-radius:5px;padding:9px 14px;font-weight:700;cursor:pointer;font-family:inherit;font-size:12.5px;min-height:40px">Use temperature-corrected viscosity</button>
+        <button type="button" onclick="keepLegacyViscosity()" style="background:var(--white);color:var(--ink);border:1px solid var(--line-strong);border-radius:5px;padding:9px 14px;font-weight:700;cursor:pointer;font-family:inherit;font-size:12.5px;min-height:40px">Keep legacy figures</button>
+      </div>
+    </div>
     <div id="lengthPrompt" style="display:none;background:#fff8e6;border:1px solid #e0b95c;border-left:4px solid #c28a00;border-radius:4px;padding:14px 16px;margin-bottom:16px;font-size:13px;line-height:1.6">
       <strong style="color:#8a6100;font-size:13.5px">Confirm what your existing lengths represent</strong>
       <div style="margin:6px 0 10px;color:var(--ink-soft)">
@@ -1395,6 +1467,70 @@
       <strong style="color:var(--ink)">Total Loss = Pa/m × length × (1 + fittings%).</strong>
       Fittings allowance covers bends, tees, valves &amp; equipment as an equivalent length uplift — typical ranges: straight mains 15–25%, branches with multiple fittings 30–40%, plantroom dense with valves 50%+.
       The <em>Max Circuit Loss</em> total identifies the index run — the critical circuit for pump selection.
+    </div>
+
+    <div class="card" id="straightPipeCard" style="margin-top:18px">
+      <div class="card-title">Straight-pipe check <span class="hint">bare pipe · no fittings · does not write to the project</span></div>
+      <div style="font-size:12.5px;color:var(--ink-soft);line-height:1.55;margin-bottom:14px">
+        Like-for-like check against an external friction calculator. Velocity, Reynolds number,
+        Darcy friction factor and Δp/m for a single bore — no length, no fittings, nothing saved.
+      </div>
+      <div class="row3" style="margin-bottom:12px">
+        <div class="field">
+          <label>Internal diameter <span class="unit">mm</span></label>
+          <input type="number" id="spBore" value="100" step="0.1" min="1" oninput="renderStraightPipeCheck()">
+        </div>
+        <div class="field">
+          <label>Flow <span class="unit">l/s</span></label>
+          <input type="number" id="spFlow" value="16" step="0.1" min="0" oninput="renderStraightPipeCheck()">
+        </div>
+        <div class="field">
+          <label>Fluid temperature <span class="unit">°C</span></label>
+          <input type="number" id="spTemp" value="5" step="1" oninput="renderStraightPipeCheck()">
+        </div>
+      </div>
+      <div class="row3" style="margin-bottom:12px">
+        <div class="field">
+          <label>Material</label>
+          <select id="spMaterial" onchange="onStraightPipeMaterialChange()">
+            <option value="stainless" selected>Stainless 316</option>
+            <option value="stainless304">Stainless 304</option>
+            <option value="truboreMetric">TruBore Metric 304L</option>
+            <option value="truboreMetric316">TruBore Metric 316L</option>
+            <option value="trubore">TruBore ISO 304L</option>
+            <option value="trubore316">TruBore ISO 316L</option>
+            <option value="carbon">Carbon Steel</option>
+            <option value="copper">Copper</option>
+            <option value="mlcp">MLCP</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Condition</label>
+          <select id="spCondition" onchange="onStraightPipeMaterialChange()">
+            <option value="new" selected>New / clean</option>
+            <option value="used">In service</option>
+            <option value="corroded">Older / corroded</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Absolute roughness ε <span class="unit">mm</span></label>
+          <input type="number" id="spEps" value="0.015" step="0.001" min="0" oninput="renderStraightPipeCheck()">
+        </div>
+      </div>
+      <div class="row2" style="margin-bottom:12px">
+        <div class="field">
+          <label>Viscosity</label>
+          <select id="spViscMode" onchange="renderStraightPipeCheck()">
+            <option value="temperature" selected>Temperature-corrected water</option>
+            <option value="fixed">Legacy fixed 0.00131 Pa·s</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Density ρ <span class="unit">kg/m³</span></label>
+          <input type="number" id="spRho" value="" step="0.1" placeholder="from temperature" oninput="renderStraightPipeCheck()">
+        </div>
+      </div>
+      <div id="spResult" style="background:rgba(122,209,228,0.12);border-left:3px solid var(--brand-blue);padding:12px 14px;font-size:13px;line-height:1.6"></div>
     </div>
 
     <div class="totals-bar">
@@ -2063,7 +2199,65 @@ function getRoughness(material) {
   }
   return (ROUGHNESS_PRESETS[condition] && ROUGHNESS_PRESETS[condition][material]) || 0.000046;
 }
-const MAT_LABEL = { carbon: 'Carbon Steel', copper: 'Copper', stainless: 'Stainless 316', stainless304: 'Stainless 304', trubore: 'TruBore ISO 304L', trubore316: 'TruBore ISO 316L', truboreMetric: 'TruBore Metric 304L', truboreMetric316: 'TruBore Metric 316L', mlcp: 'MLCP' };
+function roughnessMm(material) { return getRoughness(material) * 1000; }
+function conditionShort() {
+  const cond = (document.getElementById('pipeCondition') || {}).value || 'new';
+  return COND_SHORT[cond] || cond;
+}
+function formatEpsMm(mm) {
+  if (!(mm >= 0)) return '\u2014';
+  if (mm === 0) return '0';
+  if (mm < 0.01) return mm.toFixed(4);
+  return mm.toFixed(3);
+}
+function materialOptionHtml(selected) {
+  return MAT_KEYS.map(k => {
+    const eps = formatEpsMm(roughnessMm(k));
+    return '<option value="' + k + '"' + (selected === k ? ' selected' : '') + '>'
+      + MAT_LABEL[k] + ' \u2014 \u03b5 ' + eps + ' mm</option>';
+  }).join('');
+}
+function sizeLabel(nom, id_mm) {
+  if (!nom) return '\u2014';
+  if (id_mm == null || isNaN(id_mm)) return nom;
+  return nom + ' (' + Number(id_mm).toFixed(1) + ' mm)';
+}
+const MAT_TABLE_NAME = {
+  carbon: 'Carbon steel BS EN 10255 medium',
+  copper: 'Copper EN 1057',
+  stainless: 'Stainless 316 sch 10S (DIN/EN ISO 1127)',
+  stainless304: 'Stainless 304 sch 10S (DIN/EN ISO 1127)',
+  trubore: 'Tru-Bore ISO 304L',
+  trubore316: 'Tru-Bore ISO 316L',
+  truboreMetric: 'Tru-Bore Metric 304L (exact bore)',
+  truboreMetric316: 'Tru-Bore Metric 316L (exact bore)',
+  mlcp: 'MLCP',
+};
+const MAT_KEYS = ['truboreMetric','truboreMetric316','trubore','trubore316','stainless304','stainless','carbon','copper','mlcp'];
+const COND_SHORT = { new: 'new', used: 'in service', corroded: 'corroded', custom: 'custom' };
+function roughnessMm(material) { return getRoughness(material) * 1000; }
+function conditionShort() {
+  const cond = (document.getElementById('pipeCondition') || {}).value || 'new';
+  return COND_SHORT[cond] || cond;
+}
+function formatEpsMm(mm) {
+  if (!(mm >= 0)) return '\u2014';
+  if (mm === 0) return '0';
+  if (mm < 0.01) return mm.toFixed(4);
+  return mm.toFixed(3);
+}
+function materialOptionHtml(selected) {
+  return MAT_KEYS.map(k => {
+    const eps = formatEpsMm(roughnessMm(k));
+    return '<option value="' + k + '"' + (selected === k ? ' selected' : '') + '>'
+      + MAT_LABEL[k] + ' \u2014 \u03b5 ' + eps + ' mm</option>';
+  }).join('');
+}
+function sizeLabel(nom, id_mm) {
+  if (!nom) return '\u2014';
+  if (id_mm == null || isNaN(id_mm)) return nom;
+  return nom + ' (' + Number(id_mm).toFixed(1) + ' mm)';
+}
 
 /* Capacity solver: the most a given bore can actually carry.
    Bisection on flow against the Pa/m limit, since calcPD is monotonic in flow
@@ -2107,35 +2301,57 @@ const GLYCOL_TABLE = {
 
 function getGlycolProps(pct) { return GLYCOL_TABLE[pct] || GLYCOL_TABLE[0]; }
 
-/* Dynamic viscosity of water at temperature, Pa.s — Vogel form fitted to
-   IAPWS table values over 0–120 °C, worst deviation 0.64% at the ends and
-   0.35% at a 70 °C mean. Viscosity falls by a factor of three across that
-   range, so it is the one property that cannot be treated as a constant.
-   This used to return the glycol table's 0% row, 0.00131 Pa.s — water at
-   about 10 °C — while rho and cp were being evaluated at the mean operating
-   temperature. That mixture understated the capacity of every LTHW pipe by
-   4–11% and is what put this tool a size above every other calculation. */
-function waterMu(T) { return 2.76473e-5 * Math.exp(524.9766 / (T + 126.05)); }
+/* Legacy glycol-table 0% row — water at about 10 °C. A project file with no
+   viscosityMode loads on this figure so existing work does not re-size. */
+const LEGACY_MU = 0.00131;
+/* Dynamic viscosity of water at temperature, Pa.s — Al-Shemmeri power-ten
+   form, within about 1.5% of standard water tables across 0–100 °C.
+   Identical function in sizer.html, trace.html and simulator.html; change
+   one and change all three. T outside 0–100 °C falls back to LEGACY_MU.
+   viscosityMode on the exchange file chooses this correlation or the fixed
+   value; a file with no viscosityMode loads as fixed. */
+function waterMu(T) {
+  if (!(T >= 0 && T <= 100)) return 0.00131;
+  return 2.414e-5 * Math.pow(10, 247.8 / ((T + 273.15) - 140));
+}
+function waterMuOutOfRange(T) { return !(T >= 0 && T <= 100); }
+
+function getViscosityMode() {
+  const el = document.getElementById('viscosityMode');
+  return el && el.value === 'temperature' ? 'temperature' : 'fixed';
+}
+function muIsManual() {
+  const el = document.getElementById('muManual');
+  return !!(el && el.checked);
+}
+function viscositySource() {
+  if (muIsManual()) return 'MANUAL';
+  return getViscosityMode() === 'fixed' ? 'legacy fixed' : 'derived';
+}
 
 /* Glycol rides on top as a ratio against the table's own 0% row, which is the
-   same way rho and cp are handled in onBasisChange(). */
+   same way rho and cp are handled in onBasisChange(). The derived water figure
+   is temperature-corrected; the ratio is the glycol multiplier. A typed
+   override (muManual) is used as-is. */
 function currentViscosity() {
+  if (muIsManual()) {
+    const typed = parseFloat((document.getElementById('mu') || {}).value);
+    if (typed > 0) return typed;
+  }
   const Tm = getMeanTemp();
   const pct = parseInt((document.getElementById('glycol') || {}).value) || 0;
   const gp = getGlycolProps(pct), w0 = getGlycolProps(0);
-  return waterMu(Tm) * (gp[2] / w0[2]);
+  const water = getViscosityMode() === 'temperature' ? waterMu(Tm) : LEGACY_MU;
+  return water * (gp[2] / w0[2]);
 }
 
-function calcPD(vflow_m3s, id_m, material) {
+/* Darcy–Weisbach with Colebrook–White via Swamee–Jain. Laminar f = 64/Re
+   below Re 2300. Pure: the method is not the project. */
+function darcyWeisbach(vflow_m3s, id_m, rho, mu, eps_m) {
   const A = Math.PI * (id_m / 2) ** 2;
   const v = vflow_m3s / A;
-  // the same fallback calculateCircuit() uses, so a cleared field cannot put NaN
-  // through Re and out into the headroom figures
-  const rho = parseFloat(document.getElementById('rho').value) || 999;
-  const mu = currentViscosity() || waterMu(getMeanTemp());
   const Re = rho * v * id_m / mu;
-  const eps = getRoughness(material);
-  const relRough = eps / id_m;
+  const relRough = eps_m / id_m;
   let f;
   if (Re < 2300) f = 64 / Math.max(Re, 1);
   else {
@@ -2143,7 +2359,16 @@ function calcPD(vflow_m3s, id_m, material) {
     f = 0.25 / denom;
   }
   const pd = f * (rho * v * v) / (2 * id_m);
-  return { pd, v, Re };
+  return { pd, v, Re, f };
+}
+
+function calcPD(vflow_m3s, id_m, material) {
+  // the same fallback calculateCircuit() uses, so a cleared field cannot put NaN
+  // through Re and out into the headroom figures
+  const rho = parseFloat(document.getElementById('rho').value) || 999;
+  const mu = currentViscosity() || waterMu(getMeanTemp());
+  const eps = getRoughness(material);
+  return darcyWeisbach(vflow_m3s, id_m, rho, mu, eps);
 }
 
 /* ============ CIRCUIT MANAGEMENT ============ */
@@ -3730,6 +3955,8 @@ function onBasisChange() {
     if (rhoTag) { rhoTag.textContent = 'MANUAL'; rhoTag.style.background = '#c28a00'; }
     if (cpTag)  { cpTag.textContent  = 'MANUAL'; cpTag.style.background  = '#c28a00'; }
   }
+  refreshMuField();
+  refreshMaterialSelects();
   renderBasisSummary();
   renderCircuits();
 }
@@ -3749,6 +3976,178 @@ function renderBasisSummary() {
     + (autoPropsOn() ? '' : ' <span style="color:#c28a00;font-weight:700">(entered manually)</span>')
     + ', and pipe friction \u03bc ' + (currentViscosity() * 1000).toFixed(3) + ' mPa\u00b7s at the same temperature'
     + '. Flow leg loses heat at \u0394T ' + (Ts - Ta).toFixed(0) + ' K, return leg at \u0394T ' + (Tr - Ta).toFixed(0) + ' K.'
+    + '</div>';
+}
+
+let pendingViscosityOffer = false;
+const openCalcBasis = new Set();
+
+function onViscosityModeChange() {
+  pendingViscosityOffer = false;
+  hideViscosityLegacyNotice();
+  onBasisChange();
+}
+function onMuTyped() {
+  const box = document.getElementById('muManual');
+  if (box && !box.checked) box.checked = true;
+  onBasisChange();
+}
+function acceptTemperatureViscosity() {
+  const el = document.getElementById('viscosityMode');
+  if (el) el.value = 'temperature';
+  pendingViscosityOffer = false;
+  hideViscosityLegacyNotice();
+  onBasisChange();
+  showToast('Using temperature-corrected viscosity \u2014 pressure drops and sizes may have changed');
+}
+function keepLegacyViscosity() {
+  const el = document.getElementById('viscosityMode');
+  if (el) el.value = 'fixed';
+  pendingViscosityOffer = false;
+  hideViscosityLegacyNotice();
+  onBasisChange();
+  showToast('Kept the legacy fixed viscosity of 0.00131 Pa\u00b7s');
+}
+function hideViscosityLegacyNotice() {
+  const el = document.getElementById('viscosityLegacyNotice');
+  if (el) el.style.display = 'none';
+}
+function showViscosityLegacyNotice() {
+  const el = document.getElementById('viscosityLegacyNotice');
+  if (el) el.style.display = pendingViscosityOffer ? 'block' : 'none';
+}
+function refreshMuField() {
+  const muEl = document.getElementById('mu');
+  const muTag = document.getElementById('muTag');
+  const warn = document.getElementById('muRangeWarn');
+  if (!muEl) return;
+  const manual = muIsManual();
+  muEl.readOnly = !manual;
+  muEl.style.background = manual ? '' : 'var(--off-white)';
+  if (!manual) muEl.value = currentViscosity().toExponential(4);
+  if (muTag) {
+    const src = viscositySource();
+    muTag.textContent = src === 'MANUAL' ? 'MANUAL' : (src === 'legacy fixed' ? 'FIXED' : 'CALC');
+    muTag.style.background = src === 'derived' ? 'var(--brand-blue)' : '#c28a00';
+  }
+  const Tm = getMeanTemp();
+  if (warn) {
+    if (getViscosityMode() === 'temperature' && !manual && waterMuOutOfRange(Tm)) {
+      warn.style.display = 'block';
+      warn.textContent = 'Mean operating temperature is ' + Tm.toFixed(1)
+        + ' \u00b0C, outside the 0\u2013100 \u00b0C range of the water correlation. '
+        + 'Viscosity has fallen back to the legacy fixed value of 0.00131 Pa\u00b7s.';
+    } else {
+      warn.style.display = 'none';
+      warn.textContent = '';
+    }
+  }
+}
+function refreshRoughnessHint() {
+  const el = document.getElementById('roughnessHint');
+  if (!el) return;
+  const cond = conditionShort();
+  const bits = [
+    ['carbon', 'Carbon steel'],
+    ['stainless', 'Stainless'],
+    ['copper', 'Copper'],
+  ].map(([k, lab]) => lab + ', ' + cond + ' \u2014 \u03b5 ' + formatEpsMm(roughnessMm(k)) + ' mm');
+  el.textContent = bits.join(' \u00b7 ');
+}
+function refreshMaterialSelects() {
+  ['defaultMaterial', 'llhMaterial'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const cur = el.value;
+    el.innerHTML = materialOptionHtml(cur);
+    if (cur && !el.value) el.value = cur;
+  });
+  refreshRoughnessHint();
+}
+function calcBasisHtml(c, b, openAttr) {
+  const cell = (k, v) => '<div><div class="k">' + k + '</div><div class="v">' + v + '</div></div>';
+  return '<details class="calc-basis"' + openAttr + ' ontoggle="if(this.open)openCalcBasis.add(' + c.id + '); else openCalcBasis.delete(' + c.id + ')">'
+    + '<summary>Calculation basis</summary>'
+    + '<div class="calc-basis-grid">'
+    + cell('Internal diameter', b.id_mm.toFixed(1) + ' mm \u2014 ' + escHtml(b.nom) + ', ' + escHtml(b.table))
+    + cell('Absolute roughness \u03b5', formatEpsMm(b.eps_mm) + ' mm \u2014 ' + escHtml(b.materialLabel) + ', ' + escHtml(b.condition))
+    + cell('Density \u03c1', b.rho.toFixed(1) + ' kg/m\u00b3 \u2014 ' + escHtml(b.rhoSource))
+    + cell('Dynamic viscosity \u03bc', b.mu.toExponential(4) + ' Pa\u00b7s \u2014 ' + escHtml(b.muSource))
+    + cell('Velocity', b.v.toFixed(3) + ' m/s')
+    + cell('Reynolds number', Math.round(b.Re).toLocaleString('en-GB'))
+    + cell('Friction factor (Darcy)', b.f.toFixed(5))
+    + cell('\u0394p per metre', b.pd.toFixed(1) + ' Pa/m')
+    + cell('Straight length', b.length.toFixed(1) + ' m \u2014 ' + escHtml(b.lengthNote))
+    + cell('Straight-pipe \u0394p', b.straightLoss_kPa.toFixed(2) + ' kPa')
+    + cell('Fittings \u0394p', b.fittingsLoss_kPa.toFixed(2) + ' kPa')
+    + cell('Pipe total \u0394p', b.pipeLoss_kPa.toFixed(2) + ' kPa')
+    + '</div></details>';
+}
+function calcBasisReportRows(results) {
+  return results.map(({ c, r }) => {
+    if (r.error || !r.hydBasis) {
+      return '<tr><td>' + escHtml(c.ref) + '</td><td colspan="11" class="flag">'
+        + escHtml(r.error || 'No size') + '</td></tr>';
+    }
+    const b = r.hydBasis;
+    return '<tr><td>' + escHtml(c.ref) + '</td>'
+      + '<td>' + escHtml(b.nom) + ' / ' + b.id_mm.toFixed(1) + ' mm</td>'
+      + '<td>' + escHtml(b.table) + '</td>'
+      + '<td class="n">' + formatEpsMm(b.eps_mm) + '</td>'
+      + '<td class="n">' + b.rho.toFixed(1) + '</td>'
+      + '<td class="n">' + b.mu.toExponential(3) + '</td>'
+      + '<td>' + escHtml(b.muSource) + '</td>'
+      + '<td class="n">' + b.v.toFixed(3) + '</td>'
+      + '<td class="n">' + Math.round(b.Re).toLocaleString('en-GB') + '</td>'
+      + '<td class="n">' + b.f.toFixed(5) + '</td>'
+      + '<td class="n">' + b.pd.toFixed(1) + '</td>'
+      + '<td class="n">' + b.straightLoss_kPa.toFixed(2) + '</td>'
+      + '<td class="n">' + b.fittingsLoss_kPa.toFixed(2) + '</td></tr>';
+  }).join('');
+}
+
+function presetRoughnessMm(material, condition) {
+  const row = ROUGHNESS_PRESETS[condition];
+  return ((row && row[material]) || 0.000046) * 1000;
+}
+function onStraightPipeMaterialChange() {
+  const mat = (document.getElementById('spMaterial') || {}).value || 'stainless';
+  const cond = (document.getElementById('spCondition') || {}).value || 'new';
+  const eps = document.getElementById('spEps');
+  if (eps) eps.value = formatEpsMm(presetRoughnessMm(mat, cond));
+  renderStraightPipeCheck();
+}
+function renderStraightPipeCheck() {
+  const box = document.getElementById('spResult');
+  if (!box) return;
+  const id_mm = parseFloat((document.getElementById('spBore') || {}).value);
+  const lps = parseFloat((document.getElementById('spFlow') || {}).value);
+  const T = parseFloat((document.getElementById('spTemp') || {}).value);
+  const eps_mm = parseFloat((document.getElementById('spEps') || {}).value);
+  const mode = (document.getElementById('spViscMode') || {}).value;
+  if (!(id_mm > 0) || !(lps > 0) || !isFinite(T) || !(eps_mm >= 0)) {
+    box.innerHTML = 'Enter a bore, a flow, a temperature and a roughness.';
+    return;
+  }
+  const rhoTyped = parseFloat((document.getElementById('spRho') || {}).value);
+  const rho = rhoTyped > 0 ? rhoTyped : waterRho(T);
+  const mu = (mode === 'fixed' || waterMuOutOfRange(T)) ? LEGACY_MU : waterMu(T);
+  const h = darcyWeisbach(lps / 1000, id_mm / 1000, rho, mu, eps_mm / 1000);
+  const muNote = (mode === 'fixed')
+    ? 'legacy fixed'
+    : (waterMuOutOfRange(T) ? 'legacy fallback (T outside 0\u2013100 \u00b0C)' : 'derived from temperature');
+  const mat = (document.getElementById('spMaterial') || {}).value;
+  const cond = (document.getElementById('spCondition') || {}).value;
+  box.innerHTML =
+      '<strong style="color:var(--brand-blue-deep)">Bare straight pipe</strong> \u2014 '
+    + MAT_LABEL[mat] + ', ' + (COND_SHORT[cond] || cond)
+    + ', \u03b5 ' + formatEpsMm(eps_mm) + ' mm, \u03c1 ' + rho.toFixed(1) + ' kg/m\u00b3, \u03bc '
+    + mu.toExponential(4) + ' Pa\u00b7s (' + muNote + ').'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:10px">'
+    + '<div><div class="r-label" style="font-size:10px">Velocity</div><div style="font-weight:800;font-size:18px">' + h.v.toFixed(3) + '</div><div class="r-unit">m/s</div></div>'
+    + '<div><div class="r-label" style="font-size:10px">Reynolds</div><div style="font-weight:800;font-size:18px">' + Math.round(h.Re).toLocaleString('en-GB') + '</div><div class="r-unit">Re</div></div>'
+    + '<div><div class="r-label" style="font-size:10px">Darcy f</div><div style="font-weight:800;font-size:18px">' + h.f.toFixed(5) + '</div><div class="r-unit">friction factor</div></div>'
+    + '<div><div class="r-label" style="font-size:10px">\u0394p/m</div><div style="font-weight:800;font-size:18px">' + h.pd.toFixed(1) + '</div><div class="r-unit">Pa/m</div></div>'
     + '</div>';
 }
 
@@ -4155,8 +4554,8 @@ function calculateCircuit(c) {
     const id_mm = od - 2 * wall;
     const id_m = id_mm / 1000;
     if (id_m <= 0) return null;
-    const { pd, v } = calcPD(vflow_m3s, id_m, material);
-    return { nom, od, wall, id_mm, v, pd };
+    const h = calcPD(vflow_m3s, id_m, material);
+    return { nom, od, wall, id_mm, v: h.v, pd: h.pd, Re: h.Re, f: h.f };
   }).filter(Boolean);
 
   const firstOk = rows.find(r => r.pd <= LIMIT && r.v >= V_MIN && r.v <= V_MAX);
@@ -4203,6 +4602,34 @@ function calculateCircuit(c) {
   const totalLoss_mH2O = totalLoss_Pa / (rho * 9.81);
   const fittingsLoss_kPa = fittingsLoss_Pa / 1000;
   const straightLoss_kPa = straightLoss_Pa / 1000;
+  const rhoSource = autoPropsOn() ? 'derived from mean temp' : 'MANUAL';
+  const muNow = currentViscosity();
+  const muSrc = viscositySource();
+  const eps_m = getRoughness(material);
+  const lengthNote = (c.lengthsPaired !== false)
+    ? 'flow + return paired (' + lengthFlow(c).toFixed(1) + ' m each)'
+    : 'flow ' + lengthFlow(c).toFixed(1) + ' m + return ' + lengthReturn(c).toFixed(1) + ' m';
+  const hydBasis = recommended ? {
+    id_mm: recommended.id_mm,
+    nom: recommended.nom,
+    table: MAT_TABLE_NAME[material] || MAT_LABEL[material] || material,
+    materialLabel: MAT_LABEL[material] || material,
+    eps_mm: eps_m * 1000,
+    condition: conditionShort(),
+    rho: rho,
+    rhoSource: rhoSource,
+    mu: muNow,
+    muSource: muSrc,
+    v: recommended.v,
+    Re: recommended.Re,
+    f: recommended.f,
+    pd: recommended.pd,
+    length: length,
+    lengthNote: lengthNote,
+    straightLoss_kPa: straightLoss_kPa,
+    fittingsLoss_kPa: fittingsLoss_kPa,
+    pipeLoss_kPa: pipeLoss_kPa,
+  } : null;
 
   // Weight & volume calculations — based on straight pipe length only (not equivalent length)
   // Lagging/cladding/fittings allowance is applied as a 20% uplift on totals at the end
@@ -4245,9 +4672,10 @@ function calculateCircuit(c) {
     recommended, autoRecommended, status, allRows: rows, limit: LIMIT,
     length, fittings, effectiveLength, consumerLoad,
     pipeLoss_kPa, totalLoss_kPa, totalLoss_mH2O,
+    straightLoss_kPa, fittingsLoss_kPa,
     llhActive, vMaxUsed: V_MAX, materialUsed: material,
     sizeOverride: offset,
-    weights,
+    weights, hydBasis,
   };
 }
 
@@ -4770,7 +5198,7 @@ function renderCircuits() {
         const overrideLabel = isOverridden
           ? '<div style="font-size:10px;color:#c28a00;font-weight:600;letter-spacing:0.5px;margin-top:2px">' + (result.sizeOverride > 0 ? '+' : '') + result.sizeOverride + ' from auto (' + result.autoRecommended.nom + ')</div>'
           : '';
-        const idDisplay = '<div style="font-size:10px;color:var(--muted);font-weight:500;font-family:\'Inter\',sans-serif;letter-spacing:0.3px;margin-top:1px">ID ' + result.recommended.id_mm.toFixed(1) + 'mm</div>';
+        const idDisplay = '';
         // Peak capacity of the SELECTED size — live headroom guide. Held to
         // whichever limit binds first, and it says which, because "peak at
         // 300 Pa/m" on a pipe that is actually stopped by velocity is a
@@ -4797,7 +5225,7 @@ function renderCircuits() {
         recText = '<div style="display:flex;flex-direction:column;align-items:center;gap:2px">'
           + '<div style="display:flex;align-items:center;gap:6px">'
           +   '<button onclick="updateCircuitField(' + c.id + ',\'sizeOverride\',(parseInt(circuits.find(c=>c.id===' + c.id + ').sizeOverride)||0)-1)" title="Step down one size" style="background:var(--white);border:1px solid var(--line-strong);color:var(--ink);width:22px;height:22px;border-radius:3px;cursor:pointer;font-weight:700;line-height:1;padding:0">−</button>'
-          +   '<div style="display:flex;flex-direction:column;align-items:center;min-width:64px"><span style="font-family:\'Barlow Condensed\',sans-serif;font-weight:700;font-size:17px;color:var(--black);line-height:1">' + result.recommended.nom + '</span>' + idDisplay + '</div>'
+          +   '<div style="display:flex;flex-direction:column;align-items:center;min-width:96px"><span style="font-family:\'Barlow Condensed\',sans-serif;font-weight:700;font-size:16px;color:var(--black);line-height:1.15;text-align:center">' + sizeLabel(result.recommended.nom, result.recommended.id_mm) + '</span>' + idDisplay + '</div>'
           +   '<button onclick="updateCircuitField(' + c.id + ',\'sizeOverride\',(parseInt(circuits.find(c=>c.id===' + c.id + ').sizeOverride)||0)+1)" title="Step up one size" style="background:var(--white);border:1px solid var(--line-strong);color:var(--ink);width:22px;height:22px;border-radius:3px;cursor:pointer;font-weight:700;line-height:1;padding:0">+</button>'
           + '</div>'
           + (isOverridden ? '<button onclick="updateCircuitField(' + c.id + ',\'sizeOverride\',0)" title="Reset to auto-recommendation" style="background:transparent;border:none;color:var(--brand-blue-deep);font-size:10px;cursor:pointer;text-decoration:underline;padding:0;margin-top:2px">reset to auto</button>' : '')
@@ -4884,15 +5312,8 @@ function renderCircuits() {
       + '<option value="fromChildren"' + (c.mode === 'fromChildren' ? ' selected' : '') + '>Auto from consumers</option>'
       + '</select></td>'
       + '<td data-label="Material"><select onchange="updateCircuitField(' + c.id + ',\'material\',this.value)">'
-      + '<option value="truboreMetric"' + (c.material==='truboreMetric'?' selected':'') + '>TruBore Metric 304L</option>'
-      + '<option value="truboreMetric316"' + (c.material==='truboreMetric316'?' selected':'') + '>TruBore Metric 316L</option>'
-      + '<option value="trubore"'      + (c.material==='trubore'?     ' selected':'') + '>TruBore ISO 304L</option>'
-      + '<option value="trubore316"'   + (c.material==='trubore316'?  ' selected':'') + '>TruBore ISO 316L</option>'
-      + '<option value="stainless304"' + (c.material==='stainless304'?' selected':'') + '>Stainless 304</option>'
-      + '<option value="stainless"'    + (c.material==='stainless'?   ' selected':'') + '>Stainless 316</option>'
-      + '<option value="carbon"'       + (c.material==='carbon'?      ' selected':'') + '>Carbon Steel</option>'
-      + '<option value="copper"'       + (c.material==='copper'?      ' selected':'') + '>Copper</option>'
-      + '<option value="mlcp"'         + (c.material==='mlcp'?        ' selected':'') + '>MLCP</option></select></td>'
+      + materialOptionHtml(c.material)
+      + '</select></td>'
       + '<td data-label="Input A (kW)">' + inputA + '</td>'
       + '<td data-label="\u0394T (K)"><input type="number" value="' + c.dT + '" step="0.5" min="0.1" onchange="updateCircuitField(' + c.id + ',\'dT\',this.value)"></td>'
       + '<td data-label="Input B (l/s)">' + inputB + '</td>'
@@ -4954,7 +5375,7 @@ function renderCircuits() {
       + '<td class="td-mob-sum" data-label="Result">'
       +   (result.error
             ? '<span style="color:#c74418;font-weight:600">' + escHtml(result.error) + '</span>'
-            : '<strong style="font-size:14px">' + (result.recommended ? result.recommended.nom : '\u2014') + '</strong>'
+            : '<strong style="font-size:14px">' + (result.recommended ? sizeLabel(result.recommended.nom, result.recommended.id_mm) : '\u2014') + '</strong>'
               + '<span style="color:var(--muted)"> \u00b7 </span>' + (result.vflow_ls ? result.vflow_ls.toFixed(2) : '0') + ' l/s'
               + '<span style="color:var(--muted)"> \u00b7 </span>' + (result.recommended ? result.recommended.v.toFixed(2) : '0') + ' m/s'
               + '<span style="color:var(--muted)"> \u00b7 </span>' + result.totalLoss_kPa.toFixed(1) + ' kPa'
@@ -4963,6 +5384,13 @@ function renderCircuits() {
       + '<td data-label="Status">' + statusBadge + '</td>';
 
     tbody.appendChild(tr);
+    if (result.hydBasis) {
+      const br = document.createElement('tr');
+      br.className = 'calc-basis-row';
+      const open = openCalcBasis.has(c.id) ? ' open' : '';
+      br.innerHTML = '<td colspan="40">' + calcBasisHtml(c, result.hydBasis, open) + '</td>';
+      tbody.appendChild(br);
+    }
   });
 
   /* System (pump) figures: main-line flow = largest index circuit flow; head
@@ -5646,7 +6074,7 @@ function exportPDFReport() {
     return '<tr><td>'+escHtml(c.ref)+(c.isIndex?' <span class="tag">INDEX</span>':'')+(c.isLLH?' <span class="tag">LLH</span>':'')+(c.vesselType==='hx'?' <span class="tag">HX</span>':'')+'</td>'
       + '<td>'+escHtml(MAT_LABEL[c.material])+'</td>'
       + '<td class="n">'+r.kw.toFixed(1)+'</td><td class="n">'+c.dT+'</td><td class="n">'+r.vflow_ls.toFixed(2)+'</td>'
-      + '<td class="n"><strong>'+(rec?rec.nom:'\u2014')+'</strong></td><td class="n">'+(rec?rec.id_mm.toFixed(1):'\u2014')+'</td>'
+      + '<td class="n"><strong>'+(rec?sizeLabel(rec.nom, rec.id_mm):'\u2014')+'</strong></td><td class="n">'+(rec?rec.id_mm.toFixed(1):'\u2014')+'</td>'
       + '<td class="n">'+(rec?rec.v.toFixed(2):'\u2014')+'</td><td class="n">'+(rec?rec.pd.toFixed(0):'\u2014')+'</td>'
       + '<td class="n">'+r.totalLoss_kPa.toFixed(1)+'</td>'
       + '<td class="n">'+instKgM.toFixed(1)+'</td><td class="n">'+instKg.toFixed(0)+'</td>'
@@ -5935,7 +6363,7 @@ function exportPDFReport() {
     + '<div class="r"><span class="l">Specific heat</span><span>'+cp.toFixed(3)+' kJ/kg\u00b7K</span></div><div class="r"><span class="l">Pipe condition</span><span>'+escHtml(condLabel)+'</span></div>'
     + '</div>'
     + '<h2>1. Design Basis</h2>'
-    + '<p>This report presents the hydronic pipework sizing for the above project. Pipe sizes are selected such that the frictional pressure gradient does not exceed <strong>'+limitPd+' Pa/m</strong> (CIBSE guidance), with velocities held within <strong>'+vMin+'\u2013'+vMax+' m/s</strong>. Losses are calculated using the Darcy\u2013Weisbach equation with the Colebrook\u2013White friction factor (Swamee\u2013Jain), for '+glyLabel+', assuming '+condLabel.toLowerCase()+' pipe. Materials: '+escHtml([...materialsUsed].join(', ')||'\u2014')+'.</p>'
+    + '<p>This report presents the hydronic pipework sizing for the above project. Pipe sizes are selected such that the frictional pressure gradient does not exceed <strong>'+limitPd+' Pa/m</strong> (CIBSE guidance), with velocities held within <strong>'+vMin+'\u2013'+vMax+' m/s</strong>. Losses are calculated using the Darcy\u2013Weisbach equation with the Colebrook\u2013White friction factor (Swamee\u2013Jain), for '+glyLabel+', assuming '+condLabel.toLowerCase()+' pipe. Dynamic viscosity is <strong>'+(viscositySource()==='derived'?'temperature-corrected water at the mean operating temperature':viscositySource()==='legacy fixed'?'the legacy fixed value of 0.00131 Pa\u00b7s':'a manual override')+'</strong> (\u03bc '+(currentViscosity()).toExponential(4)+' Pa\u00b7s). The derived water figure is for water only; glycol uses the table ratio on top, or a typed override. Materials: '+escHtml([...materialsUsed].join(', ')||'\u2014')+'.</p>'
     + '<h2>2. Summary of Findings</h2>'
     + '<div class="tiles"><div class="tile"><div class="v">'+results.length+'</div><div class="l">Circuits</div></div><div class="tile"><div class="v">'+consumerKw.toFixed(0)+'</div><div class="l">Consumer Total kW</div></div><div class="tile"><div class="v">'+sysFlow.toFixed(1)+'</div><div class="l">System Flow l/s</div></div><div class="tile"><div class="v">'+within+'</div><div class="l">Within '+limitPd+' Pa/m</div></div></div>'
     + '<p style="font-size:8.5pt;color:#5a6875">Consumer Total sums the duty of circuits with a consumer load (kPa) entered \u2014 i.e. the terminal equipment. Distribution mains carry no consumer load and are excluded, avoiding double-counting.</p>'
@@ -5943,6 +6371,10 @@ function exportPDFReport() {
     + '<h2>3. Circuit Sizing Schedule</h2>'
     + '<table class="rpt"><thead><tr><th>Circuit</th><th>Material</th><th class="n">Duty kW</th><th class="n">\u0394T K</th><th class="n">Flow l/s</th><th class="n">Size</th><th class="n">ID mm</th><th class="n">Vel m/s</th><th class="n">Pa/m</th><th class="n">Loss kPa</th><th class="n">Inst. kg/m</th><th class="n">Inst. kg</th><th>Status</th></tr></thead><tbody>'+(schedule||'<tr><td colspan="13">No circuits.</td></tr>')+'</tbody></table>'
     + '<p style="font-size:8.5pt;color:#5a6875">Installed weights include the '+upliftPct+'% uplift for lagging, cladding and bracketry, applied per line.</p>'
+    + '<h2>Assumptions register \u2014 calculation basis</h2>'
+    + '<p>The figures each circuit was actually sized on, so a third-party friction calculator can be compared like-for-like. Straight-pipe \u0394p is the bore and length only; fittings \u0394p is the counted schedule or the equivalent-length percentage. Density is derived from mean operating temperature unless entered manually. Viscosity is temperature-corrected water, the legacy fixed 0.00131&nbsp;Pa\u00b7s, or a typed override. The derived water value is for water only.</p>'
+    + '<table class="rpt"><thead><tr><th>Circuit</th><th>Size / ID</th><th>Table</th><th class="n">\u03b5 mm</th><th class="n">\u03c1</th><th class="n">\u03bc Pa\u00b7s</th><th>\u03bc source</th><th class="n">v m/s</th><th class="n">Re</th><th class="n">Darcy f</th><th class="n">Pa/m</th><th class="n">Straight kPa</th><th class="n">Fittings kPa</th></tr></thead><tbody>'
+    + (calcBasisReportRows(results) || '<tr><td colspan="13">No circuits.</td></tr>') + '</tbody></table>'
     + capacitySection
     + plantSection
     + pumpSection
@@ -6007,6 +6439,8 @@ function showToast(msg) {
    never purged and are not tied to one machine.
    ============================================================ */
 const PROJECT_SETTING_IDS = ["projectRef", "engineer", "calcDate", "glycol", "rho", "cp", "defaultMaterial", "limitPd", "vMin", "vMax", "pipeCondition", "customRoughCarbon", "customRoughStainless", "llhVMax", "llhMaterial", "weightUplift", "plantPd", "valvePd", "strainerPd", "miscPd", "staticHead", "safetyFactor", "insType", "insLambda", "surfaceFinish", "fluidTemp", "ambientTemp", "dwellMins", "flangeFactor", "targetTemp", "diversityFactor", "plantMargin", "plantOutput", "recoverFrom", "recoverTo", "plantDT", "returnTemp", "shutdownScenario", "customStartTemp", "rollupTol", "systemPreset", "pumpMinFlow"];
+/* viscosityMode is applied in installProject, not here: a missing field must
+   become "fixed", and the forEach would otherwise leave the last job's mode. */
 
 /* Parts of a project file this tool does not use but must not lose. Pipe Trace
    writes the valve take-off (`valveSchedule`), its own figures (`traceMeta`)
@@ -6068,6 +6502,8 @@ function buildProjectSnapshot() {
      temperatures and quietly landing somewhere else. rho and cp already cross
      as their own fields; this is the third property and it was missing. */
   settings.mu = currentViscosity();
+  settings.viscosityMode = getViscosityMode();
+  settings.muManual = muIsManual();
   return Object.assign({
     app: 'adi-pipework-sizer',
     schema: 1,
@@ -6175,6 +6611,7 @@ function applyProjectData(data, opts) {
     showToast('Opened ' + ref + ' \u2014 ' + circuits.length + ' circuits'
               + (source ? ' from ' + source : '') + repairNote(repaired));
     warnUnknownFittings();
+    showViscosityLegacyNotice();
     return true;
   }
 }
@@ -6203,6 +6640,19 @@ function installProject(data) {
     if (ap && data.settings.autoProps !== undefined) {
       ap.checked = !!data.settings.autoProps;
     }
+    const vm = document.getElementById('viscosityMode');
+    const incomingMode = data.settings.viscosityMode;
+    if (incomingMode === 'temperature' || incomingMode === 'fixed') {
+      if (vm) vm.value = incomingMode;
+      pendingViscosityOffer = false;
+    } else {
+      if (vm) vm.value = 'fixed';
+      pendingViscosityOffer = true;
+    }
+    const mm = document.getElementById('muManual');
+    if (mm) mm.checked = !!data.settings.muManual;
+    const muEl = document.getElementById('mu');
+    if (muEl && data.settings.mu != null && data.settings.muManual) muEl.value = data.settings.mu;
     const cr = document.getElementById('customRoughnessRow');
     const pc = document.getElementById('pipeCondition');
     if (cr && pc) cr.style.display = pc.value === 'custom' ? 'grid' : 'none';
@@ -6610,6 +7060,7 @@ function formatDateGB(iso) {
 document.getElementById('glycol').addEventListener('input', onGlycolChange);
 document.getElementById('pipeCondition').addEventListener('change', e => {
   document.getElementById('customRoughnessRow').style.display = e.target.value === 'custom' ? 'grid' : 'none';
+  refreshMaterialSelects();
   renderCircuits();
 });
 document.getElementById('addRowBtn').addEventListener('click', () => addCircuit());
@@ -6666,6 +7117,8 @@ if (!cameFromTrace && circuits.length === 0) {
 try { if (localStorage.getItem('adi_compact') === '1') document.body.classList.add('compact-rows');
       if (localStorage.getItem('adi_outputs') === '1') document.body.classList.add('show-outputs'); } catch (e) {}
 onBasisChange();   // sets fluid properties from the mean temperature, then renders
+showViscosityLegacyNotice();
+renderStraightPipeCheck();
 </script>
 </body>
 </html>
