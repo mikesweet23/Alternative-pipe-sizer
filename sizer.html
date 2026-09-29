@@ -4230,9 +4230,17 @@ function setAllMainsAuto() {
    below returns 0 for a key it does not know. Change both, in one commit.
    `assumed` marks a K standing in for selected-product data rather than a
    Guide C or Crane figure; it is flagged wherever the row is shown. */
+/* elbow90DH is the Tru-Bore D+100 welded elbow (datasheet MF1002045D16). The
+   datasheet gives geometry, not a loss: centreline radius R = DN + 100 on an
+   exact-bore tube, so r/d = 1 + 100/DN whatever the wall. K is Crane TP-410
+   (Le/D against r/d, times the friction factor fT for that size) at each
+   DN, so it carries its own `kdn` points and is read on those instead of
+   15/50/150/300. Made from DN65; smaller sizes read the DN65 figure. */
 const FITTING_TYPES = {
   elbow90:        { label: '90\u00b0 elbow (short radius)',  k: [1.00, 0.75, 0.60, 0.52] },
   elbow90LR:      { label: '90\u00b0 elbow (long radius)',   k: [0.55, 0.42, 0.34, 0.30] },
+  elbow90DH:      { label: '90\u00b0 elbow (Tru-Bore D+100 radius)', k: [0.216, 0.216, 0.204, 0.205, 0.200, 0.196, 0.213, 0.208, 0.215, 0.221, 0.208, 0.211, 0.216, 0.219, 0.222, 0.224, 0.226],
+                    kdn: [65, 80, 100, 125, 150, 200, 250, 300, 350, 400, 450, 500, 600, 700, 800, 900, 1000] },
   bend90:         { label: '90\u00b0 pulled bend',           k: [0.35, 0.28, 0.22, 0.19] },
   elbow45:        { label: '45\u00b0 elbow',                 k: [0.45, 0.36, 0.30, 0.26] },
   teeLine:        { label: 'Tee \u2014 flow through run',    k: [0.45, 0.35, 0.28, 0.24] },
@@ -4276,7 +4284,7 @@ const K_MATERIAL_FACTOR = {
 function fittingK(type, dn, material) {
   const f = FITTING_TYPES[type];
   if (!f) return 0;
-  const pts = K_DN_POINTS, ks = f.k;
+  const pts = f.kdn || K_DN_POINTS, ks = f.k;
   let k;
   if (dn <= pts[0]) k = ks[0];
   else if (dn >= pts[pts.length - 1]) k = ks[ks.length - 1];

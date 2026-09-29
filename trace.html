@@ -1009,9 +1009,17 @@ function roughnessFor(material) {
    because the sizer's fittingK() returns 0 for a key it does not know.
    `assumed` marks a K that is not in Guide C or Crane and is standing in for
    selected-product data \u2014 it is flagged wherever the figure is shown. */
+/* elbow90DH is the Tru-Bore D+100 welded elbow (datasheet MF1002045D16). The
+   datasheet gives geometry, not a loss: centreline radius R = DN + 100 on an
+   exact-bore tube, so r/d = 1 + 100/DN whatever the wall. K is Crane TP-410
+   (Le/D against r/d, times the friction factor fT for that size) at each
+   DN, so it carries its own `kdn` points and is read on those instead of
+   15/50/150/300. Made from DN65; smaller sizes read the DN65 figure. */
 const FITTING_TYPES = {
   elbow90:        { label: '90\u00b0 elbow (short radius)',  k: [1.00, 0.75, 0.60, 0.52] },
   elbow90LR:      { label: '90\u00b0 elbow (long radius)',   k: [0.55, 0.42, 0.34, 0.30] },
+  elbow90DH:      { label: '90\u00b0 elbow (Tru-Bore D+100 radius)', k: [0.216, 0.216, 0.204, 0.205, 0.200, 0.196, 0.213, 0.208, 0.215, 0.221, 0.208, 0.211, 0.216, 0.219, 0.222, 0.224, 0.226],
+                    kdn: [65, 80, 100, 125, 150, 200, 250, 300, 350, 400, 450, 500, 600, 700, 800, 900, 1000] },
   bend90:         { label: '90\u00b0 pulled bend',           k: [0.35, 0.28, 0.22, 0.19] },
   elbow45:        { label: '45\u00b0 elbow',                 k: [0.45, 0.36, 0.30, 0.26] },
   teeLine:        { label: 'Tee \u2014 flow through run',    k: [0.45, 0.35, 0.28, 0.24] },
@@ -1057,14 +1065,14 @@ function nominalDN(nom, id_mm) {
 function fittingK(type, dn, material) {
   const f = FITTING_TYPES[type];
   if (!f) return 0;
-  const ks = f.k;
+  const ks = f.k, pts = f.kdn || K_DN;
   let k;
-  if (dn <= K_DN[0]) k = ks[0];
-  else if (dn >= K_DN[K_DN.length - 1]) k = ks[ks.length - 1];
+  if (dn <= pts[0]) k = ks[0];
+  else if (dn >= pts[pts.length - 1]) k = ks[ks.length - 1];
   else {
-    for (let i = 0; i < K_DN.length - 1; i++) {
-      if (dn >= K_DN[i] && dn <= K_DN[i + 1]) {
-        const t = (dn - K_DN[i]) / (K_DN[i + 1] - K_DN[i]);
+    for (let i = 0; i < pts.length - 1; i++) {
+      if (dn >= pts[i] && dn <= pts[i + 1]) {
+        const t = (dn - pts[i]) / (pts[i + 1] - pts[i]);
         k = ks[i] + t * (ks[i + 1] - ks[i]);
         break;
       }
@@ -1451,6 +1459,8 @@ function defaultSettings() {
     jointing: 'welded',          // 'welded' or 'flanged'
     flangeSpacing: 4,            // metres between flanged joints
     bendType: 'elbow90',         // what a change of direction is made from
+    bendMode: 'single',          // 'single' = every bend is bendType; 'mix' = split by bendMix
+    bendMix: { elbow90: 0, elbow90LR: 0, elbow90DH: 100, bend90: 0 },  // percent by type, used when bendMode is 'mix'
     autoName: true,
     snapPoints: true,            // branch only at components, tees and corners
     /* Corners lock to square and 45 degrees, and Alt frees them for one
@@ -2884,6 +2894,23 @@ function segHasPlacedValves(segId) { return S.items.some(it => it.seg === segId)
    under-counting every angled run on the drawing.
    Deflection is the angle turned through, so a straight line is 0°. */
 const ANGLE_TOL = 7.5;
+/* The 90s on a drawing are not all made the same way. `bendType` is the whole
+   job on one fitting; with `bendMode: 'mix'` each 90 is split across the types
+   by percentage, so a job with some short-radius elbows, some D+100 and some
+   pulled bends carries the head of that mixture rather than of one guess. The
+   counts are expected values, so a run with one corner at 40/60 carries 0.4 of
+   one type and 0.6 of the other, which is what a job of many corners converges
+   on. Shares are normalised, so 30/30/30 reads as thirds. */
+const BEND_TYPES = ['elbow90', 'elbow90LR', 'elbow90DH', 'bend90'];
+function bendShares() {
+  const s = S.settings;
+  if (s.bendMode === 'mix' && s.bendMix) {
+    const raw = BEND_TYPES.map(t => [t, Math.max(0, parseFloat(s.bendMix[t]) || 0)]);
+    const sum = raw.reduce((a, r) => a + r[1], 0);
+    if (sum > 0) return raw.filter(r => r[1] > 0).map(r => [r[0], r[1] / sum]);
+  }
+  return [[s.bendType || 'elbow90', 1]];
+}
 function cornerFitting(deflectDeg) {
   const a = Math.abs(deflectDeg);
   const bend = S.settings.bendType || 'elbow90';
@@ -2921,6 +2948,8 @@ function segFittings(sg) {
   const f = {};
   const add = (k, n) => { if (n > 0) f[k] = (f[k] || 0) + n; };
   const bend = S.settings.bendType || 'elbow90';
+  const shares = bendShares();
+  const addBend = n => shares.forEach(([t, w]) => add(t, n * w));
 
   // corners on the plan, each costed on the angle it actually turns through
   const angles = cornerAngles(sg.pts);
@@ -2928,11 +2957,11 @@ function segFittings(sg) {
   angles.forEach(d => {
     const c = cornerFitting(d);
     if (!c) return;
-    add(c.type, c.n);
+    if (c.type === bend) addBend(c.n); else add(c.type, c.n);
     cornerMix[c.kind]++;
   });
-  if (br.verts > 0) add(bend, br.verts * 2);  // each height change is up (or down) and back to horizontal
-  if (extra > 0.01) add(bend, 4);             // over an obstruction and back down
+  if (br.verts > 0) addBend(br.verts * 2);  // each height change is up (or down) and back to horizontal
+  if (extra > 0.01) addBend(4);             // over an obstruction and back down
 
   // tee where this run leaves its parent
   if (up && up.type === 'junction') add('teeBranch', 1);
@@ -6934,6 +6963,9 @@ function placedValvesBox(sg) {
         + 'valves are here instead. Counting both would count them twice.</div>' : '');
 }
 
+/* Counts are whole unless a bend mix has split them. */
+function fmtCount(n) { return Math.abs(n - Math.round(n)) < 0.005 ? String(Math.round(n)) : n.toFixed(1); }
+
 function fittingsBox(sg) {
   const keys = Object.keys(sg.fit.list);
   if (!keys.length) return '';
@@ -6943,7 +6975,7 @@ function fittingsBox(sg) {
   const rows = keys.map(k => {
     const n = sg.fit.list[k];
     const each = sg.pipe ? fittingPa(k, dn, mat, sg.pipe.v, rho) / 1000 : 0;
-    return '<tr><td style="padding:3px 0">' + n + ' \u00d7 ' + (FITTING_TYPES[k] || { label: k }).label + '</td>'
+    return '<tr><td style="padding:3px 0">' + fmtCount(n) + ' \u00d7 ' + (FITTING_TYPES[k] || { label: k }).label + '</td>'
       + '<td style="padding:3px 0;text-align:right;font-family:Azeret Mono,monospace">'
       + fmt(n * each, 2) + '</td></tr>';
   }).join('');
@@ -7981,7 +8013,9 @@ function fittingsTakeoff() {
       groups[key].qty += list[k];
     });
   });
-  return Object.keys(groups).map(k => groups[k]).sort((a, b) =>
+  /* A bend mix splits corners into fractions for the hydraulics. Fittings are
+     bought whole, so the order is rounded up once per type and size. */
+  return Object.keys(groups).map(k => { const g = groups[k]; g.qty = Math.ceil(g.qty - 1e-6); return g; }).sort((a, b) =>
     a.label.localeCompare(b.label) ||
     String(a.size).localeCompare(String(b.size), 'en', { numeric: true }));
 }
@@ -10114,7 +10148,22 @@ function projectDialog() {
     + '<label class="fld"><span>Changes of direction made with</span><select id="pBend">'
     +   '<option value="elbow90"' + (s.bendType === 'elbow90' ? ' selected' : '') + '>90&deg; elbows (short radius)</option>'
     +   '<option value="elbow90LR"' + (s.bendType === 'elbow90LR' ? ' selected' : '') + '>90&deg; elbows (long radius)</option>'
+    +   '<option value="elbow90DH"' + (s.bendType === 'elbow90DH' ? ' selected' : '') + '>90&deg; elbows (Tru-Bore D+100 radius)</option>'
     +   '<option value="bend90"' + (s.bendType === 'bend90' ? ' selected' : '') + '>Pulled bends</option></select></label>'
+    + '<label class="fld" style="display:flex;align-items:center;gap:9px">'
+    +   '<input type="checkbox" id="pBendMix" ' + (s.bendMode === 'mix' ? 'checked' : '')
+    +   ' style="width:17px;height:17px;min-height:0"><span style="margin:0;text-transform:none;letter-spacing:0;font-size:12.5px;color:var(--ink)">'
+    +   'Use a mix of bend radii instead (percentage of 90&deg; bends by type)</span></label>'
+    + '<div id="pMixBox" style="display:' + (s.bendMode === 'mix' ? 'block' : 'none') + '">'
+    + '<div class="row2">'
+    +   '<label class="fld"><span>Short radius <em>%</em></span><input type="number" id="pMixSR" min="0" step="5" value="' + ((s.bendMix || {}).elbow90 || 0) + '"></label>'
+    +   '<label class="fld"><span>Long radius <em>%</em></span><input type="number" id="pMixLR" min="0" step="5" value="' + ((s.bendMix || {}).elbow90LR || 0) + '"></label>'
+    + '</div><div class="row2">'
+    +   '<label class="fld"><span>Tru-Bore D+100 <em>%</em></span><input type="number" id="pMixDH" min="0" step="5" value="' + ((s.bendMix || {}).elbow90DH || 0) + '"></label>'
+    +   '<label class="fld"><span>Pulled bend <em>%</em></span><input type="number" id="pMixPB" min="0" step="5" value="' + ((s.bendMix || {}).bend90 || 0) + '"></label>'
+    + '</div>'
+    + '<div class="note" id="pMixNote"></div></div>'
+    + '<div class="note">Tru-Bore D+100 K is derived from the datasheet geometry (r/d = 1 + 100/DN) using Crane TP-410, not a supplier-tested figure. Replace it if the manufacturer publishes one.</div>'
     + '<label class="fld" style="display:flex;align-items:center;gap:9px">'
     +   '<input type="checkbox" id="pTerm" ' + (s.termValves ? 'checked' : '')
     +   ' style="width:17px;height:17px;min-height:0"><span style="margin:0;text-transform:none;letter-spacing:0;font-size:12.5px;color:var(--ink)">'
@@ -10197,6 +10246,16 @@ function projectDialog() {
     hint.innerHTML = (MAT_LABEL[mat] || mat) + ', ' + condLab
       + ' \u2014 \u03b5 ' + (rough * 1000).toFixed(rough * 1000 < 0.01 ? 4 : 3) + ' mm';
   };
+  const mixNote = () => {
+    el('pMixBox').style.display = el('pBendMix').checked ? 'block' : 'none';
+    const v = ['pMixSR', 'pMixLR', 'pMixDH', 'pMixPB'].map(i => Math.max(0, parseFloat(el(i).value) || 0));
+    const sum = v.reduce((a, b) => a + b, 0);
+    el('pMixNote').textContent = sum <= 0 ? 'Enter at least one percentage, or the single type above is used.'
+      : (Math.abs(sum - 100) < 0.01 ? 'Adds to 100%.' : 'Adds to ' + sum + '%, so the shares are scaled to 100%.');
+  };
+  ['pBendMix', 'pMixSR', 'pMixLR', 'pMixDH', 'pMixPB'].forEach(i => el(i).addEventListener('input', mixNote));
+  el('pBendMix').addEventListener('change', mixNote);
+  mixNote();
   el('pCond').addEventListener('change', () => {
     const cond = el('pCond').value, mat = el('pMat').value;
     const r = el('pRough');
@@ -10235,6 +10294,14 @@ function projectDialog() {
     s.jointing = el('pJoint').value;
     s.flangeSpacing = parseFloat(el('pFlSp').value) || 4;
     s.bendType = el('pBend').value;
+    s.bendMode = el('pBendMix').checked ? 'mix' : 'single';
+    s.bendMix = {
+      elbow90:   Math.max(0, parseFloat(el('pMixSR').value) || 0),
+      elbow90LR: Math.max(0, parseFloat(el('pMixLR').value) || 0),
+      elbow90DH: Math.max(0, parseFloat(el('pMixDH').value) || 0),
+      bend90:    Math.max(0, parseFloat(el('pMixPB').value) || 0)
+    };
+    if (s.bendMode === 'mix' && !BEND_TYPES.some(t => s.bendMix[t] > 0)) s.bendMode = 'single';
     s.termValves = el('pTerm').checked;
     s.ortho = el('pOrtho').checked;
     el('orthoChk').checked = s.ortho;            // the hint bar says the same thing

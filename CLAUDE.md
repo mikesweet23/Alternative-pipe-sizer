@@ -476,6 +476,7 @@ is a check for this in section 7.
 | 90° elbow (short radius) | 1.00 | 0.75 | 0.60 | 0.52 | |
 | 90° elbow (long radius) | 0.55 | 0.42 | 0.34 | 0.30 | |
 | Pulled bend | 0.35 | 0.28 | 0.22 | 0.19 | |
+| 90° elbow, Tru-Bore D+100 radius | 0.216 at DN65 | 0.205 at DN125 | 0.196 at DN200 | 0.208 at DN300 | *derived*, see below; own DN points, DN65–DN1000 |
 | 45° elbow | 0.45 | 0.36 | 0.30 | 0.26 | |
 | Tee through run | 0.45 | 0.35 | 0.28 | 0.24 | |
 | Tee through branch | 1.60 | 1.30 | 1.05 | 0.92 | |
@@ -504,6 +505,30 @@ schedules and the sizer's fittings editor. Replace with supplier data.
 The four zero-K rows sit on a branch off the bore, so they add nothing to the
 loss along the run. They exist so a count placed in Pipe Trace still appears
 on the schedule rather than disappearing.
+
+### Elbow radius, and the Tru-Bore D+100 elbow
+
+The other 90° rows are generic short, long and pulled figures. **`elbow90DH` is
+the Tru-Bore D+100 welded elbow** (datasheet MF1002045D16, September 2026).
+The datasheet is geometry only — centreline radius R = DN + 100 on an
+exact-bore tube (ID = DN, so the wall, 2 mm or 3 mm, does not move it) — and
+gives no loss coefficient. K is derived: r/d = 1 + 100/DN, Le/D read off the
+Crane TP-410 bend curve (20 at r/d 1, 14 at 1.5, 12 at 2 to 3), times Crane's
+friction factor fT for that size (0.018 at DN65 falling to 0.012 from DN450).
+That gives 0.20–0.23 at every size from DN65 to DN1000, roughly half the
+generic long-radius figure. It is **not a supplier-tested number**: replace the
+row if the manufacturer publishes one. Because its shape does not fit
+15/50/150/300, the row carries `kdn` (its own DN points) and `fittingK()` in
+both files reads them; smaller than DN65 or larger than DN1000 holds the end
+value. The usual 0.95 stainless credit is applied on top, as for every fitting.
+
+`settings.bendType` picks one type for every 90° on the job. With
+`settings.bendMode: 'mix'` and `settings.bendMix` (percent by `elbow90`,
+`elbow90LR`, `elbow90DH`, `bend90`, normalised to 100) every 90° is split by
+those shares (`bendShares()`). Counts are then fractional expected values in
+`fittingSchedule`, which the sizer already reads with `parseFloat`; the
+material take-off rounds up once per type and size. 45° elbows and tees are
+unaffected.
 
 ### Valves that hold a differential, not a velocity head
 
