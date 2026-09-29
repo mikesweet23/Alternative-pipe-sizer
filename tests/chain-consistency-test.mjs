@@ -85,6 +85,13 @@ if (ftTrace && ftSizer) {
     + (differ.length ? ' (differ: ' + differ.join(', ') + ')' : ''));
 }
 
+/* A fitting with its own DN points (the Tru-Bore D+100 elbow) needs one K per point. */
+if (ftTrace && ftSizer) {
+  const bad = Object.keys(ftSizer).filter(k => ftSizer[k].kdn && ftSizer[k].kdn.length !== ftSizer[k].k.length);
+  ok(!bad.length && ftSizer.elbow90DH && ftSizer.elbow90DH.kdn, 'elbow90DH carries one K per DN point'
+    + (bad.length ? ' (mismatch: ' + bad.join(', ') + ')' : ''));
+}
+
 /* ---- pipe dimension tables: the sizer's, copied into the other two ---- */
 function extractArray(text, name) {
   const m = new RegExp('^const\\s+' + name + '\\s*=\\s*\\[', 'm').exec(text);

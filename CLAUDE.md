@@ -476,6 +476,9 @@ is a check for this in section 7.
 | 90° elbow (short radius) | 1.00 | 0.75 | 0.60 | 0.52 | |
 | 90° elbow (long radius) | 0.55 | 0.42 | 0.34 | 0.30 | |
 | Pulled bend | 0.35 | 0.28 | 0.22 | 0.19 | |
+| 90° elbow, Tru-Bore standard (1.5D) | 0.378 at DN15 | 0.266 at DN50 | 0.210 at DN150 | 0.182 at DN300 | *derived*; own DN points, DN15–DN600 |
+| 90° elbow, Tru-Bore long (3D) | — | 0.249 at DN80→0.216 | 0.180 at DN150 | 0.156 at DN300 | *derived*; own DN points, DN80–DN600 |
+| 90° elbow, Tru-Bore compact (D+100) | — | 0.216 at DN65 | 0.200 at DN150 | 0.208 at DN300 | *derived*; own DN points, DN65–DN1000 |
 | 45° elbow | 0.45 | 0.36 | 0.30 | 0.26 | |
 | Tee through run | 0.45 | 0.35 | 0.28 | 0.24 | |
 | Tee through branch | 1.60 | 1.30 | 1.05 | 0.92 | |
@@ -504,6 +507,41 @@ schedules and the sizer's fittings editor. Replace with supplier data.
 The four zero-K rows sit on a branch off the bore, so they add nothing to the
 loss along the run. They exist so a count placed in Pipe Trace still appears
 on the schedule rather than disappearing.
+
+### Elbow radius, and the three Tru-Bore stainless elbows
+
+The generic 90° rows (short, long, pulled) are not stainless-specific. Three
+rows come from the dhstainless datasheets (MF1002045D16, MF1002045154, TB3XDR,
+September 2026), named for the designer by the radius rule:
+
+| Name in the dialog | Key | Radius | Sizes |
+|---|---|---|---|
+| Standard (1.5D) | `elbow90T15` | R = 1.5 × DN (datasheet R, so DN25 is 32.5, DN65 is 95) | DN15–DN600 |
+| Long (3D) | `elbow90T3` | R = 3 × DN | DN80–DN600 |
+| Compact (D+100) | `elbow90DH` | R = DN + 100 | DN65–DN1000 |
+
+Compact is the tightest bend from DN200 up but is *wider* than 1.5D below it
+(r/d 2.5 at DN65, 1.1 at DN1000), which is why the names are the radius rule
+and not tight/standard/long alone.
+
+The datasheets are geometry only — radius on an exact-bore tube, so ID = DN and
+the wall does not move r/d — and give **no loss coefficient**. K is derived:
+Le/D from the Crane TP-410 bend curve (20 at r/d 1, 14 at 1.5, 12 at 2 to 3)
+times Crane's fT for that size, at each size the maker lists. Crane's curve is
+flat across r/d 1.3–3, so the three rows sit within about 15% of each other
+(0.15–0.38) against 0.4–0.8 for the generic rows. That is the honest limit of
+this method: **it is not a supplier-tested figure**, so replace a row if the
+manufacturer publishes one. Each row carries `kdn` (its own DN points) and
+`fittingK()` in both files reads them; outside the range it holds the end value.
+The usual 0.95 stainless credit applies on top.
+
+`settings.bendType` picks one type for every 90° on the job. With
+`settings.bendMode: 'mix'` and `settings.bendMix` (percent by key, any of the
+six in `BEND_CHOICES`, normalised to 100) each 90° is split by those shares
+(`bendShares()`). Counts are then fractional expected values in
+`fittingSchedule`, which the sizer reads with `parseFloat`; the material
+take-off rounds up once per type and size. 45° elbows and tees are unaffected.
+The Tru-Bore elbows are stainless: use them with a stainless material.
 
 ### Valves that hold a differential, not a velocity head
 
