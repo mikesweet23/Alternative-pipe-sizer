@@ -76,6 +76,13 @@ const temps = [0, 5, 10, 20, 35, 50, 60, 70, 80, 95, 110, 120];
     'PRESS_DEFAULTS, vapourGaugeBar and coldFill found in all three tools');
   ok(texts('trace') === texts('sizer') && texts('sizer') === texts('simulator'),
     'PRESS_DEFAULTS, vapourGaugeBar() and coldFill() are byte-identical in all three tools');
+  const vessel = k => {
+    const a = src[k].indexOf('/* ---------- the expansion vessel ----------');
+    const b = src[k].indexOf('/* end shared pressurisation */', a);
+    return a >= 0 && b > a ? src[k].slice(a, b) : null;
+  };
+  ok(vessel('trace') && vessel('trace') === vessel('sizer'),
+    'the expansion vessel block (vesselSizing, STD_VESSELS_L, SYSTEM_L_PER_KW) is byte-identical in Trace and the sizer');
 }
 
 /* ---- fittings: one table, two copies ---- */

@@ -907,13 +907,15 @@ function waterMuOutOfRange(T) { return !(T >= 0 && T <= 100); }
 /* ---------- static head and cold fill ----------
    Sealed-system pressures in gauge bar, on the BS EN 12828 route:
      static      pst = rho(fill) . g . h     h = high point above the pressurisation unit
-     minimum     p0  = pst + pD + margin     pD = vapour pressure, only above 100 C
-     cold fill   pa  = p0 + water seal       what the unit fills to, cold
+     minimum     p0  = pst + pD + margin     pD = vapour pressure, only above 100 C;
+                                             never below minP0Bar (supplier minimum)
+     cold fill   pa  = p0 + water seal       the least the unit may fill to, cold
      final       pe  = psv - 0.5 bar (psv up to 5 bar), else 0.9 psv
-   p0 is the vessel pre-charge, pa the cold fill pressure. Identical
+   p0 is the vessel pre-charge, pa the minimum cold fill; vesselSizing() may
+   raise the fill a little where the water reserve needs it. Identical
    PRESS_DEFAULTS, vapourGaugeBar() and coldFill() in sizer.html, trace.html
    and simulator.html; change one and change all three. */
-const PRESS_DEFAULTS = { marginBar: 0.2, sealBar: 0.3, svBar: 3, fillT: 10 };
+const PRESS_DEFAULTS = { marginBar: 0.2, sealBar: 0.3, svBar: 3, fillT: 10, minP0Bar: 0.5 };
 function vapourGaugeBar(T) {
   if (!(T > 100)) return 0;
   const mmHg = Math.pow(10, 8.14019 - 1810.94 / (244.485 + T));
@@ -926,14 +928,17 @@ function coldFill(staticM, maxT, o) {
   const seal = Math.max(0, num(o.sealBar, PRESS_DEFAULTS.sealBar));
   const sv = Math.max(0, num(o.svBar, PRESS_DEFAULTS.svBar));
   const fillT = num(o.fillT, PRESS_DEFAULTS.fillT);
+  const minP0 = Math.max(0, num(o.minP0Bar, PRESS_DEFAULTS.minP0Bar));
   const h = Math.max(0, num(staticM, 0));
   const pst = waterRho(fillT) * 9.80665 * h / 1e5;
   const pD = vapourGaugeBar(num(maxT, 0));
-  const p0 = pst + pD + margin;
+  const p0calc = pst + pD + margin;
+  const p0 = Math.max(p0calc, minP0);
   const pa = p0 + seal;
   const pe = sv <= 5 ? sv - 0.5 : sv * 0.9;
-  return { staticM: h, pst, pD, p0, pa, sv, pe, margin, seal, fillT, ok: pa < pe };
+  return { staticM: h, pst, pD, p0, p0Floored: p0 > p0calc, minP0, pa, sv, pe, margin, seal, fillT, ok: pa < pe };
 }
+/* end shared pressurisation */
 function projectViscosity(settings, Tm) {
   const s = settings || {};
   const mode = s.viscosityMode;
@@ -3115,7 +3120,7 @@ function renderPressures() {
   const s = aw.s;
   const maxT = Math.max(PROJECT.supply, PROJECT.ret);
   const cf = coldFill(aw.staticM, maxT, { marginBar: s.pressMarginBar, sealBar: s.pressSealBar,
-    svBar: s.pressSvBar, fillT: s.pressFillT });
+    svBar: s.pressSvBar, fillT: s.pressFillT, minP0Bar: s.pressMinP0Bar });
   const pump = SOLUTION.pump;
   const run = SOLUTION.Q > 0.001;
   const dis = cf.pa + (run ? SOLUTION.pumpHead : 0) / 100;

@@ -1125,13 +1125,15 @@ function waterMuOutOfRange(T) { return !(T >= 0 && T <= 100); }
 /* ---------- static head and cold fill ----------
    Sealed-system pressures in gauge bar, on the BS EN 12828 route:
      static      pst = rho(fill) . g . h     h = high point above the pressurisation unit
-     minimum     p0  = pst + pD + margin     pD = vapour pressure, only above 100 C
-     cold fill   pa  = p0 + water seal       what the unit fills to, cold
+     minimum     p0  = pst + pD + margin     pD = vapour pressure, only above 100 C;
+                                             never below minP0Bar (supplier minimum)
+     cold fill   pa  = p0 + water seal       the least the unit may fill to, cold
      final       pe  = psv - 0.5 bar (psv up to 5 bar), else 0.9 psv
-   p0 is the vessel pre-charge, pa the cold fill pressure. Identical
+   p0 is the vessel pre-charge, pa the minimum cold fill; vesselSizing() may
+   raise the fill a little where the water reserve needs it. Identical
    PRESS_DEFAULTS, vapourGaugeBar() and coldFill() in sizer.html, trace.html
    and simulator.html; change one and change all three. */
-const PRESS_DEFAULTS = { marginBar: 0.2, sealBar: 0.3, svBar: 3, fillT: 10 };
+const PRESS_DEFAULTS = { marginBar: 0.2, sealBar: 0.3, svBar: 3, fillT: 10, minP0Bar: 0.5 };
 function vapourGaugeBar(T) {
   if (!(T > 100)) return 0;
   const mmHg = Math.pow(10, 8.14019 - 1810.94 / (244.485 + T));
@@ -1144,14 +1146,101 @@ function coldFill(staticM, maxT, o) {
   const seal = Math.max(0, num(o.sealBar, PRESS_DEFAULTS.sealBar));
   const sv = Math.max(0, num(o.svBar, PRESS_DEFAULTS.svBar));
   const fillT = num(o.fillT, PRESS_DEFAULTS.fillT);
+  const minP0 = Math.max(0, num(o.minP0Bar, PRESS_DEFAULTS.minP0Bar));
   const h = Math.max(0, num(staticM, 0));
   const pst = waterRho(fillT) * 9.80665 * h / 1e5;
   const pD = vapourGaugeBar(num(maxT, 0));
-  const p0 = pst + pD + margin;
+  const p0calc = pst + pD + margin;
+  const p0 = Math.max(p0calc, minP0);
   const pa = p0 + seal;
   const pe = sv <= 5 ? sv - 0.5 : sv * 0.9;
-  return { staticM: h, pst, pD, p0, pa, sv, pe, margin, seal, fillT, ok: pa < pe };
+  return { staticM: h, pst, pD, p0, p0Floored: p0 > p0calc, minP0, pa, sv, pe, margin, seal, fillT, ok: pa < pe };
 }
+/* ---------- the expansion vessel ----------
+   A diaphragm vessel, sized to BS EN 12828 Annex D and checked the way
+   Reflex and Flamco check a selection. Two requirements, and the larger
+   governs; they are never added together:
+     reserve  Vn >= (Ve + Vwr)(pe + 1) / (pe - p0)
+              the vessel holds exactly the water reserve at fill
+     fill     Vn >= Ve / ((p0 + 1)/(pa + 1) - (p0 + 1)/(pe + 1))
+              filled to at least p0 + water seal, the gas is already
+              compressed before any expansion arrives
+   Ve = e . Vs, e from the fill to the maximum temperature (glycol scaled, or
+   typed). Vwr = 0.5% of Vs, 3 L minimum, 20% of Vn for a vessel of 15 L or
+   less, plus whatever the water contracts below the fill temperature on a
+   chilled system. BS 7074's 10% on the expansion is the same allowance as
+   Vwr by another route, so it is not added as well. The selection is the
+   next standard size; the fill set point is the least pressure that holds
+   the reserve, never below p0 + seal, and the range up to the most the
+   selected vessel allows is given. Identical in sizer.html and trace.html. */
+const STD_VESSELS_L = [8, 12, 18, 25, 35, 50, 80, 100, 140, 200, 250, 300, 400, 500, 600, 800, 1000,
+  1500, 2000, 3000, 4000, 5000];
+/* Whole-system water content, litres per kW, for estimating what is not on
+   the drawing. Typical UK figures for a pressurisation estimate, flagged as
+   such. Only ever applied to the untraced part — never to anything counted. */
+const SYSTEM_L_PER_KW = {
+  convector:  { l: 6,  label: 'Perimeter heating and convectors' },
+  air:        { l: 8,  label: 'AHUs and fan coils, chilled water' },
+  panelRad:   { l: 11, label: 'Steel panel radiators' },
+  castIron:   { l: 14, label: 'Cast iron radiators' },
+  district:   { l: 20, label: 'Large, spread-out distribution' },
+  underfloor: { l: 23, label: 'Underfloor heating' },
+};
+/* A glycol mix expands more than water: about half as much again at 50%
+   propylene glycol, taken as linear in concentration. An assumption until
+   the supplier's figure for the mix is typed. */
+function glycolExpansionFactor(pct) { return 1 + Math.max(0, parseFloat(pct) || 0) / 100; }
+function expansionCoeff(fillT, maxT, glyPct, typedPct) {
+  const t = parseFloat(typedPct);
+  if (isFinite(t) && t >= 0) return t / 100;
+  return Math.max(0, waterRho(fillT) / waterRho(maxT) - 1) * glycolExpansionFactor(glyPct);
+}
+function vesselSizing(Vs, maxT, cf, o) {
+  o = o || {};
+  const num = (v, d) => { const x = parseFloat(v); return isFinite(x) ? x : d; };
+  Vs = Math.max(0, num(Vs, 0));
+  const fillT = cf.fillT;
+  const minT = num(o.minT, fillT);
+  const e = expansionCoeff(fillT, maxT, o.glycolPct, o.ePct);
+  const Ve = e * Vs;
+  const Vc = minT < fillT
+    ? Math.max(0, 1 - waterRho(fillT) / waterRho(minT)) * glycolExpansionFactor(o.glycolPct) * Vs : 0;
+  const reserve = Math.max(0.005 * Vs, 3);
+  const P0 = cf.p0 + 1, Pa = cf.pa + 1, Pe = cf.pe + 1;
+  const out = { Vs, e, Ve, Vc, reserve, Vwr: reserve + Vc, fillT, minT, maxT, ok: false };
+  if (!(Pe > Pa) || Vs <= 0) return out;
+  const accept = P0 / Pa - P0 / Pe;
+  const need = vwr => {
+    const en = (Ve + vwr) * Pe / (Pe - P0);
+    const fill = Ve / accept;
+    return { en, fill, req: Math.max(en, fill), governs: fill > en ? 'fill' : 'reserve' };
+  };
+  let vwr = out.Vwr, r = need(vwr);
+  const biggest = STD_VESSELS_L[STD_VESSELS_L.length - 1];
+  const count = Math.max(1, Math.ceil(r.req / biggest));
+  const pick = v => STD_VESSELS_L.find(s => s >= v - 1e-9) || biggest;
+  let size = pick(r.req / count);
+  // a small vessel keeps a fifth of itself as reserve; step up until it fits
+  for (let guard = 0; size * count <= 15 && guard < 10; guard++) {
+    vwr = Math.max(out.Vwr, 0.2 * size * count);
+    r = need(vwr);
+    if (r.req <= size * count + 1e-9) break;
+    size = pick(r.req / count);
+  }
+  const Vn = size * count;
+  const paSeal = P0 / (1 - vwr / Vn) - 1;
+  const paHi = Pe / (1 + Ve * Pe / (Vn * P0)) - 1;
+  const paSet = Math.max(cf.pa, paSeal);
+  const pFinal = P0 / (P0 / (paSet + 1) - Ve / Vn) - 1;
+  return Object.assign(out, {
+    Vwr: vwr, vnEN: r.en, vnFill: r.fill, req: r.req, governs: r.governs,
+    size, count, Vn, paSet, paHi, pFinal,
+    held: Vn * (1 - P0 / (paSet + 1)), accept: Vn * (P0 / (paSet + 1) - P0 / Pe),
+    ok: paSet <= paHi + 1e-9 && pFinal <= cf.pe + 1e-6,
+  });
+}
+/* end shared pressurisation */
+
 /* This take-off's own default is temperature, so a file written before the
    field existed keeps the sizes it already showed. The sizer exchange file
    is the other way round — missing means fixed — and buildSizerProject
@@ -1563,6 +1652,7 @@ function defaultSettings() {
     pressMarginBar: 0.2,         // over static at the high point, so it never runs negative
     pressSealBar: 0.3,           // water seal in the vessel, on top of the pre-charge
     svBar: 3.0,                  // safety valve setting
+    minP0Bar: 0.5,               // supplier minimum vessel pre-charge
   };
 }
 S.settings = defaultSettings();
@@ -3224,6 +3314,33 @@ function connectedSourceClusters() {
 function assignGroups() {
   const groups = [];
   const seen = new Set();
+  /* One run, in the group that pumps it. A separator at its far end opens a
+     new group for everything leaving it — including a separator that leaves
+     a separator, a heat exchanger off a header's secondary, which used to be
+     walked straight through as if it were a load. */
+  const step = (s, gid) => {
+    s.hgroup = gid;
+    const dn = nodeById(s.down);
+    if (isSeparator(dn)) {
+      if (seen.has(dn.id)) return;
+      /* The separator itself sits in the group that feeds it — its primary
+         side is the end of that circuit — and opens a new one below. */
+      dn.hgroup = gid;
+      seen.add(dn.id);
+      const sub = { id: groups.length, sepId: dn.id,
+                    sepName: dn.name || (dn.type === 'hx' ? 'HX' : 'Header'),
+                    primaryOf: gid,
+                    label: 'Secondary off ' + (dn.name || (dn.type === 'hx' ? 'HX' : 'header')) };
+      groups.push(sub);
+      dn.subGroup = sub.id;
+      S.segs.forEach(s2 => {
+        if (s2.up !== dn.id || s2.down === null || s2.down === undefined) return;
+        step(s2, sub.id);
+      });
+    } else {
+      walk(s.down, gid);
+    }
+  };
   const walk = (nodeId, gid) => {
     if (nodeId === null || nodeId === undefined || seen.has(nodeId)) return;
     seen.add(nodeId);
@@ -3231,27 +3348,7 @@ function assignGroups() {
     if (n) n.hgroup = gid;
     S.segs.forEach(s => {
       if (s.up !== nodeId || s.down === null || s.down === undefined) return;
-      s.hgroup = gid;
-      const dn = nodeById(s.down);
-      if (isSeparator(dn)) {
-        /* The separator itself sits in the group that feeds it — its primary
-           side is the end of that circuit — and opens a new one below. */
-        dn.hgroup = gid;
-        seen.add(dn.id);
-        const sub = { id: groups.length, sepId: dn.id,
-                      sepName: dn.name || (dn.type === 'hx' ? 'HX' : 'Header'),
-                      primaryOf: gid,
-                      label: 'Secondary off ' + (dn.name || (dn.type === 'hx' ? 'HX' : 'header')) };
-        groups.push(sub);
-        dn.subGroup = sub.id;
-        S.segs.forEach(s2 => {
-          if (s2.up !== dn.id || s2.down === null || s2.down === undefined) return;
-          s2.hgroup = sub.id;
-          walk(s2.down, sub.id);
-        });
-      } else {
-        walk(s.down, gid);
-      }
+      step(s, gid);
     });
   };
   /* Plants that share a header are one primary, not one group each. Isolated
@@ -3307,7 +3404,8 @@ function pressureWaters() {
     }
   });
   const num = v => (v === '' || v === null || v === undefined || !isFinite(parseFloat(v))) ? null : parseFloat(v);
-  const opts = { marginBar: S.settings.pressMarginBar, sealBar: S.settings.pressSealBar, svBar: S.settings.svBar };
+  const opts = { marginBar: S.settings.pressMarginBar, sealBar: S.settings.pressSealBar, svBar: S.settings.svBar,
+                 minP0Bar: S.settings.minP0Bar };
   const W = { cx: 0, cy: 0, s: 1 };       // segPoly3D in drawing pixels, so a point can be marked on the plan
   waters.forEach(w => {
     const gs = new Set(w.groups);
@@ -3346,9 +3444,63 @@ function pressureWaters() {
     w.staticFrom = w.overrideM !== null ? 'override' : (w.high ? 'drawing' : 'none');
     w.maxT = w.kind === 'hx' ? Math.max(hxSecSup(k), hxSecRet(k))
                              : Math.max(S.settings.supply, S.settings.ret);
+    w.minT = w.kind === 'hx' ? Math.min(hxSecSup(k), hxSecRet(k))
+                             : Math.min(S.settings.supply, S.settings.ret);
     w.cf = coldFill(w.staticM, w.maxT, opts);
+    w.vol = waterVolume(w, gs, firstSet);
+    w.vs = vesselSizing(w.vol.total, w.maxT, w.cf, { minT: w.minT });
   });
   return waters;
+}
+/* Everything that holds water on one water, counted once each:
+     pipe        bore x installed length of every run, both legs of a pair
+     vessels     headers and buffers (typed, or a header's own shell)
+     plant       boiler / chiller water content typed on the plant
+     exchangers  each side of a heat exchanger, on the water it belongs to
+     terminals   coil / emitter content typed on each load (each side of a
+                 4-pipe load on its own water)
+     not traced  what this drawing does not cover — typed litres, or the kW
+                 of it at a whole-system l/kW for its type
+   A typed total replaces the lot: for a job traced in sections, where the
+   real figure is known from elsewhere. */
+function waterVolume(w, gs, firstSet) {
+  const v = { pipe: 0, vessels: 0, plant: 0, hx: 0, terminals: 0, noTerm: 0, notTraced: 0,
+              notTracedFrom: '', override: null, total: 0 };
+  S.segs.forEach(sg => {
+    if (sg.orphan || !gs.has(sg.hgroup) || !sg.pipe) return;
+    v.pipe += Math.PI * Math.pow(sg.pipe.id / 1000, 2) / 4 * (sg.hydM || 0) * 1000;
+  });
+  S.nodes.forEach(n => {
+    if ((n.type === 'llh' || n.type === 'buffer') && gs.has(n.hgroup)) v.vessels += vesselLitres(n);
+    if (n.type === 'source' && w.nodes.some(x => x.id === n.id)) v.plant += parseFloat(n.waterL) || 0;
+    if (n.type === 'hx') {
+      if (gs.has(n.hgroup)) v.hx += parseFloat(n.priWaterL) || 0;          // its primary side
+      if (gs.has(n.subGroup)) v.hx += parseFloat(n.secWaterL) || 0;        // its secondary side
+    }
+    if (n.type === 'consumer') {
+      ['heat', 'cool'].forEach(side => {
+        if (side === 'cool' && !isFourPipe(n)) return;
+        const feed = feedOf(n, side);
+        if (!feed || !gs.has(feed.hgroup)) return;
+        const l = parseFloat(loadSide(n, side).waterL) || 0;
+        if (l > 0) v.terminals += l; else v.noTerm++;
+      });
+    }
+  });
+  const addL = firstSet('volAddL'), addKw = firstSet('volAddKw');
+  const type = (w.nodes.find(x => x.volAddType) || {}).volAddType || 'air';
+  if (addL !== null && addL > 0) { v.notTraced = addL; v.notTracedFrom = 'typed'; }
+  else if (addKw !== null && addKw > 0) {
+    const t = SYSTEM_L_PER_KW[type] || SYSTEM_L_PER_KW.air;
+    v.notTraced = addKw * t.l;
+    v.notTracedFrom = fmt(addKw, 0) + ' kW \u00d7 ' + t.l + ' l/kW, ' + t.label;
+  }
+  v.addType = type;
+  v.counted = v.pipe + v.vessels + v.plant + v.hx + v.terminals + v.notTraced;
+  const ov = firstSet('volOverrideL');
+  v.override = ov !== null && ov > 0 ? ov : null;
+  v.total = v.override !== null ? v.override : v.counted;
+  return v;
 }
 /* The water a node or run belongs to, by its hydraulic group. */
 function waterOfGroup(gid) {
@@ -4743,7 +4895,8 @@ function drawHighPoints(g, k) {
     g.appendChild(tri(hi.x, hi.y, w.highFrom === 'marked'));
     const txt = 'HP ' + fmt(hi.h, 2) + ' m' + ((S.waters || []).length > 1 ? ' · ' + w.label : '');
     const sub = 'static ' + fmt(w.staticM, 1) + ' m' + (w.staticFrom === 'override' ? ' (typed)' : '')
-      + ' · fill ' + fmt(w.cf.pa, 2) + ' bar';
+      + ' \u00b7 fill ' + fmt(w.vs.Vn ? w.vs.paSet : w.cf.pa, 2) + ' bar'
+      + (w.vs.Vn ? ' \u00b7 vessel ' + (w.vs.count > 1 ? w.vs.count + '\u00d7' : '') + w.vs.size + ' L' : '');
     const two = labelLevel() >= 2 || exporting;
     const lw = Math.max(txt.length, two ? sub.length : 0) * 5.7 + 12;
     const bh = two ? 27 : 15;
@@ -5148,7 +5301,9 @@ function renderStatus() {
        says just that; more than one water names each. */
     + (S.waters || []).filter(w => w.high || w.staticFrom === 'override').map(w =>
         cell(((S.waters || []).length > 1 ? w.label + ' ' : '') + 'cold fill',
-          fmt(w.cf.pa, 2) + ' bar · ' + fmt(w.staticM, 1) + ' m static', !w.cf.ok)).join('')
+          fmt(w.vs.Vn ? w.vs.paSet : w.cf.pa, 2) + ' bar \u00b7 ' + fmt(w.staticM, 1) + ' m static'
+          + (w.vs.Vn ? ' \u00b7 ' + (w.vs.count > 1 ? w.vs.count + '\u00d7' : '') + w.vs.size + ' L vessel' : ''),
+          !w.cf.ok || (w.vs.Vn && !w.vs.ok))).join('')
     // said out loud, because a sheet turned an hour ago is not obvious later
     + (imgRot() ? cell('Sheet turned', fmt(imgRot(), 1) + '°') : '')
     // which revision of a job passed between several people this is
@@ -6292,6 +6447,8 @@ function sourceForm(n) {
     +   ((parseFloat(n.streamLps) || 0) > 0 ? lpsToVol(n.streamLps).toFixed(volUnit() === 'm3h' ? 1 : 2) : '') + '"></label>'
     + '<label class="fld"><span>Height above finished floor <em>m</em></span>'
     +   '<input type="number" data-f="height" step="0.1" value="' + heightOf(n) + '"></label>'
+    + '<label class="fld"><span>Water content <em>L</em> <em style="color:var(--muted)">from the boiler or chiller datasheet</em></span>'
+    +   '<input type="number" data-f="waterL" step="1" min="0" value="' + ((parseFloat(n.waterL) || 0) > 0 ? n.waterL : '') + '"></label>'
     + derivedBox([['Connected load', fmt(totals().kw, 0) + ' kW'],
                   ['Installed plant', fmt(totals().plantKw, 0) + ' kW'],
                   ['Stream total', fmtVol(stream)]])
@@ -6444,6 +6601,8 @@ function consumerSideFields(n, side) {
     +   '<input type="number" data-f="coilKpa" step="1" min="0" value="' + (obj.coilKpa || '') + '"' + sideAttr + '></label>'
     + '<label class="fld"><span>Control valve</span><select data-f="valve"' + sideAttr + '>'
     +   opts(VALVE_TYPES, migrateValveType(obj.valve)) + '</select></label>'
+    + '<label class="fld"><span>Water content <em>L</em> <em style="color:var(--muted)">coil or emitter, for the system volume</em></span>'
+    +   '<input type="number" data-f="waterL" step="0.5" min="0" value="' + ((parseFloat(obj.waterL) || 0) > 0 ? obj.waterL : '') + '"' + sideAttr + '></label>'
     + derivedBox([
         ['Duty', fmt(consumerKw(n, side), 1) + ' kW'],
         ['Flow', fmtVol(consumerFlow(n, side))],
@@ -6710,6 +6869,12 @@ function hxForm(n) {
           + '<strong>' + fmt(idx.drop, 1) + ' kPa</strong>. That is the duty for this exchanger&rsquo;s '
           + 'secondary pump &mdash; not added to the primary.</div>'
         : '')
+    + '<div class="row2">'
+    + '<label class="fld"><span>Water content, primary <em>L</em></span>'
+    +   '<input type="number" data-f="priWaterL" step="1" min="0" value="' + ((parseFloat(n.priWaterL) || 0) > 0 ? n.priWaterL : '') + '"></label>'
+    + '<label class="fld"><span>Water content, secondary <em>L</em></span>'
+    +   '<input type="number" data-f="secWaterL" step="1" min="0" value="' + ((parseFloat(n.secWaterL) || 0) > 0 ? n.secWaterL : '') + '"></label>'
+    + '</div>'
     + pressureFields(n)
     + placementFields(n)
     + rowBtns();
@@ -6838,7 +7003,55 @@ function pressureFields(n) {
     + '<div class="note">Static head is the high point above the pressurisation unit. Label the high point on a run '
     + '(run inspector, or <strong>High point</strong> in the hint bar while tracing), or leave it to the drawing. '
     + 'Type an override when the building&rsquo;s full height is not on this sheet. Cold fill is static + '
-    + barFmt(cf.margin) + ' + ' + barFmt(cf.seal) + ' water seal, to BS EN 12828.</div>';
+    + barFmt(cf.margin) + ' + ' + barFmt(cf.seal) + ' water seal, to BS EN 12828.</div>'
+    + vesselFields(n, w);
+}
+/* System volume on this water and the vessel it needs. The traced part is
+   counted; the untraced part is typed (litres, or kW at a whole-system
+   l/kW); a typed total replaces both for a job known from elsewhere. */
+function vesselFields(n, w) {
+  const v = w.vol, vs = w.vs;
+  const L = x => fmt(x, x < 10 ? 1 : 0) + ' L';
+  const ov = v.override !== null;
+  const val = f => { const x = parseFloat(n[f]); return isFinite(x) && x > 0 ? x : ''; };
+  const rows = [
+    ['Pipework', L(v.pipe)],
+    ['Headers and buffers', L(v.vessels)],
+    ['Plant', L(v.plant) + (v.plant > 0 ? '' : ' <span class="chip warn">none typed</span>')],
+  ];
+  if (v.hx > 0 || S.nodes.some(x => x.type === 'hx')) rows.push(['Heat exchangers', L(v.hx)]);
+  rows.push(['Terminal units', L(v.terminals) + (v.noTerm ? ' <span class="chip warn">' + v.noTerm + ' not typed</span>' : '')]);
+  rows.push(['Not on this trace', v.notTraced > 0 ? L(v.notTraced) + ' <span style="color:var(--muted)">' + (v.notTracedFrom === 'typed' ? 'typed' : v.notTracedFrom) + '</span>' : '\u2014']);
+  rows.push(['System volume', '<strong>' + L(v.total) + '</strong>' + (ov ? ' <span class="chip warn">typed total</span> counted ' + L(v.counted) : '')]);
+  const res = vs.Vn
+    ? [['Expansion', fmt(vs.e * 100, 2) + '% to ' + fmt(w.maxT, 0) + ' &deg;C = ' + L(vs.Ve)],
+       ['Water reserve', L(vs.Vwr) + (vs.Vc > 0.05 ? ' (incl. ' + L(vs.Vc) + ' contraction)' : '')],
+       ['Vessel needed', L(vs.req) + ' &middot; ' + (vs.governs === 'fill' ? 'fill pressure governs' : 'water reserve governs')],
+       ['Select', '<strong>' + (vs.count > 1 ? vs.count + ' &times; ' : '') + vs.size + ' L</strong>'],
+       ['Pre-charge', '<strong>' + barFmt(w.cf.p0) + '</strong>' + (w.cf.p0Floored ? ' (supplier minimum)' : '')],
+       ['Cold fill set point', '<strong>' + barFmt(vs.paSet) + '</strong> &middot; up to ' + barFmt(vs.paHi)],
+       ['Hot, at ' + fmt(w.maxT, 0) + ' &deg;C', barFmt(vs.pFinal) + ' against ' + barFmt(w.cf.pe) + ' final']]
+    : [];
+  return '<div class="sub-hd">System volume and expansion vessel</div>'
+    + derivedBox(rows)
+    + '<div class="row2">'
+    + '<label class="fld"><span>Not on this trace <em>L</em></span>'
+    +   '<input type="number" data-press="volAddL" step="10" min="0" placeholder="litres" value="' + val('volAddL') + '"></label>'
+    + '<label class="fld"><span>&hellip; or by duty <em>kW</em></span>'
+    +   '<input type="number" data-press="volAddKw" step="10" min="0" placeholder="kW not traced" value="' + val('volAddKw') + '"></label>'
+    + '</div>'
+    + '<label class="fld"><span>Untraced system type <em>l/kW</em></span><select data-press="volAddType">'
+    +   Object.keys(SYSTEM_L_PER_KW).map(k => '<option value="' + k + '"' + (v.addType === k ? ' selected' : '') + '>'
+        + SYSTEM_L_PER_KW[k].label + ' &mdash; ' + SYSTEM_L_PER_KW[k].l + ' l/kW</option>').join('') + '</select></label>'
+    + '<label class="fld"><span>Total system volume override <em>L</em></span>'
+    +   '<input type="number" data-press="volOverrideL" step="10" min="0" placeholder="counted ' + fmt(v.counted, 0) + ' L" value="' + val('volOverrideL') + '"></label>'
+    + (vs.Vn ? derivedBox(res) : '<div class="note bad">No vessel can work: the cold fill is at or above the final pressure.</div>')
+    + (vs.Vn && !vs.ok ? '<div class="note warn">The selected vessel cannot hold the fill and the expansion inside the safety valve margin. Raise the safety valve setting.</div>' : '')
+    + '<div class="note">For a section traced on its own &mdash; secondaries off a header that are not drawn, say &mdash; '
+    + 'type the litres not on the drawing, or their kW and type for an estimate, or the whole system volume. '
+    + 'Litres beat kW: when both are typed the litres are used. Type the water content of the boiler or chiller on the plant and '
+    + 'of each coil or emitter on its load; anything not typed is not counted. Vessel to BS EN 12828, checked against the fill '
+    + 'pressure the way suppliers select; the water reserve and the fill check are alternatives, never added.</div>';
 }
 
 function placementFields(n) {
@@ -7404,10 +7617,12 @@ function wireInspector() {
       if (!w) return;
       const f = inp.getAttribute('data-press');
       const v = parseFloat(inp.value);
-      pushUndo(f === 'staticOverrideM' ? 'static head override' : 'pressurisation height');
+      pushUndo(f === 'staticOverrideM' ? 'static head override'
+             : f === 'pressRefM' ? 'pressurisation height' : 'system volume');
       w.nodes.forEach(x => {
-        if (inp.value.trim() === '' || !isFinite(v)) delete x[f];
-        else x[f] = f === 'staticOverrideM' ? Math.max(0, v) : v;
+        if (inp.tagName === 'SELECT') x[f] = inp.value;
+        else if (inp.value.trim() === '' || !isFinite(v)) delete x[f];
+        else x[f] = f === 'pressRefM' ? v : Math.max(0, v);
       });
       render(); openInspector();
     });
@@ -7819,6 +8034,13 @@ function auditTrace() {
       .reduce((n, sg) => n + (sg.pts || []).filter(p => p.hp).length, 0);
     if (labels > 1) add('highpoints', 'warn', nm + labels + ' points are labelled as the high point. '
       + 'The highest of them is used; clear the others in the run inspector.', false);
+    const missing = [w.vol.noTerm ? w.vol.noTerm + ' load' + (w.vol.noTerm === 1 ? '' : 's') + ' with no water content typed' : '',
+      w.kind === 'plant' && !(w.vol.plant > 0) ? 'the plant\u2019s own water content' : ''].filter(Boolean);
+    if (w.vol.override === null && missing.length) add('watercontent', 'warn', nm + 'the system volume leaves out '
+      + missing.join(' and ') + '. Type them on the load and the plant, or type the total system volume on the plant, '
+      + 'or the expansion vessel comes out small.', false);
+    if (w.vs.Vn && !w.vs.ok) add('vessel', 'bad', nm + 'no ' + w.vs.size + ' L vessel holds the fill and the '
+      + 'expansion inside the safety valve margin. Raise the safety valve setting.', false);
   });
 
   return out;
@@ -8783,19 +9005,28 @@ function pressureReportHtml() {
     + '<td class="n">' + fmt(w.staticM, 2) + (w.staticFrom === 'override' ? ' typed' : '') + '</td>'
     + '<td class="n">' + fmt(w.cf.pst, 2) + '</td>'
     + '<td class="n">' + fmt(w.cf.p0, 2) + '</td>'
-    + '<td class="n"><strong>' + fmt(w.cf.pa, 2) + '</strong></td>'
+    + '<td class="n"><strong>' + fmt(w.vs.Vn ? w.vs.paSet : w.cf.pa, 2) + '</strong></td>'
     + '<td class="n">' + fmt(w.cf.sv, 1) + '</td>'
-    + '<td>' + (w.cf.ok ? 'OK' : 'SV too low') + '</td></tr>').join('');
+    + '<td class="n">' + fmt(w.vol.total, 0) + (w.vol.override !== null ? ' typed' : '') + '</td>'
+    + '<td class="n">' + (w.vs.Vn ? fmt(w.vs.Ve, 0) : '\u2014') + '</td>'
+    + '<td class="n">' + (w.vs.Vn ? (w.vs.count > 1 ? w.vs.count + ' \u00d7 ' : '') + w.vs.size : '\u2014') + '</td>'
+    + '<td>' + (w.cf.ok && (!w.vs.Vn || w.vs.ok) ? 'OK' : 'SV too low') + '</td></tr>').join('');
   const c = ws[0].cf;
   return '<p>Static head is the high point above the pressurisation unit. Pressures are gauge, to BS EN 12828: '
     + 'pre-charge p<sub>0</sub> = static + ' + fmt(c.margin, 2) + ' bar (+ vapour pressure above 100 \u00b0C); '
-    + 'cold fill = p<sub>0</sub> + ' + fmt(c.seal, 2) + ' bar water seal; the final pressure is the safety valve '
+    + 'never below ' + fmt(c.minP0, 1) + ' bar; '
+    + 'cold fill at least p<sub>0</sub> + ' + fmt(c.seal, 2) + ' bar water seal; the final pressure is the safety valve '
     + 'setting less 0.5 bar. Heights are above the finished floor of this drawing &mdash; a building taller than '
     + 'the sheet needs the static head typed on the plant. A heat exchanger secondary is its own water.</p>'
     + '<table class="rpt"><thead><tr><th>Water</th><th>High point</th><th class="n">Unit m</th>'
     + '<th class="n">Static m</th><th class="n">Static bar</th><th class="n">Pre-charge bar</th>'
-    + '<th class="n">Cold fill bar</th><th class="n">SV bar</th><th>Check</th></tr></thead>'
-    + '<tbody>' + rows + '</tbody></table>';
+    + '<th class="n">Cold fill bar</th><th class="n">SV bar</th><th class="n">Volume L</th>'
+    + '<th class="n">Expansion L</th><th class="n">Vessel L</th><th>Check</th></tr></thead>'
+    + '<tbody>' + rows + '</tbody></table>'
+    + '<p>Volume is the pipework, headers and buffers on the drawing, plus the water content typed on the plant, '
+    + 'exchangers and loads, plus anything typed as not on this trace &mdash; or the total, where one is typed. '
+    + 'The vessel is sized to BS EN 12828 Annex D: the larger of the water-reserve and fill-pressure requirements '
+    + '(alternatives, never added), then the next standard size. The sizer gives the full breakdown.</p>';
 }
 
 /* ==========================================================================
@@ -9074,6 +9305,16 @@ function buildSizerProject() {
       pressMarginBar: String(S.settings.pressMarginBar != null ? S.settings.pressMarginBar : PRESS_DEFAULTS.marginBar),
       pressSealBar: String(S.settings.pressSealBar != null ? S.settings.pressSealBar : PRESS_DEFAULTS.sealBar),
       pressSvBar: String(S.settings.svBar != null ? S.settings.svBar : PRESS_DEFAULTS.svBar),
+      pressMinP0Bar: String(S.settings.minP0Bar != null ? S.settings.minP0Bar : PRESS_DEFAULTS.minP0Bar),
+      /* What is not on this trace, or the whole volume, per water in the order
+         of traceMeta.pressurisation. Plant, exchanger and terminal content
+         crosses as plantItems tagged with their hydraulic group. */
+      pressWaters: (S.waters || []).map(w => ({
+        addL: (w.nodes.map(n => parseFloat(n.volAddL)).find(x => x > 0)) || '',
+        addKw: (w.nodes.map(n => parseFloat(n.volAddKw)).find(x => x > 0)) || '',
+        addType: w.vol.addType,
+        overrideL: w.vol.override !== null ? w.vol.override : '',
+      })),
     },
     circuits,
     nextId: next,
@@ -9151,15 +9392,41 @@ function buildSizerProject() {
     },
     /* Buffers, headers and their water, straight into the sizer's plant
        volumes — system volume, heat-up and expansion all have to see them. */
-    plantItems: S.nodes.filter(n => isVessel(n) && n.type !== 'hx').map((n, i) => ({
-      id: i + 1,
-      name: n.name || VESSEL_TYPES[n.type],
-      type: n.type === 'llh' ? 'llh' : 'buffer',
-      litres: +vesselLitres(n).toFixed(0),
-      lossW: '', qty: 1,
-    })),
-    nextPlantId: S.nodes.filter(n => isVessel(n) && n.type !== 'hx').length + 1,
+    plantItems: exportPlantItems(),
+    nextPlantId: exportPlantItems().length + 1,
   };
+}
+
+/* Water held outside the pipe schedule, each item on the hydraulic group it
+   belongs to, so the sizer counts it in the right water: headers and buffers,
+   the plant's own content, each side of an exchanger, and the coils and
+   emitters added up per group. */
+function exportPlantItems() {
+  const out = [];
+  const add = (name, type, litres, group) => {
+    if (!(litres > 0)) return;
+    out.push({ id: out.length + 1, name, type, litres: +litres.toFixed(1), lossW: '', qty: 1,
+               group: group == null ? 0 : group });
+  };
+  S.nodes.filter(n => isVessel(n) && n.type !== 'hx').forEach(n =>
+    add(n.name || VESSEL_TYPES[n.type], n.type === 'llh' ? 'llh' : 'buffer', vesselLitres(n), n.hgroup));
+  S.nodes.filter(n => n.type === 'source').forEach(n =>
+    add(n.name || 'Plant', /chill|cool/i.test(n.plant || '') ? 'chiller' : 'boiler', parseFloat(n.waterL) || 0, n.hgroup));
+  S.nodes.filter(n => n.type === 'hx').forEach(n => {
+    add((n.name || 'HX') + ' primary', 'phe', parseFloat(n.priWaterL) || 0, n.hgroup);
+    add((n.name || 'HX') + ' secondary', 'phe', parseFloat(n.secWaterL) || 0, n.subGroup);
+  });
+  const term = {};
+  S.nodes.filter(n => n.type === 'consumer').forEach(n => ['heat', 'cool'].forEach(side => {
+    if (side === 'cool' && !isFourPipe(n)) return;
+    const feed = feedOf(n, side);
+    const l = parseFloat(loadSide(n, side).waterL) || 0;
+    if (!feed || !(l > 0)) return;
+    term[feed.hgroup] = (term[feed.hgroup] || 0) + l;
+  }));
+  Object.keys(term).forEach(g => add('Terminal units' + (Object.keys(term).length > 1
+    ? ' \u2014 ' + (((groupOf(+g) || {}).label) || 'group ' + g) : ''), 'terminals', term[g], +g));
+  return out;
 }
 
 function pressurisationMeta() {
@@ -9179,6 +9446,11 @@ function pressurisationMeta() {
     staticBar: +w.cf.pst.toFixed(3), preChargeBar: +w.cf.p0.toFixed(3),
     coldFillBar: +w.cf.pa.toFixed(3), vapourBar: +w.cf.pD.toFixed(3),
     svBar: w.cf.sv, finalBar: +w.cf.pe.toFixed(3), ok: w.cf.ok,
+    minT: w.minT,
+    volume: { pipe: +w.vol.pipe.toFixed(1), vessels: +w.vol.vessels.toFixed(1), plant: +w.vol.plant.toFixed(1),
+              hx: +w.vol.hx.toFixed(1), terminals: +w.vol.terminals.toFixed(1), loadsWithout: w.vol.noTerm,
+              notTraced: +w.vol.notTraced.toFixed(1), overrideL: w.vol.override, total: +w.vol.total.toFixed(1) },
+    vesselL: w.vs.Vn || null, vesselCount: w.vs.count || null, fillSetBar: w.vs.Vn ? +w.vs.paSet.toFixed(3) : null,
   }));
 }
 
@@ -10640,6 +10912,8 @@ function projectDialog() {
     + '<label class="fld"><span>Water seal <em>bar</em></span><input type="number" id="pPrSeal" step="0.05" min="0" value="' + (s.pressSealBar != null ? s.pressSealBar : PRESS_DEFAULTS.sealBar) + '"></label>'
     + '<label class="fld"><span>Safety valve <em>bar</em></span><input type="number" id="pPrSv" step="0.5" min="0" value="' + (s.svBar != null ? s.svBar : PRESS_DEFAULTS.svBar) + '"></label>'
     + '</div>'
+    + '<label class="fld"><span>Minimum pre-charge <em>bar</em> <em style="color:var(--muted)">supplier minimum; raise it where the pump wants more suction</em></span>'
+    +   '<input type="number" id="pPrMin" step="0.1" min="0" value="' + (s.minP0Bar != null ? s.minP0Bar : PRESS_DEFAULTS.minP0Bar) + '"></label>'
     + '<div class="note">Static head is the high point above the pressurisation unit, off the drawing or typed on the plant. '
     +   'Pre-charge = static + margin (+ vapour pressure above 100 &deg;C); cold fill = pre-charge + water seal.</div>'
     + '<div style="display:flex;gap:8px;margin-top:12px">'
@@ -10729,6 +11003,7 @@ function projectDialog() {
     s.pressMarginBar = prNum('pPrMargin', PRESS_DEFAULTS.marginBar);
     s.pressSealBar = prNum('pPrSeal', PRESS_DEFAULTS.sealBar);
     s.svBar = prNum('pPrSv', PRESS_DEFAULTS.svBar);
+    s.minP0Bar = prNum('pPrMin', PRESS_DEFAULTS.minP0Bar);
     setTraceHeight(s.mainHeight);
     S.setupDone = true;
     closeModal(); render();

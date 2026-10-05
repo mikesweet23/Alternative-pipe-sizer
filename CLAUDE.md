@@ -302,6 +302,10 @@ is two waters, and its secondary has its own unit and its own cold fill.
 | cold fill `pa` | `p0` + water seal (`pressSealBar`, 0.3) |
 | final `pe` | safety valve (`svBar`, 3.0) − 0.5 bar, or 0.9 × above 5 bar |
 
+`p0` is never below `minP0Bar` (0.5 bar, the Flamco minimum; raise it where a
+pump on a roof wants more suction). `pa` here is the *least* cold fill;
+`vesselSizing()` may raise the set point where the water reserve needs it.
+
 `pa ≥ pe` is a fault — no room for the expansion — on the drawing, in Check,
 in the sizer and in the simulator.
 
@@ -310,14 +314,78 @@ in the sizer and in the simulator.
 > change all three in the same commit. `tests/chain-consistency-test.mjs`
 > compares them.
 
-**The sizer** has a *Static Head, Cold Fill & Expansion* card. The static head
-arrives in `pressStaticM` and is editable; the card says what Pipe Trace said
-and whether it has been edited. `expansionVessel()` sizes the vessel:
-`Vn = (Ve + Vwr)(pe + 1)/(pe − p0)`, `Ve` the water expansion from fill to
-maximum temperature (flow, return or ambient, whichever is highest, unless
-typed), `Vwr` 0.5% with 3 L minimum. With more than one water each is sized on
-the pipe volume of its own hydraulic groups (`traceMeta.pressurisation[].groups`);
-plant items count to the primary. Glycol expansion is flagged, not modelled.
+### System volume and the expansion vessel
+
+**The volume is counted once, from parts that do not overlap**, per water:
+
+| Part | Where it comes from |
+|---|---|
+| Pipework | bore × installed length, both legs of a pair (Trace: `waterVolume()`; sizer: each circuit's `water_l_total` on that water's groups) |
+| Headers and buffers | `vesselLitres()` — typed, or a header's own shell |
+| Plant | `waterL` typed on the plant — the boiler or chiller datasheet |
+| Exchangers | `priWaterL` / `secWaterL` on the HX, each side on its own water |
+| Terminal units | `waterL` on each load (each side of a 4-pipe load on its own water) |
+| Not on this trace | `volAddL` typed, or `volAddKw` × a whole-system l/kW for its type (`SYSTEM_L_PER_KW`) |
+
+or **`volOverrideL`, a typed total, which replaces all of it.** The last two
+are for a trace done in sections — the secondaries off a header that are not
+drawn, say. They sit on the plant (or the HX for its secondary) like the
+static head override, and in the sizer's volume table, water by water.
+Typed litres beat kW. Anything not typed is not counted, and Check says which
+loads and plant have no water content. The l/kW figures (6 convectors, 8
+AHU/FCU/chilled, 11 steel panel, 14 cast iron, 20 spread-out, 23 underfloor)
+are *whole-system* estimates — pipe and terminals together — so they are only
+ever applied to the untraced part, never on top of anything counted.
+
+**The vessel, `vesselSizing()`**, a diaphragm vessel to BS EN 12828 Annex D,
+selected the way Reflex and Flamco check a selection:
+
+- `Ve = e · Vs`, `e = ρ(fill)/ρ(max) − 1`, × `glycolExpansionFactor()`
+  (1 + %/100, an assumption) for glycol, or the supplier's `%` typed.
+- `Vwr` = 0.5% of `Vs`, 3 L minimum; 20% of `Vn` for a vessel of 15 L or
+  less; plus the contraction below the fill temperature on a chilled system.
+- **Two requirements, and the larger governs — never their sum:**
+  - *reserve*: `Vn ≥ (Ve + Vwr)(pe + 1)/(pe − p0)` — the vessel holds
+    exactly the reserve at fill;
+  - *fill*: `Vn ≥ Ve / ((p0+1)/(pa+1) − (p0+1)/(pe+1))` — filled to at
+    least `p0` + water seal, the gas is already compressed before any
+    expansion arrives. This is Reflex's `pa ≥ p0 + 0.3` check turned into
+    a size; it usually governs once the static head is more than a few
+    metres. On 5,000 L at 10 m static, 80 °C, 3 bar SV: reserve 443 L,
+    fill 555 L, so 600 L — Reflex would reject 500 L for the same reason.
+- Then the next size in `STD_VESSELS_L` (8 L to 5,000 L, several above that).
+- Fill set point `paSet` = the least pressure that holds the reserve, never
+  below `p0 + seal`; `paHi` (Reflex's `pa` formula) is the most the selected
+  vessel allows; `pFinal` is what it reaches hot, always ≤ `pe`.
+
+**Margins that are deliberately not stacked.** BS 7074 adds 10% to the
+expansion; BS EN 12828 adds the 0.5% reserve instead — the same allowance by
+two routes, so only the reserve is used. The reserve and the fill check are
+alternatives (max, not sum). The static head is geometry with no allowance;
+the only pressure margins are the 0.2 bar at the high point, the 0.3 bar seal
+and the safety valve's own 0.5 bar. Rounding up to a standard size is the only
+other step. Expansion uses the design maximum temperature, not a high-limit
+setting plus a margin.
+
+`PRESS_DEFAULTS`/`coldFill()` are shared by all three tools; the vessel block
+(`STD_VESSELS_L`, `SYSTEM_L_PER_KW`, `glycolExpansionFactor()`,
+`expansionCoeff()`, `vesselSizing()`) is shared by Trace and the sizer, between
+`/* ---------- the expansion vessel` and `/* end shared pressurisation */`.
+Byte-identical; `tests/chain-consistency-test.mjs` compares them.
+
+**The sizer** has a *Static Head, Cold Fill & Expansion* card: the inputs,
+a volume table per water with the untraced and override boxes, and a block of
+results per water with the pre-charge, fill set point and vessel. The static
+head arrives in `pressStaticM` and is editable; the card says what Pipe Trace
+said and whether it has been edited. Plant items carry `group`, and with more
+than one water each item has a water picker. A heat exchanger secondary takes
+its static head and temperatures from `traceMeta`; glycol applies to the plant
+water only.
+
+**A separator leaving a separator opens its own group.** `assignGroups()`
+used to walk straight through a heat exchanger fed from a header's secondary
+as if it were a load, so its secondary water was counted in the primary.
+`step()` now applies the separator rule to every run.
 
 **In a sealed system the static head is not pump head.** The sizer's old
 *Static head (if open system)* box is a different thing and stays separate —
@@ -738,6 +806,11 @@ Flagged in the tools as assumptions. Replace when the figures arrive.
 | Pressurisation margins | 0.2 bar over static at the high point, 0.3 bar water seal, 3 bar safety valve, fill at 10 °C | The pressurisation unit and vessel actually selected, and the safety valve setting on the plant |
 | Expansion of a glycol mix | Water density used for the expansion | Supplier's expansion figure for the concentration |
 | Where the pressurisation unit connects | The pump suction (simulator); the plant's height (Trace) | Per job |
+| Minimum vessel pre-charge | 0.5 bar (Flamco) | The vessel and pump actually selected |
+| Glycol expansion | Water expansion × (1 + glycol % / 100), from about 4.5% against 3% at 50% propylene glycol | The supplier's expansion figure for the mix, typed in the sizer |
+| Water content of anything not traced | Whole-system l/kW: 6 convectors, 8 AHU/FCU/chilled, 11 steel panel, 14 cast iron, 20 spread-out, 23 underfloor | The real volume, typed in litres or as the total |
+| Plant, exchanger and terminal water content | Not counted until typed | Datasheets |
+| Standard vessel sizes | 8–5,000 L in a typical diaphragm range | The selected supplier's range |
 | Typical valve resistances (`VALVE_LIB[].typ`) | Ball/gate 0.5 · butterfly 3 · globe 15 · DRV 12 · comm set 15 · flow station 8 · Y-strainer 8 · basket 10 · swing check 5 · wafer check 4 · dirt separator 12 · flexible 1 kPa | Quoted figures at design flow. These are the **default** basis, so they set the numbers on every schedule until replaced |
 
 ---
@@ -775,7 +848,13 @@ Pipe Trace and edited in the sizer. `traceMeta.pressurisation` is one entry per
 water — high point, where it came from (`marked`/`drawing`), unit height,
 static head and whether it was typed, the hydraulic groups it covers, and the
 pressures. Pipe Trace's own file carries `hp` on run points and
-`staticOverrideM` / `pressRefM` on the plant or HX.
+`staticOverrideM` / `pressRefM` on the plant or HX, and `waterL`,
+`priWaterL`/`secWaterL`, `volAddL`/`volAddKw`/`volAddType`/`volOverrideL` for
+the volume. `settings.pressWaters` (one entry per water: `addL`, `addKw`,
+`addType`, `overrideL`), `pressMinT`, `pressMinP0Bar` and `pressExpPct` are the
+sizer's. `traceMeta.pressurisation[].volume` is the counted breakdown, and
+`plantItems[].group` says which hydraulic group an item holds water for —
+missing means the primary.
 
 `settings.viscosityMode` is `"temperature"` or `"fixed"`. Missing means
 fixed. `settings.mu` is written by the sizer alongside `settings.rho` and
@@ -1575,6 +1654,15 @@ that the drawing goes higher. Type 30 m on the plant: Check calls the 3 bar
 safety valve too low. Send to Sizer: the card shows the same static head and
 says where it came from. Put a heat exchanger in and the secondary has its own
 row in the sizer and its own figures in the simulator's circuit picker.
+
+Then the vessel: type 120 L on the plant and 40 L on the load, put a header
+in with 150 L, and the plant inspector's volume adds up to the pipework plus
+310 L. Type 200 kW not traced as steel panel radiators: 2,200 L more and a
+bigger vessel. Type a total: everything else is replaced and the chip says
+*typed total*. Send to Sizer: the volume table shows the same total per water
+and the same vessel, and an edit there survives Save and reopen. The two
+requirements in the note under the results must be shown and the larger
+must be the one used.
 
 ### If you touched the dry cooler
 
