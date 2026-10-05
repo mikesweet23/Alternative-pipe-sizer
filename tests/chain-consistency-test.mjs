@@ -68,6 +68,23 @@ const temps = [0, 5, 10, 20, 35, 50, 60, 70, 80, 95, 110, 120];
   ok(f.trace && f.sizer && f.simulator && agree, name + '() returns identical digits in all three tools');
 });
 
+/* ---- static head and cold fill: one calculation, three copies ---- */
+{
+  const texts = k => ['vapourGaugeBar', 'coldFill'].map(n => extractFunction(src[k], n)).join('\n')
+    + '\n' + extractObject(src[k], 'PRESS_DEFAULTS');
+  ok(['trace', 'sizer', 'simulator'].every(k => extractFunction(src[k], 'coldFill') && extractObject(src[k], 'PRESS_DEFAULTS')),
+    'PRESS_DEFAULTS, vapourGaugeBar and coldFill found in all three tools');
+  ok(texts('trace') === texts('sizer') && texts('sizer') === texts('simulator'),
+    'PRESS_DEFAULTS, vapourGaugeBar() and coldFill() are byte-identical in all three tools');
+  const vessel = k => {
+    const a = src[k].indexOf('/* ---------- the expansion vessel ----------');
+    const b = src[k].indexOf('/* end shared pressurisation */', a);
+    return a >= 0 && b > a ? src[k].slice(a, b) : null;
+  };
+  ok(vessel('trace') && vessel('trace') === vessel('sizer'),
+    'the expansion vessel block (vesselSizing, STD_VESSELS_L, SYSTEM_L_PER_KW) is byte-identical in Trace and the sizer');
+}
+
 /* ---- fittings: one table, two copies ---- */
 const ftTrace = obj(src.trace, 'FITTING_TYPES');
 const ftSizer = obj(src.sizer, 'FITTING_TYPES');
