@@ -416,6 +416,13 @@
     border-radius: 3px; padding: 3px 5px; font-family: 'Azeret Mono', monospace; font-size: 11.5px;
   }
   .hint.tape .hgt { display: none; }
+  /* label the point just placed as the high point, without leaving the trace */
+  .hint .hhp {
+    display: none; background: rgba(255,255,255,.10); color: #dfe4ea; border: 1px solid #3f4756;
+    border-radius: 3px; padding: 4px 9px; font-weight: 700; font-size: 11.5px; white-space: nowrap;
+  }
+  .hint .hhp.on { background: var(--measure); border-color: var(--measure); color: #241a00; }
+  .hint.drawing:not(.tape) .hhp { display: inline-block; }
   .hint.alt .hgt input { background: rgba(0,0,0,.22); border-color: rgba(255,255,255,.3); }
 
   /* ---- valve palette ---- */
@@ -662,7 +669,7 @@
   .fld .segbtn { display: inline-flex; vertical-align: middle; text-transform: none; letter-spacing: 0; }
   .fld .segbtn button { text-transform: none; letter-spacing: 0; height: 26px; padding: 0 8px; font-size: 11px; min-height: 0; }
   .hpts { display: flex; flex-direction: column; gap: 4px; }
-  .hpt { display: grid; grid-template-columns: 22px 1fr auto 22px; gap: 6px; align-items: center; font-size: 12px; }
+  .hpt { display: grid; grid-template-columns: 22px 1fr auto 30px 22px; gap: 6px; align-items: center; font-size: 12px; }
   .hpt:nth-child(odd) { background: var(--paper-2); }
   .hpt .ix { font-family: 'Azeret Mono', monospace; font-size: 10px; color: var(--muted); text-align: center; }
   .hpt input {
@@ -671,6 +678,9 @@
   }
   .hpt .rise { font-family: 'Azeret Mono', monospace; font-size: 11px; color: var(--ink-soft); text-align: right; }
   .hpt button { background: none; border: none; color: var(--muted); font-size: 16px; padding: 0; min-height: 0; }
+  .hpt button.hpm { font-family: 'Azeret Mono', monospace; font-size: 9px; font-weight: 700; letter-spacing: .04em;
+    border: 1px solid var(--rule); border-radius: 3px; padding: 2px 0; color: var(--muted); }
+  .hpt button.hpm.on { background: var(--measure); border-color: var(--measure); color: #241a00; }
   .three-stage { position: relative; flex: 1; min-height: 0; background: var(--paper-2); }
   #threeCv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
   #threeCv.down { cursor: grabbing; }
@@ -795,6 +805,7 @@
         <span class="hgt hopt" title="The height the next section is traced at. Change it before clicking the next point and that point starts a riser.">
           Height <input type="number" id="hgtIn" step="0.1"> m
         </span>
+        <button type="button" class="hhp" id="hintHP" title="Label the point you have just placed as the high point. Static head and cold fill are taken from it.">&#9650; High point</button>
         <button class="hfin" id="hintFin" title="End here (or double-click, or press Enter)">Finish</button>
         <button type="button" class="hshow" id="hintShow" title="Show the tip again">Tip</button>
         <button type="button" class="xmin" id="hintX" title="Hide this tip — the tool stays armed">&times;</button>
@@ -1110,6 +1121,37 @@ function waterMu(T) {
   return 2.414e-5 * Math.pow(10, 247.8 / ((T + 273.15) - 140));
 }
 function waterMuOutOfRange(T) { return !(T >= 0 && T <= 100); }
+
+/* ---------- static head and cold fill ----------
+   Sealed-system pressures in gauge bar, on the BS EN 12828 route:
+     static      pst = rho(fill) . g . h     h = high point above the pressurisation unit
+     minimum     p0  = pst + pD + margin     pD = vapour pressure, only above 100 C
+     cold fill   pa  = p0 + water seal       what the unit fills to, cold
+     final       pe  = psv - 0.5 bar (psv up to 5 bar), else 0.9 psv
+   p0 is the vessel pre-charge, pa the cold fill pressure. Identical
+   PRESS_DEFAULTS, vapourGaugeBar() and coldFill() in sizer.html, trace.html
+   and simulator.html; change one and change all three. */
+const PRESS_DEFAULTS = { marginBar: 0.2, sealBar: 0.3, svBar: 3, fillT: 10 };
+function vapourGaugeBar(T) {
+  if (!(T > 100)) return 0;
+  const mmHg = Math.pow(10, 8.14019 - 1810.94 / (244.485 + T));
+  return Math.max(0, mmHg * 0.001333224 - 1.01325);
+}
+function coldFill(staticM, maxT, o) {
+  o = o || {};
+  const num = (v, d) => { const x = parseFloat(v); return isFinite(x) ? x : d; };
+  const margin = Math.max(0, num(o.marginBar, PRESS_DEFAULTS.marginBar));
+  const seal = Math.max(0, num(o.sealBar, PRESS_DEFAULTS.sealBar));
+  const sv = Math.max(0, num(o.svBar, PRESS_DEFAULTS.svBar));
+  const fillT = num(o.fillT, PRESS_DEFAULTS.fillT);
+  const h = Math.max(0, num(staticM, 0));
+  const pst = waterRho(fillT) * 9.80665 * h / 1e5;
+  const pD = vapourGaugeBar(num(maxT, 0));
+  const p0 = pst + pD + margin;
+  const pa = p0 + seal;
+  const pe = sv <= 5 ? sv - 0.5 : sv * 0.9;
+  return { staticM: h, pst, pD, p0, pa, sv, pe, margin, seal, fillT, ok: pa < pe };
+}
 /* This take-off's own default is temperature, so a file written before the
    field existed keeps the sizes it already showed. The sizer exchange file
    is the other way round — missing means fixed — and buildSizerProject
@@ -1515,6 +1557,12 @@ function defaultSettings() {
     /* New take-offs use temperature-corrected viscosity. An explicit 'fixed'
        is the legacy 0.00131 Pa.s. Written onto the sizer exchange file. */
     viscosityMode: 'temperature',
+    /* Sealed-system pressurisation, BS EN 12828. The static head itself
+       comes off the drawing — the high point above the pressurisation unit —
+       or is typed on the plant (or the heat exchanger, for its secondary). */
+    pressMarginBar: 0.2,         // over static at the high point, so it never runs negative
+    pressSealBar: 0.3,           // water seal in the vessel, on top of the pre-charge
+    svBar: 3.0,                  // safety valve setting
   };
 }
 S.settings = defaultSettings();
@@ -1656,6 +1704,8 @@ function heightsOf(sg) { return (sg && sg.pts ? sg.pts : []).map((p, i) => verte
 function keepH(old, neu) {
   if (old && old.h !== undefined && old.h !== null && !isNaN(parseFloat(old.h)))
     neu.h = parseFloat(old.h);
+  // a point labelled as the high point stays labelled through any surgery
+  if (old && old.hp) neu.hp = true;
   return neu;
 }
 function ptAt(x, y, h) {
@@ -3133,6 +3183,9 @@ function solve() {
   const onIndex = new Set();
   S.indexes.forEach(r => r.ids.forEach(id => onIndex.add(id)));
   S.segs.forEach(sg => { sg.isIndex = onIndex.has(sg.id); });
+  /* Static head and cold fill, one per water. Worked out after the groups
+     because a heat exchanger is where one water stops and the next begins. */
+  S.waters = pressureWaters();
   return tree;
 }
 
@@ -3205,6 +3258,7 @@ function assignGroups() {
      energy centres stay on their own pump. */
   connectedSourceClusters().forEach(cluster => {
     const g = { id: groups.length, sepId: null, sepName: '', primaryOf: null,
+                sources: cluster.map(r => r.id),
                 label: groups.length === 0 ? 'Primary'
                   : 'Primary — ' + cluster.map(r => r.name || 'plant').join(', ') };
     groups.push(g);
@@ -3212,6 +3266,118 @@ function assignGroups() {
   });
   S.segs.forEach(s => { if (s.orphan) s.hgroup = null; });
   return groups;
+}
+
+/* ---------- static head and cold fill, one per water ----------
+   A sealed system is pressurised once per water, at the pressurisation unit,
+   and has to be filled high enough that the highest point in that water is
+   still above atmospheric. So the figure that matters is the high point
+   above the unit — the static head — and the cold fill follows from it
+   (coldFill(), BS EN 12828).
+
+   A water is not a hydraulic group. A header separates the pumps but not the
+   water: the secondaries off it are filled and pressurised from the same unit
+   as the primary, so their high points count against it. A heat exchanger is
+   two waters, and its secondary has its own unit and its own cold fill. An
+   energy centre that is not connected to another is its own water too.
+
+   The high point is found off the drawing — the top of every run as 3D check
+   draws it, risers, rises over an obstruction and the units they drop on to
+   included. A point can also be labelled as the high point (`hp` on the
+   point, set in the run inspector or with the button in the hint bar while
+   tracing); a labelled point wins, and Check says so if the drawing goes
+   higher somewhere else. Either way it can be overridden on the plant (or on
+   the heat exchanger for its secondary) with a typed static head, for a
+   building whose heights are not all on this sheet. */
+function pressureWaters() {
+  const groups = S.groups || [];
+  const waters = [], waterOf = {};
+  groups.forEach(g => {
+    const sep = g.sepId != null ? nodeById(g.sepId) : null;
+    if (g.sepId == null || (sep && sep.type === 'hx')) {
+      const nodes = g.sepId == null ? (g.sources || []).map(nodeById).filter(Boolean) : [sep];
+      if (!nodes.length) return;
+      const w = { id: waters.length, groups: [g.id], nodes, keyNode: nodes[0],
+                  kind: g.sepId == null ? 'plant' : 'hx' };
+      waters.push(w);
+      waterOf[g.id] = w;
+    } else if (waterOf[g.primaryOf]) {
+      waterOf[g.primaryOf].groups.push(g.id);
+      waterOf[g.id] = waterOf[g.primaryOf];
+    }
+  });
+  const num = v => (v === '' || v === null || v === undefined || !isFinite(parseFloat(v))) ? null : parseFloat(v);
+  const opts = { marginBar: S.settings.pressMarginBar, sealBar: S.settings.pressSealBar, svBar: S.settings.svBar };
+  const W = { cx: 0, cy: 0, s: 1 };       // segPoly3D in drawing pixels, so a point can be marked on the plan
+  waters.forEach(w => {
+    const gs = new Set(w.groups);
+    let auto = null, marked = null;
+    S.segs.forEach(sg => {
+      if (sg.orphan || !gs.has(sg.hgroup) || !sg.pts || sg.pts.length < 2) return;
+      segPoly3D(sg, W).forEach(q => {
+        if (!auto || q.Z > auto.h + 1e-9) auto = { h: q.Z, x: q.X, y: q.Y, seg: sg.id, ref: sg.ref || 'Run' };
+      });
+      sg.pts.forEach((p, i) => {
+        if (!p.hp) return;
+        const h = vertexH(sg, i);
+        if (!marked || h > marked.h) marked = { h, x: p.x, y: p.y, seg: sg.id, ref: sg.ref || 'Run', i };
+      });
+    });
+    const k = w.keyNode;
+    w.label = w.kind === 'hx' ? (k.name || 'HX') + ' secondary'
+            : (waters.filter(x => x.kind === 'plant').length > 1 ? (k.name || 'Plant') : 'Primary');
+    w.high = marked || auto;
+    w.highFrom = marked ? 'marked' : (auto ? 'drawing' : 'none');
+    w.autoHigh = auto;
+    // a labelled high point below something else on the same water
+    w.higherElsewhere = marked && auto && auto.h - marked.h > 0.01 ? auto : null;
+    // where the pressurisation unit connects: typed, or the plant / HX itself
+    /* Plants sharing one water share one unit: the inspector writes the
+       figure on every plant in the cluster, and the first one set is read. */
+    const firstSet = f => { for (const n of w.nodes) { const v = num(n[f]); if (v !== null) return v; } return null; };
+    const ref = firstSet('pressRefM');
+    w.refM = ref !== null ? ref
+           : (w.kind === 'hx' ? heightOf(k) : Math.min.apply(null, w.nodes.map(heightOf)));
+    w.refFrom = ref !== null ? 'typed' : (w.kind === 'hx' ? 'hx' : 'plant');
+    w.staticDrawingM = w.high ? Math.max(0, w.high.h - w.refM) : null;
+    w.overrideM = firstSet('staticOverrideM');
+    if (w.overrideM !== null) w.overrideM = Math.max(0, w.overrideM);
+    w.staticM = w.overrideM !== null ? w.overrideM : (w.staticDrawingM || 0);
+    w.staticFrom = w.overrideM !== null ? 'override' : (w.high ? 'drawing' : 'none');
+    w.maxT = w.kind === 'hx' ? Math.max(hxSecSup(k), hxSecRet(k))
+                             : Math.max(S.settings.supply, S.settings.ret);
+    w.cf = coldFill(w.staticM, w.maxT, opts);
+  });
+  return waters;
+}
+/* The water a node or run belongs to, by its hydraulic group. */
+function waterOfGroup(gid) {
+  return (S.waters || []).find(w => w.groups.indexOf(gid) >= 0) || null;
+}
+/* The water whose pressurisation a plant or heat exchanger sets — the HX for
+   its secondary, any plant in a cluster for that cluster. */
+function waterKeyedBy(n) {
+  return (S.waters || []).find(w => w.nodes.some(x => x.id === n.id)) || null;
+}
+function barFmt(v) { return fmt(v, 2) + ' bar'; }
+/* Label a point as the high point, or clear it. One label per water: a new
+   one on the same water replaces the old, so the drawing never carries two
+   claims to the top. */
+function setHighPoint(sg, i, on) {
+  if (!sg || !sg.pts || !sg.pts[i]) return;
+  pushUndo(on ? 'label the high point' : 'clear the high point');
+  if (on) {
+    const w = waterOfGroup(sg.hgroup);
+    S.segs.forEach(o => {
+      if (!o.pts || (w ? !w.groups.includes(o.hgroup) : o !== sg)) return;
+      o.pts.forEach(p => { delete p.hp; });
+    });
+    sg.pts[i].hp = true;
+    toast('High point labelled at ' + fmt(vertexH(sg, i), 2) + ' m on ' + (sg.ref || 'the run'));
+  } else {
+    delete sg.pts[i].hp;
+    toast('High point label cleared \u2014 the highest point on the drawing is used');
+  }
 }
 
 /* ---------- the index run, one per hydraulic group ----------
@@ -4547,12 +4713,54 @@ function renderInner() {
       stroke: 'var(--measure)', 'stroke-width': 1.2 * k, 'stroke-dasharray': (5 * k) + ' ' + (3 * k) }));
   }
 
+  // ---- the high point of each water, and what it means for the fill ----
+  drawHighPoints(g, k);
+
   ov.innerHTML = '';
   ov.appendChild(g);
   const hbar = el('hint');
   if (hbar) hbar.classList.toggle('drawing', !!(draft && (draft.kind === 'trace' || draft.kind === 'tape') && draft.pts.length > 1));
+  const hpb = el('hintHP');
+  if (hpb) hpb.classList.toggle('on', !!(draft && draft.kind === 'trace' && draft.pts.length
+    && draft.pts[draft.pts.length - 1].hp));
   renderStatus();
   autosave();
+}
+
+/* A triangle on the high point of each water, with the static head and the
+   cold fill beside it. A labelled point is solid; one the tool found on its
+   own is an outline, so it is obvious which is a decision and which is a
+   reading. Labels in the draft show as soon as they are clicked. */
+function drawHighPoints(g, k) {
+  const tri = (x, y, solid) => mk('path', {
+    d: 'M ' + x + ' ' + (y - 9 * k) + ' L ' + (x + 7 * k) + ' ' + (y + 3 * k) + ' L ' + (x - 7 * k) + ' ' + (y + 3 * k) + ' Z',
+    fill: solid ? 'var(--measure)' : 'var(--white)', stroke: '#6b5000', 'stroke-width': 1.4 * k });
+  if (draft && draft.kind === 'trace') draft.pts.forEach(p => { if (p.hp) g.appendChild(tri(p.x, p.y, true)); });
+  if (labelLevel() < 1 && !exporting) return;
+  (S.waters || []).forEach(w => {
+    const hi = w.high;
+    if (!hi) return;
+    g.appendChild(tri(hi.x, hi.y, w.highFrom === 'marked'));
+    const txt = 'HP ' + fmt(hi.h, 2) + ' m' + ((S.waters || []).length > 1 ? ' · ' + w.label : '');
+    const sub = 'static ' + fmt(w.staticM, 1) + ' m' + (w.staticFrom === 'override' ? ' (typed)' : '')
+      + ' · fill ' + fmt(w.cf.pa, 2) + ' bar';
+    const two = labelLevel() >= 2 || exporting;
+    const lw = Math.max(txt.length, two ? sub.length : 0) * 5.7 + 12;
+    const bh = two ? 27 : 15;
+    const bad = !w.cf.ok;
+    // the tag stands up and to the right on a short leader, clear of the run labels on the pipe
+    const tx = hi.x + 14 * k, ty = hi.y - (22 + bh) * k;
+    g.appendChild(mk('line', { x1: hi.x + 3 * k, y1: hi.y - 7 * k, x2: tx, y2: ty + bh * k,
+      stroke: '#6b5000', 'stroke-width': 1 * k }));
+    g.appendChild(mk('rect', { x: tx, y: ty, width: lw * k, height: bh * k,
+      rx: 2 * k, fill: bad ? 'var(--alarm)' : 'var(--measure)', opacity: 0.95 }));
+    g.appendChild(mk('text', { x: tx + 5 * k, y: ty + 11 * k,
+      'font-size': 9.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 700,
+      fill: bad ? '#ffffff' : '#241a00' }, txt));
+    if (two) g.appendChild(mk('text', { x: tx + 5 * k, y: ty + 22 * k,
+      'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace',
+      fill: bad ? '#ffffff' : '#241a00' }, sub));
+  });
 }
 
 /* A 3-way joint reads as a T, not only a circle. Two-way stays a circle
@@ -4936,6 +5144,11 @@ function renderStatus() {
              fmt(r.drop, 0) + ' kPa')).join('')
     + (S.nodes.some(n => n.type === 'llh' && n.shell && n.shell.reversed)
         ? cell('Header', 'primary short', true) : '')
+    /* Static head and cold fill, one cell per water. The primary on its own
+       says just that; more than one water names each. */
+    + (S.waters || []).filter(w => w.high || w.staticFrom === 'override').map(w =>
+        cell(((S.waters || []).length > 1 ? w.label + ' ' : '') + 'cold fill',
+          fmt(w.cf.pa, 2) + ' bar · ' + fmt(w.staticM, 1) + ' m static', !w.cf.ok)).join('')
     // said out loud, because a sheet turned an hour ago is not obvious later
     + (imgRot() ? cell('Sheet turned', fmt(imgRot(), 1) + '°') : '')
     // which revision of a job passed between several people this is
@@ -5035,6 +5248,9 @@ function syncHint() {
   h.classList.toggle('drawing', !!(draft && (draft.kind === 'trace' || draft.kind === 'tape') && draft.pts.length > 1));
   const oc = el('orthoChk');
   if (oc) oc.checked = !!S.settings.ortho;
+  const hb = el('hintHP');
+  if (hb) hb.classList.toggle('on', !!(draft && draft.kind === 'trace' && draft.pts.length
+    && draft.pts[draft.pts.length - 1].hp));
 }
 function hideHint() { hintMin = true; syncHint(); }
 function showHint() { hintMin = false; syncHint(); }
@@ -5624,7 +5840,8 @@ function dedupePts(pts) {
   const out = [];
   pts.forEach(p => {
     const last = out[out.length - 1];
-    if (!last || dist(last, p) > 0.4) out.push(ptAt(p.x, p.y, p.h));
+    if (!last || dist(last, p) > 0.4) out.push(keepH(p, ptAt(p.x, p.y, p.h)));
+    else if (p.hp) last.hp = true;
   });
   return out;
 }
@@ -6079,6 +6296,7 @@ function sourceForm(n) {
                   ['Installed plant', fmt(totals().plantKw, 0) + ' kW'],
                   ['Stream total', fmtVol(stream)]])
     + '<div class="note">The figure on the plant is the stream total. Unpinned loads (left at 0) share what is left after anything pinned. Flow and return are the same volume twice, not one pot.</div>'
+    + pressureFields(n)
     + placementFields(n)
     + rowBtns();
 }
@@ -6492,6 +6710,7 @@ function hxForm(n) {
           + '<strong>' + fmt(idx.drop, 1) + ' kPa</strong>. That is the duty for this exchanger&rsquo;s '
           + 'secondary pump &mdash; not added to the primary.</div>'
         : '')
+    + pressureFields(n)
     + placementFields(n)
     + rowBtns();
 }
@@ -6579,6 +6798,49 @@ function bufferForm(n) {
    the buffers, because it is the same job on all of them and it would be
    irritating to find it in one place and not another. Quarter turns for the
    common case, a free angle for the rest. */
+/* ---------- static head and cold fill, on the plant or the HX ----------
+   The plant sets the pressurisation for its water; a heat exchanger sets it
+   for its secondary. Two boxes: where the unit connects, and a typed static
+   head for when the drawing does not hold the whole height of the building.
+   Both empty means everything comes off the drawing. */
+function pressureFields(n) {
+  const w = waterKeyedBy(n);
+  if (!w) return '';
+  const cf = w.cf;
+  const hi = w.high;
+  const where = hi ? 'on <strong>' + esc(hi.ref) + '</strong> at <strong>' + fmt(hi.h, 2) + ' m</strong>'
+    + (w.highFrom === 'marked' ? ' (labelled)' : ' (highest point on the drawing)') : 'none traced yet';
+  const ov = w.overrideM !== null;
+  const refVal = w.refFrom === 'typed' ? fmt(w.refM, 2) : '';
+  const ovVal = ov ? fmt(w.overrideM, 2) : '';
+  return '<div class="sub-hd">Static head and cold fill' + (w.kind === 'hx' ? ' &mdash; secondary' : '') + '</div>'
+    + derivedBox([
+        ['High point', where],
+        ['Pressurisation unit', fmt(w.refM, 2) + ' m' + (w.refFrom === 'typed' ? ' (typed)' : w.refFrom === 'hx' ? ' (at the HX)' : ' (at the plant)')],
+        ['Static head', '<strong>' + fmt(w.staticM, 2) + ' m</strong>'
+          + (ov ? ' <span class="chip warn">typed</span>' + (w.staticDrawingM !== null ? ' drawing says ' + fmt(w.staticDrawingM, 2) + ' m' : '') : '')
+          + ' &middot; ' + barFmt(cf.pst)],
+        ['Pre-charge p<sub>0</sub>', barFmt(cf.p0) + (cf.pD > 0 ? ' (incl. ' + barFmt(cf.pD) + ' vapour)' : '')],
+        ['Cold fill', '<strong>' + barFmt(cf.pa) + '</strong>'],
+        ['Safety valve', barFmt(cf.sv) + ' &middot; final ' + barFmt(cf.pe)],
+      ])
+    + (!cf.ok ? '<div class="note bad">A cold fill of ' + barFmt(cf.pa) + ' is at or above the '
+        + barFmt(cf.pe) + ' final pressure a ' + barFmt(cf.sv) + ' safety valve allows. There is no room '
+        + 'for the expansion: raise the safety valve setting (Pipe &amp; basis) or pressurise nearer the top.</div>' : '')
+    + (w.higherElsewhere ? '<div class="note warn">The drawing goes higher than the labelled point &mdash; '
+        + fmt(w.higherElsewhere.h, 2) + ' m on ' + esc(w.higherElsewhere.ref) + '.</div>' : '')
+    + '<div class="row2">'
+    + '<label class="fld"><span>Pressurisation unit at <em>m</em></span>'
+    +   '<input type="number" data-press="pressRefM" step="0.1" placeholder="' + fmt(w.kind === 'hx' ? heightOf(n) : w.refM, 2) + '" value="' + refVal + '"></label>'
+    + '<label class="fld"><span>Static head override <em>m</em></span>'
+    +   '<input type="number" data-press="staticOverrideM" step="0.1" min="0" placeholder="from drawing" value="' + ovVal + '"></label>'
+    + '</div>'
+    + '<div class="note">Static head is the high point above the pressurisation unit. Label the high point on a run '
+    + '(run inspector, or <strong>High point</strong> in the hint bar while tracing), or leave it to the drawing. '
+    + 'Type an override when the building&rsquo;s full height is not on this sheet. Cold fill is static + '
+    + barFmt(cf.margin) + ' + ' + barFmt(cf.seal) + ' water seal, to BS EN 12828.</div>';
+}
+
 function placementFields(n) {
   const rot = nodeRot(n), s = nodeScale(n), m = nodeSizeM(n);
   return '<div class="sub-hd">On the sheet</div>'
@@ -6761,6 +7023,8 @@ function heightPointsBox(sg) {
         return '<div class="hpt"><span class="ix">' + (i + 1) + '</span>'
           + '<input type="number" step="0.05" data-hp="' + i + '" value="' + fmt(hs[i], 2) + '">'
           + '<span class="rise">' + riseTxt + '</span>'
+          + '<button type="button" class="hpm' + (p.hp ? ' on' : '') + '" data-hpmark="' + i + '" title="'
+          +   (p.hp ? 'Labelled as the high point \u2014 click to clear' : 'Label this point as the high point, for the static head') + '">HP</button>'
           + (i > 0 && i < sg.pts.length - 1
               ? '<button type="button" data-hpdel="' + i + '" title="Remove this corner">&times;</button>'
               : '<span></span>')
@@ -6771,7 +7035,9 @@ function heightPointsBox(sg) {
     + '<button class="btn ghost sm" type="button" id="fLevel">Level the whole run</button>'
     + '<button class="btn ghost sm" type="button" id="fSetAll">Set all to\u2026</button></div>'
     + '<div class="note">Change the height before the next click while tracing, or type it here. '
-    + 'A difference between two points is a riser at that corner, and it shows in 3D check.</div></div>';
+    + 'A difference between two points is a riser at that corner, and it shows in 3D check. '
+    + '<strong>HP</strong> labels the high point the static head and cold fill are taken from; '
+    + 'with none labelled, the highest point on the drawing is used.</div></div>';
 }
 
 function segDerivedRows(sg, single, p) {
@@ -7128,6 +7394,24 @@ function syncTerminalSet(n, side) {
 }
 
 function wireInspector() {
+  /* Pressurisation belongs to the water, not to one plant: every plant in a
+     cluster carries the same figure, so it cannot read one way on the duty
+     chiller and another on the standby. Empty clears it back to the drawing. */
+  el('insBody').querySelectorAll('[data-press]').forEach(inp => {
+    inp.addEventListener('change', () => {
+      const n = sel && sel.kind === 'node' ? nodeById(sel.id) : null;
+      const w = n ? waterKeyedBy(n) : null;
+      if (!w) return;
+      const f = inp.getAttribute('data-press');
+      const v = parseFloat(inp.value);
+      pushUndo(f === 'staticOverrideM' ? 'static head override' : 'pressurisation height');
+      w.nodes.forEach(x => {
+        if (inp.value.trim() === '' || !isFinite(v)) delete x[f];
+        else x[f] = f === 'staticOverrideM' ? Math.max(0, v) : v;
+      });
+      render(); openInspector();
+    });
+  });
   el('insBody').querySelectorAll('[data-volunit]').forEach(btn => {
     btn.addEventListener('click', () => {
       S.settings.volUnit = btn.getAttribute('data-volunit') === 'm3h' ? 'm3h' : 'lps';
@@ -7258,6 +7542,14 @@ function wireInspector() {
         if (isNaN(v) || !sgH.pts[i]) return;
         pushUndo('change a point height');
         sgH.pts[i].h = v;
+        render(); openInspector();
+      });
+    });
+    el('insBody').querySelectorAll('[data-hpmark]').forEach(b => {
+      b.addEventListener('click', () => {
+        const i = parseInt(b.dataset.hpmark, 10);
+        if (!sgH || !sgH.pts || !sgH.pts[i]) return;
+        setHighPoint(sgH, i, !sgH.pts[i].hp);
         render(); openInspector();
       });
     });
@@ -7511,6 +7803,23 @@ function auditTrace() {
     dupTags.length + ' valve tag' + (dupTags.length === 1 ? '' : 's') + ' used more than once ('
     + esc(dupTags.slice(0, 6).join(', ')) + '). Renumber runs and valves puts them back in order.',
     true);
+
+  /* ---- static head and cold fill ---- */
+  (S.waters || []).forEach(w => {
+    const nm = (S.waters.length > 1 ? w.label + ': ' : '');
+    if (!w.cf.ok) add('coldfill', 'bad', nm + 'a cold fill of ' + barFmt(w.cf.pa) + ' (static '
+      + fmt(w.staticM, 1) + ' m) is at or above the ' + barFmt(w.cf.pe) + ' final pressure that a '
+      + barFmt(w.cf.sv) + ' safety valve allows, so there is no room for the expansion. Raise the '
+      + 'safety valve setting in Pipe &amp; basis, or pressurise nearer the top.', false);
+    if (w.higherElsewhere) add('highpoint', 'warn', nm + 'the high point is labelled at '
+      + fmt(w.high.h, 2) + ' m on ' + esc(w.high.ref) + ', but the drawing reaches '
+      + fmt(w.higherElsewhere.h, 2) + ' m on ' + esc(w.higherElsewhere.ref)
+      + '. The cold fill is taken from the label; move it if the drawing is right.', false);
+    const labels = S.segs.filter(sg => w.groups.includes(sg.hgroup))
+      .reduce((n, sg) => n + (sg.pts || []).filter(p => p.hp).length, 0);
+    if (labels > 1) add('highpoints', 'warn', nm + labels + ' points are labelled as the high point. '
+      + 'The highest of them is used; clear the others in the run inspector.', false);
+  });
 
   return out;
 }
@@ -8450,6 +8759,8 @@ function buildTraceReportHtml(plan) {
       : '<p>No valves placed yet. Elbows and tees are on the fittings sheet above.</p>')
     + '<h2>8. Index run</h2>'
     + idxHtml
+    + '<h2>9. Static head and cold fill</h2>'
+    + pressureReportHtml()
     + '<div class="disc"><strong>Disclaimer:</strong> This take-off is a design aid. Lengths, sizes and '
     + 'pressures are based on the inputs on the drawing or schematic and on standard reference data. '
     + 'Assumed valve and fitting figures stand in for selected-product data until they are replaced. '
@@ -8458,6 +8769,33 @@ function buildTraceReportHtml(plan) {
     + 'the full hydraulic calculation.</div>'
     + '</div></body></html>';
   return html;
+}
+
+/* One row per water: where the high point is, what it is measured from,
+   and the pressures that follow from it. */
+function pressureReportHtml() {
+  const ws = S.waters || [];
+  if (!ws.length) return '<p>No plant on the drawing, so no water to pressurise.</p>';
+  const rows = ws.map(w => '<tr><td>' + esc(w.label) + '</td>'
+    + '<td>' + (w.high ? fmt(w.high.h, 2) + ' m on ' + esc(w.high.ref)
+        + (w.highFrom === 'marked' ? ' (labelled)' : ' (drawing)') : '\u2014') + '</td>'
+    + '<td class="n">' + fmt(w.refM, 2) + '</td>'
+    + '<td class="n">' + fmt(w.staticM, 2) + (w.staticFrom === 'override' ? ' typed' : '') + '</td>'
+    + '<td class="n">' + fmt(w.cf.pst, 2) + '</td>'
+    + '<td class="n">' + fmt(w.cf.p0, 2) + '</td>'
+    + '<td class="n"><strong>' + fmt(w.cf.pa, 2) + '</strong></td>'
+    + '<td class="n">' + fmt(w.cf.sv, 1) + '</td>'
+    + '<td>' + (w.cf.ok ? 'OK' : 'SV too low') + '</td></tr>').join('');
+  const c = ws[0].cf;
+  return '<p>Static head is the high point above the pressurisation unit. Pressures are gauge, to BS EN 12828: '
+    + 'pre-charge p<sub>0</sub> = static + ' + fmt(c.margin, 2) + ' bar (+ vapour pressure above 100 \u00b0C); '
+    + 'cold fill = p<sub>0</sub> + ' + fmt(c.seal, 2) + ' bar water seal; the final pressure is the safety valve '
+    + 'setting less 0.5 bar. Heights are above the finished floor of this drawing &mdash; a building taller than '
+    + 'the sheet needs the static head typed on the plant. A heat exchanger secondary is its own water.</p>'
+    + '<table class="rpt"><thead><tr><th>Water</th><th>High point</th><th class="n">Unit m</th>'
+    + '<th class="n">Static m</th><th class="n">Static bar</th><th class="n">Pre-charge bar</th>'
+    + '<th class="n">Cold fill bar</th><th class="n">SV bar</th><th>Check</th></tr></thead>'
+    + '<tbody>' + rows + '</tbody></table>';
 }
 
 /* ==========================================================================
@@ -8702,6 +9040,7 @@ function buildSizerProject() {
 
   const t = totals();
   const src = S.nodes.find(n => n.type === 'source');
+  const pw = waterOfGroup(0) || (S.waters || [])[0] || null;
   return {
     app: 'adi-pipework-sizer', schema: 1,
     settings: {
@@ -8728,6 +9067,13 @@ function buildSizerProject() {
       llhMaterial: S.settings.material,
       viscosityMode: viscosityModeOf(S.settings),
       mu: viscosityFor((S.settings.supply + S.settings.ret) / 2, S.settings),
+      /* Static head for the primary water, off the drawing or as typed on the
+         plant, with the BS EN 12828 margins it is filled against. The sizer
+         sizes the expansion vessel on it; other waters are in traceMeta. */
+      pressStaticM: pw ? String(+pw.staticM.toFixed(2)) : '',
+      pressMarginBar: String(S.settings.pressMarginBar != null ? S.settings.pressMarginBar : PRESS_DEFAULTS.marginBar),
+      pressSealBar: String(S.settings.pressSealBar != null ? S.settings.pressSealBar : PRESS_DEFAULTS.sealBar),
+      pressSvBar: String(S.settings.svBar != null ? S.settings.svBar : PRESS_DEFAULTS.svBar),
     },
     circuits,
     nextId: next,
@@ -8797,6 +9143,10 @@ function buildSizerProject() {
          it is reported the same way a valve on a main is. */
       vesselKpaOnMains: +S.nodes.filter(n => isVessel(n) && !isSeparator(n))
         .reduce((s, n) => s + vesselKpa(n), 0).toFixed(2),
+      /* One entry per water — the primary first, then each heat exchanger
+         secondary or separate energy centre — with where its high point is,
+         what it was measured from and what it fills to. */
+      pressurisation: pressurisationMeta(),
       drawing: S.img ? S.img.label : '', at: new Date().toISOString(),
     },
     /* Buffers, headers and their water, straight into the sizer's plant
@@ -8810,6 +9160,26 @@ function buildSizerProject() {
     })),
     nextPlantId: S.nodes.filter(n => isVessel(n) && n.type !== 'hx').length + 1,
   };
+}
+
+function pressurisationMeta() {
+  return (S.waters || []).map(w => ({
+    label: w.label, kind: w.kind,
+    keyNode: w.keyNode ? (w.keyNode.name || '') : '',
+    groups: w.groups.slice(),
+    highPointM: w.high ? +w.high.h.toFixed(2) : null,
+    highPointOn: w.high ? w.high.ref : '',
+    highPointFrom: w.highFrom,
+    drawingHighM: w.autoHigh ? +w.autoHigh.h.toFixed(2) : null,
+    unitM: +w.refM.toFixed(2), unitFrom: w.refFrom,
+    staticDrawingM: w.staticDrawingM !== null ? +w.staticDrawingM.toFixed(2) : null,
+    staticOverrideM: w.overrideM,
+    staticM: +w.staticM.toFixed(2), staticFrom: w.staticFrom,
+    maxT: w.maxT,
+    staticBar: +w.cf.pst.toFixed(3), preChargeBar: +w.cf.p0.toFixed(3),
+    coldFillBar: +w.cf.pa.toFixed(3), vapourBar: +w.cf.pD.toFixed(3),
+    svBar: w.cf.sv, finalBar: +w.cf.pe.toFixed(3), ok: w.cf.ok,
+  }));
 }
 
 /* The flow a hydraulic circuit's own pump has to move: what its index run
@@ -9859,6 +10229,14 @@ const HELP = [
     { id: 'lengths', t: 'Which length is which?', b: '<b>Route</b> is one way on the plan. <b>Riser</b> is one way '
       + 'vertical \u2014 the height difference plus any extra rise over an obstruction. <b>Pipe m</b> is every leg as '
       + 'installed: route plus riser, times the number of pipes. That is what gets ordered.' },
+    { id: 'highpoint', t: 'I need the static head and cold fill pressure', tool: ['trace'], b: 'Static head is the '
+      + '<b>high point</b> above the pressurisation unit. While tracing, place the top point and press '
+      + '<b>\u25b2 High point</b> in the hint bar; or open the run and click <b>HP</b> beside the point. With nothing '
+      + 'labelled, the highest point on the drawing is used. The plant (or a heat exchanger, for its secondary) '
+      + 'shows the static head, pre-charge and <b>cold fill</b>, and takes the height the unit connects at and a '
+      + '<b>static head override</b> for a building taller than the sheet. Margins and the safety valve are in '
+      + '<b>Pipe &amp; basis</b>. It all goes to the sizer, which sizes the expansion vessel on it.',
+      done: () => (S.waters || []).some(w => w.highFrom === 'marked' || w.staticFrom === 'override') },
   ] },
   { id: 'sel', title: 'Selecting, moving and copying', tips: [
     { id: 'lasso', t: 'I want to pick up several fan coils at once', tool: ['select'], b: 'With <b>Select</b> '
@@ -10256,6 +10634,14 @@ function projectDialog() {
     + '<label class="fld"><span>Loads <em>m</em></span><input type="number" id="pHl" step="0.1" value="' + s.loadHeight + '"></label>'
     + '</div>'
     + '<label class="fld"><span>Min velocity <em>m/s</em></span><input type="number" id="pVn" step="0.1" value="' + s.vMin + '"></label>'
+    + '<div style="font-family:Azeret Mono,monospace;font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);margin:14px 0 6px">Pressurisation &mdash; BS EN 12828</div>'
+    + '<div class="row2" style="grid-template-columns:1fr 1fr 1fr">'
+    + '<label class="fld"><span>Margin at high point <em>bar</em></span><input type="number" id="pPrMargin" step="0.05" min="0" value="' + (s.pressMarginBar != null ? s.pressMarginBar : PRESS_DEFAULTS.marginBar) + '"></label>'
+    + '<label class="fld"><span>Water seal <em>bar</em></span><input type="number" id="pPrSeal" step="0.05" min="0" value="' + (s.pressSealBar != null ? s.pressSealBar : PRESS_DEFAULTS.sealBar) + '"></label>'
+    + '<label class="fld"><span>Safety valve <em>bar</em></span><input type="number" id="pPrSv" step="0.5" min="0" value="' + (s.svBar != null ? s.svBar : PRESS_DEFAULTS.svBar) + '"></label>'
+    + '</div>'
+    + '<div class="note">Static head is the high point above the pressurisation unit, off the drawing or typed on the plant. '
+    +   'Pre-charge = static + margin (+ vapour pressure above 100 &deg;C); cold fill = pre-charge + water seal.</div>'
     + '<div style="display:flex;gap:8px;margin-top:12px">'
     + '<button class="btn go" id="pOk">Apply</button>'
     + '<button class="btn ghost" onclick="closeModal()">Cancel</button></div>');
@@ -10339,6 +10725,10 @@ function projectDialog() {
     s.plantHeight = parseFloat(el('pHp').value) || 0;
     s.mainHeight = parseFloat(el('pHm').value) || 0;
     s.loadHeight = parseFloat(el('pHl').value) || 0;
+    const prNum = (id, d) => { const v = parseFloat(el(id).value); return isFinite(v) && v >= 0 ? v : d; };
+    s.pressMarginBar = prNum('pPrMargin', PRESS_DEFAULTS.marginBar);
+    s.pressSealBar = prNum('pPrSeal', PRESS_DEFAULTS.sealBar);
+    s.svBar = prNum('pPrSv', PRESS_DEFAULTS.svBar);
     setTraceHeight(s.mainHeight);
     S.setupDone = true;
     closeModal(); render();
@@ -11488,6 +11878,17 @@ el('hintX').addEventListener('click', ev => { ev.preventDefault(); hideHint(); }
 el('hintShow').addEventListener('click', ev => { ev.preventDefault(); showHint(); });
 el('hintMore').addEventListener('click', ev => { ev.preventDefault(); hintLong = !hintLong; syncHint(); });
 el('hintFin').addEventListener('click', () => { finishDraftInPlace(); });
+/* The high point is easiest to label at the moment it is drawn. The label
+   rides on the point into the finished run. */
+el('hintHP').addEventListener('click', ev => {
+  ev.stopPropagation();
+  if (!draft || draft.kind !== 'trace' || !draft.pts.length) return;
+  const p = draft.pts[draft.pts.length - 1];
+  if (p.hp) delete p.hp; else p.hp = true;
+  toast(p.hp ? 'High point labelled at ' + fmt(p.h !== undefined ? p.h : traceHeight, 2) + ' m'
+             : 'High point label cleared');
+  syncHint(); render();
+});
 el('orthoChk').addEventListener('click', ev => ev.stopPropagation());
 el('hgtIn').addEventListener('input', e => {
   const v = parseFloat(e.target.value);

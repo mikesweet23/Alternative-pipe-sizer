@@ -1636,6 +1636,49 @@
     <div id="plantVolumeTotal" style="background:rgba(122,209,228,0.12);border-left:3px solid var(--brand-blue);padding:10px 13px;margin-top:14px;font-size:12.5px;line-height:1.55"></div>
   </div>
 
+  <!-- Pressurisation & Expansion -->
+  <div class="card" id="pressCard" style="margin-bottom:24px">
+    <div class="card-title">
+      Static Head, Cold Fill &amp; Expansion
+      <span class="hint">sealed system &middot; BS EN 12828</span>
+    </div>
+    <div id="pressSource" style="font-size:12.5px;line-height:1.55;margin:-4px 0 14px;color:var(--ink-soft)"></div>
+    <div class="input-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px 14px">
+      <div class="input-group">
+        <label>Static head <span class="unit">m</span></label>
+        <input type="number" id="pressStaticM" value="" step="0.1" min="0" placeholder="high point above the unit" oninput="renderCircuits()">
+      </div>
+      <div class="input-group">
+        <label>Margin at high point <span class="unit">bar</span></label>
+        <input type="number" id="pressMarginBar" value="0.2" step="0.05" min="0" oninput="renderCircuits()">
+      </div>
+      <div class="input-group">
+        <label>Water seal <span class="unit">bar</span></label>
+        <input type="number" id="pressSealBar" value="0.3" step="0.05" min="0" oninput="renderCircuits()">
+      </div>
+      <div class="input-group">
+        <label>Safety valve setting <span class="unit">bar</span></label>
+        <input type="number" id="pressSvBar" value="3" step="0.5" min="0" oninput="renderCircuits()">
+      </div>
+      <div class="input-group">
+        <label>Fill temperature <span class="unit">&deg;C</span></label>
+        <input type="number" id="pressFillT" value="10" step="1" oninput="renderCircuits()">
+      </div>
+      <div class="input-group">
+        <label>Maximum temperature <span class="unit">&deg;C</span></label>
+        <input type="number" id="pressMaxT" value="" step="1" placeholder="flow / return" oninput="renderCircuits()">
+      </div>
+    </div>
+    <div id="pressResults" style="margin-top:14px"></div>
+    <div style="font-size:12px;color:var(--muted);margin-top:14px;line-height:1.6;padding:10px 14px;background:var(--off-white);border-left:3px solid var(--brand-blue);border-radius:2px">
+      <strong style="color:var(--ink)">Static head is the high point above the pressurisation unit</strong> &mdash; it comes across from Pipe Trace, or type it.
+      Pre-charge p<sub>0</sub> = static + margin (+ vapour pressure above 100&nbsp;&deg;C); cold fill p<sub>a</sub> = p<sub>0</sub> + water seal;
+      final p<sub>e</sub> = safety valve &minus; 0.5 bar (0.9&times; above 5 bar). Vessel V<sub>n</sub> = (V<sub>e</sub> + V<sub>wr</sub>) &times; (p<sub>e</sub> + 1) / (p<sub>e</sub> &minus; p<sub>0</sub>),
+      with V<sub>e</sub> the expansion of the system volume from fill to maximum temperature and V<sub>wr</sub> a water reserve of 0.5% (3&nbsp;L minimum).
+      In a sealed system the static head is <strong style="color:var(--ink)">not</strong> pump head &mdash; that is the open-system box under Pump Selection.
+    </div>
+  </div>
+
   <!-- Thermal / Heat Loss -->
   <div class="card" id="thermalCard" style="margin-bottom:24px">
     <div class="card-title">
@@ -1800,7 +1843,8 @@
             <input type="number" id="staticHead" value="0" step="1" min="0" oninput="renderPumpPanel()">
           </div>
           <div style="font-size:12px;color:var(--muted);padding:10px 0;line-height:1.6;border-top:1px solid var(--line);margin-top:8px">
-            For a sealed pressurised system, static head is <strong style="color:var(--ink)">0</strong>. Only enter a value for open circuits or roof-level tank fed systems.
+            For a sealed pressurised system, static head is <strong style="color:var(--ink)">0</strong> here. Only enter a value for open circuits or roof-level tank fed systems.
+            The sealed system&rsquo;s static head sets the cold fill, not the pump &mdash; see <a href="#pressCard" style="color:var(--brand-blue-deep)">Static Head, Cold Fill &amp; Expansion</a>.
           </div>
         </div>
 
@@ -2285,6 +2329,37 @@ function waterMu(T) {
   return 2.414e-5 * Math.pow(10, 247.8 / ((T + 273.15) - 140));
 }
 function waterMuOutOfRange(T) { return !(T >= 0 && T <= 100); }
+
+/* ---------- static head and cold fill ----------
+   Sealed-system pressures in gauge bar, on the BS EN 12828 route:
+     static      pst = rho(fill) . g . h     h = high point above the pressurisation unit
+     minimum     p0  = pst + pD + margin     pD = vapour pressure, only above 100 C
+     cold fill   pa  = p0 + water seal       what the unit fills to, cold
+     final       pe  = psv - 0.5 bar (psv up to 5 bar), else 0.9 psv
+   p0 is the vessel pre-charge, pa the cold fill pressure. Identical
+   PRESS_DEFAULTS, vapourGaugeBar() and coldFill() in sizer.html, trace.html
+   and simulator.html; change one and change all three. */
+const PRESS_DEFAULTS = { marginBar: 0.2, sealBar: 0.3, svBar: 3, fillT: 10 };
+function vapourGaugeBar(T) {
+  if (!(T > 100)) return 0;
+  const mmHg = Math.pow(10, 8.14019 - 1810.94 / (244.485 + T));
+  return Math.max(0, mmHg * 0.001333224 - 1.01325);
+}
+function coldFill(staticM, maxT, o) {
+  o = o || {};
+  const num = (v, d) => { const x = parseFloat(v); return isFinite(x) ? x : d; };
+  const margin = Math.max(0, num(o.marginBar, PRESS_DEFAULTS.marginBar));
+  const seal = Math.max(0, num(o.sealBar, PRESS_DEFAULTS.sealBar));
+  const sv = Math.max(0, num(o.svBar, PRESS_DEFAULTS.svBar));
+  const fillT = num(o.fillT, PRESS_DEFAULTS.fillT);
+  const h = Math.max(0, num(staticM, 0));
+  const pst = waterRho(fillT) * 9.80665 * h / 1e5;
+  const pD = vapourGaugeBar(num(maxT, 0));
+  const p0 = pst + pD + margin;
+  const pa = p0 + seal;
+  const pe = sv <= 5 ? sv - 0.5 : sv * 0.9;
+  return { staticM: h, pst, pD, p0, pa, sv, pe, margin, seal, fillT, ok: pa < pe };
+}
 
 function getViscosityMode() {
   const el = document.getElementById('viscosityMode');
@@ -3756,6 +3831,191 @@ function renderPlantVolumes() {
       + (plantL > 0 ? ' <span style="color:var(--muted)">(' + (plantL / totalL * 100).toFixed(0) + '% held in plant)</span>' : '')
       + (plantLossW() > 0 ? '<div style="margin-top:4px;color:var(--ink-soft)">Plant standing ' + lossWord(false) + ': <strong>' + plantLossW().toFixed(0) + ' W</strong></div>' : '');
   }
+}
+
+/* ============================================================
+   STATIC HEAD, COLD FILL AND THE EXPANSION VESSEL
+   The static head comes across from Pipe Trace (the high point above the
+   pressurisation unit, one figure per water) or is typed. coldFill() turns
+   it into the pre-charge and the cold fill; expansionVessel() sizes the
+   vessel on the system volume from fill to maximum temperature.
+
+   A heat exchanger secondary is a water of its own, with its own unit and
+   its own vessel. When the trace says there is more than one water, each is
+   sized on the pipe volume of its own circuits; the editable fields are the
+   primary's, and the others are read from the trace as they arrived. Plant
+   items count to the primary.
+
+   In a sealed system the static head is NOT pump head. The open-system box
+   under Pump Selection is a different thing and stays separate.
+   ============================================================ */
+const PRESS_FIELD_DEFAULTS = { pressStaticM: '', pressMarginBar: '0.2', pressSealBar: '0.3',
+  pressSvBar: '3', pressFillT: '10', pressMaxT: '' };
+function pressNum(id) {
+  const e = document.getElementById(id);
+  const v = e ? parseFloat(e.value) : NaN;
+  return isFinite(v) ? v : null;
+}
+function tracePressurisation() {
+  const m = passThrough && passThrough.traceMeta;
+  return m && Array.isArray(m.pressurisation) ? m.pressurisation : [];
+}
+/* Expansion from the fill temperature to the hottest the water gets, on the
+   water density fit. A glycol mix expands more than water — flagged, not
+   modelled. */
+function expansionVessel(litres, fillT, maxT, p0, pe) {
+  const e = Math.max(0, waterRho(fillT) / waterRho(maxT) - 1);
+  const Ve = e * litres;
+  const Vwr = Math.max(0.005 * litres, 3);
+  const span = pe - p0;
+  const Vn = span > 0 ? (Ve + Vwr) * (pe + 1) / span : Infinity;
+  return { litres, e, Ve, Vwr, Vn, ok: span > 0 };
+}
+function pressMaxTemp() {
+  const typed = pressNum('pressMaxT');
+  if (typed !== null) return { T: typed, from: 'typed' };
+  const f = pressNum('fluidTemp'), r = pressNum('returnTemp'), a = pressNum('ambientTemp');
+  const T = Math.max(f !== null ? f : 0, r !== null ? r : 0, a !== null ? a : 0);
+  return { T, from: (a !== null && a >= Math.max(f || 0, r || 0)) ? 'ambient' : 'flow / return' };
+}
+function pressOpts() {
+  return { marginBar: pressNum('pressMarginBar'), sealBar: pressNum('pressSealBar'),
+           svBar: pressNum('pressSvBar'), fillT: pressNum('pressFillT') };
+}
+/* Every water this project has: the primary from the fields on this page,
+   the rest from the trace. Volumes by hydraulic group. */
+function pressurisationWaters() {
+  const meta = tracePressurisation();
+  const opts = pressOpts();
+  const fillT = opts.fillT !== null ? opts.fillT : PRESS_DEFAULTS.fillT;
+  const volByGroup = {};
+  let allL = 0;
+  circuits.forEach(c => {
+    const r = calculateCircuit(c);
+    if (r.error || !r.recommended) return;
+    const g = circuitGroup(c);
+    volByGroup[g] = (volByGroup[g] || 0) + r.weights.water_l_total;
+    allL += r.weights.water_l_total;
+  });
+  const plantL = plantVolumeLitres();
+  const groupsL = gs => gs.reduce((t, g) => t + (volByGroup[g] || 0), 0);
+  const typedStatic = pressNum('pressStaticM');
+  const mt = pressMaxTemp();
+  const prim = meta[0] || null;
+  const out = [];
+  const primGroups = prim && meta.length > 1 ? prim.groups : null;
+  const pipeL = primGroups ? groupsL(primGroups) : allL;
+  const cf = coldFill(typedStatic !== null ? typedStatic : 0, mt.T, opts);
+  out.push({ label: prim ? prim.label : 'System', primary: true, staticM: cf.staticM,
+    staticTyped: typedStatic !== null, trace: prim, maxT: mt.T, maxFrom: mt.from,
+    pipeL, plantL, cf, ev: expansionVessel(pipeL + plantL, fillT, mt.T, cf.p0, cf.pe) });
+  meta.slice(1).forEach(w => {
+    const L = groupsL(w.groups || []);
+    const T = isFinite(parseFloat(w.maxT)) ? parseFloat(w.maxT) : mt.T;
+    const c2 = coldFill(w.staticM, T, opts);
+    out.push({ label: w.label, primary: false, staticM: c2.staticM, staticTyped: false, trace: w,
+      maxT: T, maxFrom: 'trace', pipeL: L, plantL: 0, cf: c2, ev: expansionVessel(L, fillT, T, c2.p0, c2.pe) });
+  });
+  return out;
+}
+
+function renderPressurisation() {
+  const box = document.getElementById('pressResults');
+  if (!box) return;
+  const ws = pressurisationWaters();
+  const w = ws[0];
+  const cf = w.cf, ev = w.ev;
+  const src = document.getElementById('pressSource');
+  if (src) {
+    const t = w.trace;
+    if (t) {
+      const traceSaid = t.staticM;
+      const differs = w.staticTyped && Math.abs(w.staticM - traceSaid) > 0.005;
+      src.innerHTML = 'From Pipe Trace: high point <strong>' + (t.highPointM !== null ? t.highPointM.toFixed(2) + ' m' : '—')
+        + '</strong>' + (t.highPointOn ? ' on ' + escHtml(t.highPointOn) : '')
+        + (t.highPointFrom === 'marked' ? ' (labelled)' : t.highPointFrom === 'drawing' ? ' (highest on the drawing)' : '')
+        + ', pressurisation unit at ' + (+t.unitM).toFixed(2) + ' m'
+        + (t.staticFrom === 'override' ? ', static head typed on the plant' : '')
+        + ' &rarr; <strong>' + (+traceSaid).toFixed(2) + ' m</strong>.'
+        + (differs ? ' <span style="color:var(--warn,#b8860b);font-weight:700">Edited here to ' + w.staticM.toFixed(2) + ' m.</span>' : '');
+    } else {
+      src.innerHTML = 'Type the static head: the height of the highest point in the system above the pressurisation unit. '
+        + 'A project sent from Pipe Trace arrives with it filled in.';
+    }
+  }
+  const tile = (lab, val, unit, hi) => '<div class="total-block" style="' + (hi ? '' : 'background:var(--white);color:var(--ink);border:1px solid var(--line-strong)') + '">'
+    + '<div class="r-label"' + (hi ? '' : ' style="color:var(--muted)"') + '>' + lab + '</div>'
+    + '<div class="r-value"' + (hi ? '' : ' style="color:var(--ink)"') + '>' + val + '</div>'
+    + '<div class="r-unit"' + (hi ? '' : ' style="color:var(--muted)"') + '>' + unit + '</div></div>';
+  let html = '<div class="weight-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">'
+    + tile('Static', cf.pst.toFixed(2), 'bar · ' + cf.staticM.toFixed(2) + ' m')
+    + tile('Pre-charge p₀', cf.p0.toFixed(2), 'bar' + (cf.pD > 0 ? ' · incl. ' + cf.pD.toFixed(2) + ' vapour' : ''))
+    + tile('Cold Fill', cf.pa.toFixed(2), 'bar', true)
+    + tile('Final pₑ', cf.pe.toFixed(2), 'bar · SV ' + cf.sv.toFixed(1))
+    + tile('Volume', (w.pipeL + w.plantL).toFixed(0), 'L · ' + w.pipeL.toFixed(0) + ' pipe + ' + w.plantL.toFixed(0) + ' plant')
+    + tile('Expansion', ev.Ve.toFixed(ev.Ve < 10 ? 1 : 0), 'L · ' + (ev.e * 100).toFixed(2) + '% to ' + w.maxT.toFixed(0) + ' °C')
+    + tile('Vessel Vₙ', ev.ok ? ev.Vn.toFixed(0) : '—', 'L nominal, minimum', true)
+    + '</div>';
+  const notes = [];
+  if (!cf.ok) notes.push(['bad', 'A cold fill of ' + cf.pa.toFixed(2) + ' bar is at or above the ' + cf.pe.toFixed(2)
+    + ' bar final pressure a ' + cf.sv.toFixed(1) + ' bar safety valve allows. There is no room for the expansion: '
+    + 'raise the safety valve setting, or pressurise nearer the top of the building.']);
+  else if (cf.pe - cf.p0 < 0.5) notes.push(['warn', 'Only ' + (cf.pe - cf.p0).toFixed(2) + ' bar between pre-charge and final pressure, '
+    + 'so the vessel is large for the volume. A higher safety valve setting shrinks it.']);
+  if ((parseFloat((document.getElementById('glycol') || {}).value) || 0) > 0)
+    notes.push(['warn', 'Expansion is worked on water. A glycol mix expands more — take the supplier’s expansion figure for the concentration.']);
+  if (pressNum('pressStaticM') === null) notes.push(['warn', 'No static head entered, so it is taken as 0 m. The cold fill is then the margins alone.']);
+  if (w.maxFrom === 'ambient') notes.push(['', 'Maximum temperature taken as the ambient (' + w.maxT.toFixed(0) + ' °C), the standstill temperature of a chilled system. Type it if the plant room runs hotter.']);
+  html += notes.map(n => '<div style="margin-top:10px;padding:9px 12px;font-size:12.5px;line-height:1.5;border-left:3px solid '
+    + (n[0] === 'bad' ? 'var(--danger,#c0392b)' : n[0] === 'warn' ? '#d39e00' : 'var(--brand-blue)')
+    + ';background:var(--off-white)">' + n[1] + '</div>').join('');
+  if (ws.length > 1) {
+    html += '<div style="margin-top:14px;font-size:12px;color:var(--ink-soft)">More than one water on this job. '
+      + 'Each has its own pressurisation unit and its own vessel; the secondaries are as Pipe Trace sent them.</div>'
+      + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px;min-width:620px">'
+      + '<thead><tr style="background:var(--brand-blue-dark);color:var(--white)">'
+      + ['Water', 'Static m', 'Pre-charge bar', 'Cold fill bar', 'Max °C', 'Volume L', 'Vessel L', '']
+          .map(h => '<th style="text-align:left;padding:6px 8px;font-size:10px;letter-spacing:1px;text-transform:uppercase">' + h + '</th>').join('')
+      + '</tr></thead><tbody>'
+      + ws.map(x => '<tr style="border-bottom:1px solid var(--line)">'
+        + '<td style="padding:6px 8px">' + escHtml(x.label) + '</td>'
+        + '<td style="padding:6px 8px">' + x.staticM.toFixed(2) + '</td>'
+        + '<td style="padding:6px 8px">' + x.cf.p0.toFixed(2) + '</td>'
+        + '<td style="padding:6px 8px"><strong>' + x.cf.pa.toFixed(2) + '</strong></td>'
+        + '<td style="padding:6px 8px">' + x.maxT.toFixed(0) + '</td>'
+        + '<td style="padding:6px 8px">' + (x.pipeL + x.plantL).toFixed(0) + '</td>'
+        + '<td style="padding:6px 8px">' + (x.ev.ok ? x.ev.Vn.toFixed(0) : '—') + '</td>'
+        + '<td style="padding:6px 8px">' + (x.cf.ok ? 'OK' : '<span style="color:var(--danger,#c0392b);font-weight:700">SV too low</span>') + '</td></tr>').join('')
+      + '</tbody></table></div>';
+  }
+  box.innerHTML = html;
+}
+function pressurisationReportHtml() {
+  const ws = pressurisationWaters();
+  const w = ws[0];
+  const t = w.trace;
+  return '<h2>7a. Static Head, Cold Fill &amp; Expansion Vessel</h2>'
+    + '<p>Sealed system to BS EN 12828, gauge pressures. Static head is the high point above the pressurisation unit'
+    + (t ? ' — from Pipe Trace, high point ' + (t.highPointM !== null ? t.highPointM.toFixed(2) + ' m' : '—')
+        + (t.highPointOn ? ' on ' + escHtml(t.highPointOn) : '') + ', unit at ' + (+t.unitM).toFixed(2) + ' m'
+        + (t.staticFrom === 'override' ? ', typed on the plant' : '')
+        + (w.staticTyped && Math.abs(w.staticM - t.staticM) > 0.005 ? '; edited in the sizer' : '')
+      : '') + '. Pre-charge = static + ' + w.cf.margin.toFixed(2) + ' bar margin'
+    + (w.cf.pD > 0 ? ' + ' + w.cf.pD.toFixed(2) + ' bar vapour pressure' : '')
+    + '; cold fill = pre-charge + ' + w.cf.seal.toFixed(2) + ' bar water seal; final = safety valve less 0.5 bar. '
+    + 'Expansion from ' + w.cf.fillT.toFixed(0) + ' °C to ' + w.maxT.toFixed(0) + ' °C on water density. '
+    + 'The static head is not added to the pump duty of a sealed system.</p>'
+    + '<table class="rpt"><thead><tr><th>Water</th><th class="n">Static m</th><th class="n">Static bar</th>'
+    + '<th class="n">Pre-charge bar</th><th class="n">Cold fill bar</th><th class="n">SV / final bar</th>'
+    + '<th class="n">Volume L</th><th class="n">Expansion L</th><th class="n">Vessel L</th><th>Check</th></tr></thead><tbody>'
+    + ws.map(x => '<tr><td>' + escHtml(x.label) + '</td><td class="n">' + x.staticM.toFixed(2) + '</td>'
+      + '<td class="n">' + x.cf.pst.toFixed(2) + '</td><td class="n">' + x.cf.p0.toFixed(2) + '</td>'
+      + '<td class="n"><strong>' + x.cf.pa.toFixed(2) + '</strong></td>'
+      + '<td class="n">' + x.cf.sv.toFixed(1) + ' / ' + x.cf.pe.toFixed(2) + '</td>'
+      + '<td class="n">' + (x.pipeL + x.plantL).toFixed(0) + '</td><td class="n">' + x.ev.Ve.toFixed(0) + '</td>'
+      + '<td class="n">' + (x.ev.ok ? x.ev.Vn.toFixed(0) : '—') + '</td>'
+      + '<td>' + (x.cf.ok ? 'OK' : 'SV too low') + '</td></tr>').join('')
+    + '</tbody></table>';
 }
 
 function scheduledPipeLitres() {
@@ -5418,6 +5678,7 @@ function renderCircuits() {
   renderIndexValidation();
   renderEditStamp();
   renderPlantVolumes();
+  renderPressurisation();
   renderThermalSummary();
   renderPlantSummary();
   document.getElementById('t-maxloss').textContent = indexLoss_kPa.toFixed(1);
@@ -5658,6 +5919,15 @@ function buildExportRows() {
     ['Specific Heat (kJ/kg·K)', cp],
     ['Pressure Drop Limit (Pa/m)', limitPd],
     ['Velocity Range (m/s)', `${vMin} – ${vMax}`],
+    ...(() => {
+      const pw = pressurisationWaters()[0];
+      return [
+        ['Static Head (m)', pw.staticM.toFixed(2)],
+        ['Pre-charge / Cold Fill (bar g)', `${pw.cf.p0.toFixed(2)} / ${pw.cf.pa.toFixed(2)}`],
+        ['Safety Valve / Final (bar g)', `${pw.cf.sv.toFixed(1)} / ${pw.cf.pe.toFixed(2)}`],
+        ['Expansion Vessel (L nominal)', pw.ev.ok ? pw.ev.Vn.toFixed(0) : 'no fit — SV too low'],
+      ];
+    })(),
     [],
   ];
 
@@ -6368,6 +6638,7 @@ function exportPDFReport() {
     + pumpSection
     + '<h2>7. System Volume &amp; Weight</h2><p>Total system fluid volume <strong>'+totalWaterL.toFixed(0)+' litres</strong> (for expansion vessel sizing and dosing). Estimated installed pipework weight, incl. '+upliftPct+'% allowance for lagging, cladding and fittings, is <strong>'+designKg.toFixed(0)+' kg</strong> (for structural support assessment).</p>'
     + '<table class="rpt"><tbody><tr><td>Pipe metalwork (dry)</td><td class="n">'+totalPipeKg.toFixed(0)+' kg</td></tr><tr><td>Fluid contents</td><td class="n">'+totalWaterKg.toFixed(0)+' kg ('+totalWaterL.toFixed(0)+' L)</td></tr><tr><td>Filled pipework</td><td class="n">'+filledKg.toFixed(0)+' kg</td></tr><tr class="sub"><td>Design weight (incl. '+upliftPct+'% uplift)</td><td class="n">'+designKg.toFixed(0)+' kg</td></tr></tbody></table>'
+    + pressurisationReportHtml()
     + thermalSection
     + (function () {
         const st = currentEditStamp();
@@ -6426,7 +6697,7 @@ function showToast(msg) {
    or open them on another device. Unlike browser storage they are
    never purged and are not tied to one machine.
    ============================================================ */
-const PROJECT_SETTING_IDS = ["projectRef", "engineer", "calcDate", "glycol", "rho", "cp", "defaultMaterial", "limitPd", "vMin", "vMax", "pipeCondition", "customRoughCarbon", "customRoughStainless", "llhVMax", "llhMaterial", "weightUplift", "plantPd", "valvePd", "strainerPd", "miscPd", "staticHead", "safetyFactor", "insType", "insLambda", "surfaceFinish", "fluidTemp", "ambientTemp", "dwellMins", "flangeFactor", "targetTemp", "diversityFactor", "plantMargin", "plantOutput", "recoverFrom", "recoverTo", "plantDT", "returnTemp", "shutdownScenario", "customStartTemp", "rollupTol", "systemPreset", "pumpMinFlow"];
+const PROJECT_SETTING_IDS = ["projectRef", "engineer", "calcDate", "glycol", "rho", "cp", "defaultMaterial", "limitPd", "vMin", "vMax", "pipeCondition", "customRoughCarbon", "customRoughStainless", "llhVMax", "llhMaterial", "weightUplift", "plantPd", "valvePd", "strainerPd", "miscPd", "staticHead", "safetyFactor", "insType", "insLambda", "surfaceFinish", "fluidTemp", "ambientTemp", "dwellMins", "flangeFactor", "targetTemp", "diversityFactor", "plantMargin", "plantOutput", "recoverFrom", "recoverTo", "plantDT", "returnTemp", "shutdownScenario", "customStartTemp", "rollupTol", "systemPreset", "pumpMinFlow", "pressStaticM", "pressMarginBar", "pressSealBar", "pressSvBar", "pressFillT", "pressMaxT"];
 /* viscosityMode is applied in installProject, not here: a missing field must
    become "fixed", and the forEach would otherwise leave the last job's mode. */
 
@@ -6613,6 +6884,12 @@ function installProject(data) {
     PROJECT_SETTING_IDS.forEach(id => {
       const el = document.getElementById(id);
       if (el && data.settings[id] !== undefined) el.value = data.settings[id];
+    });
+    /* A file written before the pressurisation fields existed gets the
+       defaults, not whatever the last project on screen had. */
+    Object.keys(PRESS_FIELD_DEFAULTS).forEach(id => {
+      const el = document.getElementById(id);
+      if (el && data.settings[id] === undefined) el.value = PRESS_FIELD_DEFAULTS[id];
     });
     const llh = document.getElementById('llhEnabled');
     if (llh && data.settings.llhEnabled !== undefined) {

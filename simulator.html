@@ -422,6 +422,7 @@
     .p-cons    { order: 2; }
     .p-pump    { order: 4; }
     .p-head    { order: 5; }
+    .p-press   { order: 5; }
     .p-select  { order: 6; }
     .p-branch  { order: 7; }
     .p-sweep  { order: 8; }
@@ -742,6 +743,14 @@
           <div class="panel-bd" id="headOrigin"></div>
         </div>
 
+        <div class="panel p-press">
+          <div class="panel-hd">
+            <h2>Static head and cold fill</h2>
+            <span class="note">what the pump sits in</span>
+          </div>
+          <div class="panel-bd" id="pressPanel"></div>
+        </div>
+
         <div class="panel p-select">
           <div class="panel-hd">
             <h2>Pump selection</h2>
@@ -894,6 +903,37 @@ function waterMu(T) {
   return 2.414e-5 * Math.pow(10, 247.8 / ((T + 273.15) - 140));
 }
 function waterMuOutOfRange(T) { return !(T >= 0 && T <= 100); }
+
+/* ---------- static head and cold fill ----------
+   Sealed-system pressures in gauge bar, on the BS EN 12828 route:
+     static      pst = rho(fill) . g . h     h = high point above the pressurisation unit
+     minimum     p0  = pst + pD + margin     pD = vapour pressure, only above 100 C
+     cold fill   pa  = p0 + water seal       what the unit fills to, cold
+     final       pe  = psv - 0.5 bar (psv up to 5 bar), else 0.9 psv
+   p0 is the vessel pre-charge, pa the cold fill pressure. Identical
+   PRESS_DEFAULTS, vapourGaugeBar() and coldFill() in sizer.html, trace.html
+   and simulator.html; change one and change all three. */
+const PRESS_DEFAULTS = { marginBar: 0.2, sealBar: 0.3, svBar: 3, fillT: 10 };
+function vapourGaugeBar(T) {
+  if (!(T > 100)) return 0;
+  const mmHg = Math.pow(10, 8.14019 - 1810.94 / (244.485 + T));
+  return Math.max(0, mmHg * 0.001333224 - 1.01325);
+}
+function coldFill(staticM, maxT, o) {
+  o = o || {};
+  const num = (v, d) => { const x = parseFloat(v); return isFinite(x) ? x : d; };
+  const margin = Math.max(0, num(o.marginBar, PRESS_DEFAULTS.marginBar));
+  const seal = Math.max(0, num(o.sealBar, PRESS_DEFAULTS.sealBar));
+  const sv = Math.max(0, num(o.svBar, PRESS_DEFAULTS.svBar));
+  const fillT = num(o.fillT, PRESS_DEFAULTS.fillT);
+  const h = Math.max(0, num(staticM, 0));
+  const pst = waterRho(fillT) * 9.80665 * h / 1e5;
+  const pD = vapourGaugeBar(num(maxT, 0));
+  const p0 = pst + pD + margin;
+  const pa = p0 + seal;
+  const pe = sv <= 5 ? sv - 0.5 : sv * 0.9;
+  return { staticM: h, pst, pD, p0, pa, sv, pe, margin, seal, fillT, ok: pa < pe };
+}
 function projectViscosity(settings, Tm) {
   const s = settings || {};
   const mode = s.viscosityMode;
@@ -3037,7 +3077,77 @@ function refresh() {
   renderDiagnostics();
   renderMains();
   renderHeadOrigin();
+  renderPressures();
   renderGroupPicker();
+}
+
+/* ---------- static head and cold fill ----------
+   The sizer settles the static head and the cold fill (coldFill(), the same
+   function in all three tools); here they meet the pump. The pressurisation
+   unit is taken to connect on the pump suction, which is UK practice and the
+   only arrangement in which the cold fill is the suction pressure. A heat
+   exchanger secondary is its own water: its static head comes from the
+   trace, and the figures follow the circuit picked above. */
+function satAbsBar(T) {
+  const A = T <= 100 ? [8.07131, 1730.63, 233.426] : [8.14019, 1810.94, 244.485];
+  return Math.pow(10, A[0] - A[1] / (A[2] + T)) * 0.001333224;
+}
+function activeWater() {
+  const s = (PROJECT_DATA && PROJECT_DATA.settings) || {};
+  const meta = (PROJECT_DATA && PROJECT_DATA.traceMeta && Array.isArray(PROJECT_DATA.traceMeta.pressurisation))
+    ? PROJECT_DATA.traceMeta.pressurisation : [];
+  const w = meta.find(x => (x.groups || []).indexOf(ACTIVE_GROUP) >= 0) || null;
+  const primary = !w || w === meta[0];
+  const typed = parseFloat(s.pressStaticM);
+  const staticM = primary ? (isFinite(typed) ? typed : (w ? w.staticM : null)) : w.staticM;
+  return { s, w, primary, staticM, label: w ? w.label : 'System' };
+}
+function renderPressures() {
+  const box = el('pressPanel');
+  if (!box || !SOLUTION || !SOLUTION.pump) { if (box) box.innerHTML = ''; return; }
+  const aw = activeWater();
+  if (aw.staticM === null || aw.staticM === undefined || !isFinite(aw.staticM)) {
+    box.innerHTML = '<div class="note" style="font-size:12px">No static head in this file. Set it in the Pipework Sizer '
+      + '(Static Head, Cold Fill &amp; Expansion) or label the high point in Pipe Trace, and the pressures the pump '
+      + 'sits in are shown here.</div>';
+    return;
+  }
+  const s = aw.s;
+  const maxT = Math.max(PROJECT.supply, PROJECT.ret);
+  const cf = coldFill(aw.staticM, maxT, { marginBar: s.pressMarginBar, sealBar: s.pressSealBar,
+    svBar: s.pressSvBar, fillT: s.pressFillT });
+  const pump = SOLUTION.pump;
+  const run = SOLUTION.Q > 0.001;
+  const dis = cf.pa + (run ? SOLUTION.pumpHead : 0) / 100;
+  // hot, at final pressure (never below the fill), pump against a closed system
+  const dead = Math.max(cf.pe, cf.pa) + pump.H0 / 100;
+  const lifts = dead >= cf.sv;
+  const Tp = maxT;
+  const npsh = (cf.pa + 1.01325 - satAbsBar(Tp)) * 1e5 / (waterRho(Tp) * 9.80665);
+  box.innerHTML =
+      '<table class="data" style="margin-bottom:8px"><tbody>'
+    + '<tr><td>Static head' + (separated() ? ' &mdash; ' + esc(aw.label) : '') + '</td><td class="n">'
+    +   fmt(aw.staticM, 2) + ' m</td><td class="n">' + fmt(cf.pst, 2) + ' bar</td></tr>'
+    + '<tr><td>Pre-charge p<sub>0</sub></td><td></td><td class="n">' + fmt(cf.p0, 2) + ' bar</td></tr>'
+    + '<tr><td><strong>Cold fill</strong> &mdash; the pump suction</td><td></td><td class="n"><strong>'
+    +   fmt(cf.pa, 2) + ' bar</strong></td></tr>'
+    + '<tr><td>Pump discharge, running cold</td><td class="n">+' + fmt(run ? SOLUTION.pumpHead : 0, 1)
+    +   ' kPa</td><td class="n">' + fmt(dis, 2) + ' bar</td></tr>'
+    + '<tr><td>Hot at final pressure, pump at shut-off</td><td class="n">+' + fmt(pump.H0, 1)
+    +   ' kPa</td><td class="n">' + fmt(dead, 2) + ' bar</td></tr>'
+    + '<tr><td>Safety valve</td><td></td><td class="n">' + fmt(cf.sv, 1) + ' bar</td></tr>'
+    + '<tr><td>NPSH available at ' + fmt(Tp, 0) + ' &deg;C</td><td></td><td class="n">' + fmt(npsh, 1) + ' m</td></tr>'
+    + '</tbody></table>'
+    + (!cf.ok ? '<div class="msg bad" style="font-size:11.5px;margin:0 0 6px">The cold fill is at or above the final '
+        + 'pressure this safety valve allows. There is no room for the expansion.</div>' : '')
+    + (lifts ? '<div class="msg warn" style="font-size:11.5px;margin:0 0 6px">Hot, at its final pressure, with every '
+        + 'two-port shut and the pump at shut-off, the discharge reaches <strong>' + fmt(dead, 2) + ' bar</strong> '
+        + 'against a <strong>' + fmt(cf.sv, 1) + ' bar</strong> safety valve. A relief valve on the discharge side would lift. '
+        + 'A higher setting, a flatter curve or speed control on differential pressure keeps it shut.</div>' : '')
+    + '<div class="note" style="font-size:11.5px">The pressurisation unit is taken to connect on the pump suction, so the '
+    + 'suction never falls below the cold fill. NPSH available is from the cold fill at the hottest the water runs, before '
+    + 'suction pipe losses &mdash; the pump&rsquo;s NPSH required wants to sit well under it. In a sealed system the static '
+    + 'head is not pump head.</div>';
 }
 
 /* ---------- which circuit is on screen ----------

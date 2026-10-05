@@ -264,6 +264,71 @@ as a run time in minutes, and the litres that would give the run time asked
 for. Volumes cross to the sizer as `plantItems`, so system volume, heat-up and
 expansion all see them.
 
+### Static head and cold fill
+
+A sealed system is filled to a pressure that keeps its **highest point** above
+atmospheric. So the figure that matters is the **static head**: the high point
+above the pressurisation unit. Pipe Trace finds it, the sizer sizes the
+expansion vessel on it, and the simulator puts it under the pump.
+
+**One per water, not one per pump.** `pressureWaters()` in Pipe Trace runs at
+the end of every `solve()` (`S.waters`, derived and never saved). A primary
+cluster of plants is a water; a **header** separates the pumps but not the
+water, so its secondaries stay on the water that feeds it; a **heat exchanger**
+is two waters, and its secondary has its own unit and its own cold fill.
+
+**Where the high point comes from:**
+
+- **The drawing.** The top of every run as 3D check draws it
+  (`segPoly3D()`) — point heights, risers, extra rise over an obstruction and
+  the units the runs drop on to.
+- **A label.** `hp: true` on a run point. Set it with **▲ High point** in the
+  hint bar while tracing (it marks the point just placed), or **HP** beside
+  the point in the run inspector (`setHighPoint()`, one label per water). A
+  label wins; if the drawing goes higher elsewhere on the same water, Check
+  says so. `keepH()` carries `hp` through every split, merge and rotation.
+- **An override.** `staticOverrideM` typed on the plant (or on the HX for its
+  secondary) replaces the drawing's figure — for a building whose full height
+  is not on the sheet. `pressRefM` is where the unit connects, defaulting to
+  the plant's (or the HX's) height. Both are written on every plant in a
+  cluster, so duty and standby cannot disagree.
+
+**The pressures, `coldFill()`, BS EN 12828, gauge bar:**
+
+| | |
+|---|---|
+| static `pst` | ρ(10 °C) · g · h |
+| pre-charge `p0` | `pst` + vapour pressure above 100 °C + margin (`pressMarginBar`, 0.2) |
+| cold fill `pa` | `p0` + water seal (`pressSealBar`, 0.3) |
+| final `pe` | safety valve (`svBar`, 3.0) − 0.5 bar, or 0.9 × above 5 bar |
+
+`pa ≥ pe` is a fault — no room for the expansion — on the drawing, in Check,
+in the sizer and in the simulator.
+
+> **`PRESS_DEFAULTS`, `vapourGaugeBar()` and `coldFill()` are one calculation
+> with three copies**, byte-identical, exactly like `waterMu`. Change one and
+> change all three in the same commit. `tests/chain-consistency-test.mjs`
+> compares them.
+
+**The sizer** has a *Static Head, Cold Fill & Expansion* card. The static head
+arrives in `pressStaticM` and is editable; the card says what Pipe Trace said
+and whether it has been edited. `expansionVessel()` sizes the vessel:
+`Vn = (Ve + Vwr)(pe + 1)/(pe − p0)`, `Ve` the water expansion from fill to
+maximum temperature (flow, return or ambient, whichever is highest, unless
+typed), `Vwr` 0.5% with 3 L minimum. With more than one water each is sized on
+the pipe volume of its own hydraulic groups (`traceMeta.pressurisation[].groups`);
+plant items count to the primary. Glycol expansion is flagged, not modelled.
+
+**In a sealed system the static head is not pump head.** The sizer's old
+*Static head (if open system)* box is a different thing and stays separate —
+nothing writes the sealed figure into it.
+
+**The simulator** (`renderPressures()`) takes the unit as connected on the
+pump suction (UK practice) and shows the cold fill as the suction pressure,
+the discharge running cold, the discharge hot at final pressure with the pump
+at shut-off against the safety valve, and NPSH available. A heat exchanger
+secondary reads its static head from `traceMeta`.
+
 ### Which valves go with which arrangement
 
 A **PICV holds its own flow**, so it never gets a double regulating valve or a
@@ -670,6 +735,9 @@ Flagged in the tools as assumptions. Replace when the figures arrive.
 | Primary flow margin over secondary | 10%, with a 5–25% band | The plant's own flow rate, per job |
 | PICV / control valve differential | PICV 25, 2-port 20, 3-port 20, DPCV 15 kPa | Selected products, per valve |
 | K for wafer check, basket strainer, dirt separator, flow station, flexible | See section 2, marked *assumed* | Supplier data |
+| Pressurisation margins | 0.2 bar over static at the high point, 0.3 bar water seal, 3 bar safety valve, fill at 10 °C | The pressurisation unit and vessel actually selected, and the safety valve setting on the plant |
+| Expansion of a glycol mix | Water density used for the expansion | Supplier's expansion figure for the concentration |
+| Where the pressurisation unit connects | The pump suction (simulator); the plant's height (Trace) | Per job |
 | Typical valve resistances (`VALVE_LIB[].typ`) | Ball/gate 0.5 · butterfly 3 · globe 15 · DRV 12 · comm set 15 · flow station 8 · Y-strainer 8 · basket 10 · swing check 5 · wafer check 4 · dirt separator 12 · flexible 1 kPa | Quoted figures at design flow. These are the **default** basis, so they set the numbers on every schedule until replaced |
 
 ---
@@ -700,6 +768,14 @@ Circuit fields that carry meaning across tools:
 | `vesselType`, `vesselKind`, `vesselLitres`, `ports`, `marginPct`, `primaryLps`, `secondaryLps` | What the vessel is and what is either side of it. `vesselType: 'hx'` with `vesselKind: 'plate'` or `'shell'` |
 | `hxPriSup`, `hxPriRet`, `hxSecSup`, `hxSecRet`, `hxPriLps`, `hxSecLps`, `hxKw`, `secDT` | Heat exchanger only. Four temperatures, both flows, the duty that crosses, and the secondary ΔT. `dT` on that circuit is the **primary** ΔT so `separatorDutyKw()` rolls the heat up correctly |
 | `sized` | **Written by the sizer on save, read by the simulator.** The pipe the sizer selected — `nom`, `od`, `wall`, `id_mm`, `rough_m`, `lengthTotal`, `effectiveLength`, `pipeLoss_kPa`, `llh`, `sizeOverride`. Derived; rewritten on every save; the sizer never reads it back. See "Pipe tables" in section 2 |
+
+`settings.pressStaticM`, `pressMarginBar`, `pressSealBar`, `pressSvBar`,
+`pressFillT`, `pressMaxT` are the primary water's pressurisation, written by
+Pipe Trace and edited in the sizer. `traceMeta.pressurisation` is one entry per
+water — high point, where it came from (`marked`/`drawing`), unit height,
+static head and whether it was typed, the hydraulic groups it covers, and the
+pressures. Pipe Trace's own file carries `hp` on run points and
+`staticOverrideM` / `pressRefM` on the plant or HX.
 
 `settings.viscosityMode` is `"temperature"` or `"fixed"`. Missing means
 fixed. `settings.mu` is written by the sizer alongside `settings.rho` and
@@ -1488,6 +1564,17 @@ fluid basis has moved with them.
 14. **Break the flow rule on purpose.** Set the header's primary flow below the
     secondary and confirm it is called out in three places: on the drawing
     under the header, in the header panel, and in Check.
+
+### If you touched static head or cold fill
+
+`node tests/pressurisation-test.mjs` checks the calculation and that every
+piece is wired. Then: a plant at 1 m, a run rising to 12 m. The status strip
+reads **cold fill 1.58 bar · 11.0 m static** and an outline ▲ sits on the top
+of the riser. Label a lower point HP: the ▲ goes solid there and Check warns
+that the drawing goes higher. Type 30 m on the plant: Check calls the 3 bar
+safety valve too low. Send to Sizer: the card shows the same static head and
+says where it came from. Put a heat exchanger in and the secondary has its own
+row in the sizer and its own figures in the simulator's circuit picker.
 
 ### If you touched the dry cooler
 
