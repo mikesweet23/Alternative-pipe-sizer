@@ -2040,6 +2040,8 @@ function nodeLabelPlan(hf, k) {
    ========================================================================== */
 function portPoint(n, port, opts) {
   if (!n) return null;
+  // a traced header is joined on its line, not on its box
+  if (port && port.s != null && llhPath(n) && S.pxPerM > 0) return headerLocalToSheet(n, pathPointAt(n.path, port.s));
   const h = (opts && opts.draw) ? nodeDrawHalf(n, opts.k) : nodeHalfPx(n);
   if (!port || !h) return { x: n.x, y: n.y };
   const lx = clamp(parseFloat(port.u) || 0, -1, 1) * h.hw;
@@ -2056,6 +2058,7 @@ function portPoint(n, port, opts) {
    move with it. null is the centre: old files, and the centre magnet. */
 function portAt(n, p, opts) {
   opts = opts || {};
+  if (llhPath(n) && S.pxPerM > 0) return headerPort(n, pathNearestS(n.path, sheetToHeaderLocal(n, p)));
   /* Map the click onto the box you can see. u,v are a fraction of the
      outline, so the same port still reseats on the true footprint. */
   const h = opts.trueSize ? nodeHalfPx(n) : nodeDrawHalf(n, opts.k);
@@ -2080,6 +2083,7 @@ function portAt(n, p, opts) {
 function portFacing(n, from, click) {
   const h = nodeHalfPx(n);
   if (!h) return null;
+  if (llhPath(n)) return portAt(n, click || from || n);
   if (!from) return portAt(n, click || n, { edge: true, magnet: false });
   const r = -nodeRot(n) * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
   const loc = p => {
@@ -2273,6 +2277,77 @@ function isSeparator(n) {
   return n.type === 'buffer' && (n.ports === 4) && n.sep !== false;
 }
 
+/* ---------- where the water starts ----------
+   A plant is always a root. A heat exchanger is one too when its primary is
+   not on this drawing — district heat, a heat pump in another plant room —
+   because its secondary is then the thing making the heat as far as this
+   trace is concerned. `priOff` on the HX says which: true, false, or unset
+   for auto, which treats it as the source when nothing on its side of the
+   drawing is a plant. With a CHP and a PHE both feeding one buffer the auto
+   cannot tell, so the inspector says so and the choice is explicit.
+   `asSource` is worked out in buildTree() and never saved. */
+function hxIsSource(n) { return !!(n && n.type === 'hx' && n.asSource); }
+function isRoot(n) { return !!n && (n.type === 'source' || hxIsSource(n)); }
+function rootNodes() { return S.nodes.filter(isRoot); }
+function componentHasPlant(n) {
+  const seen = new Set([n.id]);
+  const q = [n.id];
+  while (q.length) {
+    const id = q.shift();
+    const x = nodeById(id);
+    if (x && x.type === 'source') return true;
+    neighbours(id).forEach(({ other }) => {
+      if (other == null || seen.has(other)) return;
+      seen.add(other); q.push(other);
+    });
+  }
+  return false;
+}
+function markHxSources() {
+  S.nodes.forEach(n => {
+    if (n.type !== 'hx') return;
+    n.asSource = n.priOff === true ? true
+               : n.priOff === false ? false
+               : !componentHasPlant(n);
+  });
+}
+/* Does this run, followed away from a vessel, lead back to where the water
+   starts? Walked without passing through the vessel itself, through a load
+   (a terminal, not a route) or through another separator (the far side of a
+   header is somebody else's circuit). If it does, the run is one of the
+   vessel's own connections back to the plant — the primary flow or return
+   of a header, an inlet of a buffer that several plants feed — and must be
+   directed *into* the vessel, never walked out of it as if it were a
+   secondary. A single-pipe primary return off a header was being walked
+   back round to the pumps as a secondary main for exactly this reason. */
+function leadsToRoot(vessel, sg) {
+  return leadsBack(vessel, sg, n => isRoot(n), n => isSeparator(n));
+}
+/* A header or exchanger asks the narrower question: does the run lead back
+   to the node it was first reached from? A header fed off an exchanger's
+   secondary has no plant on its primary side, only the exchanger, and the
+   walk has to pass the pumps and buffer on the way round to find it. */
+function leadsToFeeder(vessel, sg, feederId) {
+  return leadsBack(vessel, sg, n => n.id === feederId, () => false);
+}
+function leadsBack(vessel, sg, isTarget, stopAt) {
+  const start = sg.a === vessel.id ? sg.b : sg.a;
+  if (start == null || start === vessel.id) return false;
+  const seen = new Set([vessel.id, start]);
+  const q = [start];
+  while (q.length) {
+    const id = q.shift();
+    const n = nodeById(id);
+    if (n && isTarget(n)) return true;
+    if (!n || n.type === 'consumer' || stopAt(n)) continue;
+    neighbours(id).forEach(({ other }) => {
+      if (other == null || seen.has(other)) return;
+      seen.add(other); q.push(other);
+    });
+  }
+  return false;
+}
+
 /* Temperatures and flows either side of a heat exchanger. Two waters, so
    each side has its own mean T for ρ and cp, and its own ΔT. The heat is
    the same (what the loads below ask for); the flows are not. A typed
@@ -2369,6 +2444,14 @@ function hxSecondaryFlow(n, secondaryKw) {
    kW is not touched by the margin. The heat is the heat; it is the flow that
    is deliberately higher, which is the same as saying the primary runs at a
    smaller ΔT than the secondaries. That is reported rather than hidden. */
+/* A single-pipe return leaving the same node as its flow is the same water
+   coming back, not a second circuit. Adding it doubled the secondary of a
+   header traced in single pipes. Only skipped when the node has a flow leg
+   out as well, so a run traced as return-only still counts. */
+function isEchoReturn(s, outs) {
+  if (!(s.mode === 'single' && s.leg === 'return')) return false;
+  return outs.some(o => o !== s && !(o.mode === 'single' && o.leg === 'return'));
+}
 function nodeDemand(nodeId, seen, service) {
   seen = seen || new Set();
   if (nodeId === null || nodeId === undefined || seen.has(nodeId)) return { kw: 0, lps: 0, n: 0 };
@@ -2384,13 +2467,20 @@ function nodeDemand(nodeId, seen, service) {
     lps = isFourPipe(n) ? consumerFlow(n, side) : consumerFlow(n);
     cnt = 1;
   }
-  S.segs.forEach(s => {
-    if (s.up !== nodeId || s.down === null || s.down === undefined) return;
+  const outs = S.segs.filter(s => s.up === nodeId && s.down !== null && s.down !== undefined);
+  outs.forEach(s => {
     if (isOffloader(nodeById(s.down))) return;
-    const d = nodeDemand(s.down, seen, s.service);
+    if (isEchoReturn(s, outs)) return;
+    // an inlet to a merge carries its own source's share, not the outlet
+    const d = (s.mergeInto != null && mergeShare(s)) || nodeDemand(s.down, seen, s.service);
     kw += d.kw; lps += d.lps; cnt += d.n;
   });
-  if (isSeparator(n)) return { kw, lps: sepPrimaryFlow(n, lps, kw), n: cnt, secondaryLps: lps };
+  /* Secondary tap points on a header — loads shown, not drawn. */
+  if (n && n.type === 'llh') {
+    const t = llhTapDemand(n);
+    kw += t.kw; lps += t.lps; cnt += t.n;
+  }
+  if (isSeparator(n) && !isRoot(n)) return { kw, lps: sepPrimaryFlow(n, lps, kw), n: cnt, secondaryLps: lps };
   return { kw, lps, n: cnt };
 }
 
@@ -2398,13 +2488,230 @@ function nodeDemand(nodeId, seen, service) {
 function sepSecondary(n) {
   if (!n) return { kw: 0, lps: 0, n: 0 };
   let kw = 0, lps = 0, cnt = 0;
-  S.segs.forEach(s => {
-    if (s.up !== n.id || s.down === null || s.down === undefined) return;
+  const outs = S.segs.filter(s => s.up === n.id && s.down !== null && s.down !== undefined);
+  outs.forEach(s => {
     if (isOffloader(nodeById(s.down))) return;
-    const d = nodeDemand(s.down);
+    if (isEchoReturn(s, outs)) return;
+    const d = (s.mergeInto != null && mergeShare(s)) || nodeDemand(s.down);
     kw += d.kw; lps += d.lps; cnt += d.n;
   });
+  if (n.type === 'llh') {
+    const t = llhTapDemand(n);
+    kw += t.kw; lps += t.lps; cnt += t.n;
+  }
   return { kw, lps, n: cnt };
+}
+
+/* ---------- secondary tap points on a header ----------
+   A plant-room layout often stops at the header: the secondaries leave it,
+   but what they serve is on another drawing or not designed yet. Each tap
+   is a nominal secondary load — a name, a kW (or a flow) and a ΔT — sitting
+   at a point along the header. It counts toward the secondary, so the
+   primary margin and the 0.4 m/s shell size are worked out on it, without
+   the secondary side having to be traced. A tap is not a circuit: there is
+   no pipe to size on it, and it crosses to the sizer inside the header's
+   own secondary flow. Drawn secondaries and taps add together. */
+function llhTaps(n) { return (n && Array.isArray(n.taps)) ? n.taps : []; }
+function tapDT(t) {
+  const v = parseFloat(t && t.dT);
+  return v > 0 ? v : S.settings.dT;
+}
+function tapLps(t) {
+  if (t && t.basis === 'lps') return Math.max(0, parseFloat(t.lps) || 0);
+  return flowFromKw(Math.max(0, parseFloat(t && t.kw) || 0), tapDT(t));
+}
+function tapKw(t) {
+  if (t && t.basis === 'lps') return kwFromFlow(Math.max(0, parseFloat(t.lps) || 0), tapDT(t));
+  return Math.max(0, parseFloat(t && t.kw) || 0);
+}
+function llhTapDemand(n) {
+  let kw = 0, lps = 0, cnt = 0;
+  llhTaps(n).forEach(t => {
+    const q = tapLps(t);
+    if (!(q > 0)) return;
+    kw += tapKw(t); lps += q; cnt++;
+  });
+  return { kw, lps, n: cnt };
+}
+
+/* ---------- a header traced to its shape ----------
+   A header is not always a straight vertical shell. In a plant room it runs
+   along a wall, turns a corner, comes back on itself as a horseshoe. `path`
+   on the header is that line, in metres about its centre and in its own
+   frame (before `rot`), so it moves and turns with the header and survives
+   a copy to a sheet at another scale. The box the rest of the tool sees —
+   hit-testing, the lasso, the ports — is the extent of the line plus the
+   shell's outside diameter, refitted on every solve as the shell is sized.
+
+   A run joins a traced header *on the line*: its port carries `s`, the
+   fraction along the path, beside the usual `u`/`v` as a fallback. So the
+   primary can come in at one end, leave at the other, and the secondaries
+   tap off anywhere between. The shell length is the length of the line. */
+function llhPath(n) {
+  return (n && n.type === 'llh' && Array.isArray(n.path) && n.path.length >= 2) ? n.path : null;
+}
+function polyLenM(path) {
+  let L = 0;
+  for (let i = 1; i < path.length; i++) L += Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+  return L;
+}
+function pathPointAt(path, s) {
+  const L = polyLenM(path);
+  let want = clamp(parseFloat(s) || 0, 0, 1) * L;
+  for (let i = 1; i < path.length; i++) {
+    const a = path[i - 1], b = path[i];
+    const l = Math.hypot(b.x - a.x, b.y - a.y);
+    if (want <= l || i === path.length - 1) {
+      const f = l > 0 ? clamp(want / l, 0, 1) : 0;
+      return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+    }
+    want -= l;
+  }
+  return { x: path[0].x, y: path[0].y };
+}
+function pathNearestS(path, q) {
+  const L = polyLenM(path);
+  if (!(L > 0)) return 0;
+  let best = null, run = 0;
+  for (let i = 1; i < path.length; i++) {
+    const a = path[i - 1], b = path[i];
+    const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy, l = Math.sqrt(l2);
+    const f = l2 > 0 ? clamp(((q.x - a.x) * dx + (q.y - a.y) * dy) / l2, 0, 1) : 0;
+    const d = Math.hypot(a.x + dx * f - q.x, a.y + dy * f - q.y);
+    if (!best || d < best.d) best = { d, s: (run + f * l) / L };
+    run += l;
+  }
+  return +best.s.toFixed(4);
+}
+function llhShellLengthM(n) {
+  const p = llhPath(n);
+  return p ? polyLenM(p) : (parseFloat(n && n.lengthM) || 1);
+}
+function llhShellOdM(n) {
+  const s = n && n.shell;
+  return s && s.pipe ? s.pipe.od / 1000 : 0.15;
+}
+/* The header's own frame, in metres, to the sheet and back. */
+function headerLocalToSheet(n, q) {
+  const r = nodeRot(n) * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+  const k = S.pxPerM > 0 ? S.pxPerM : 0;
+  return { x: n.x + (q.x * cs - q.y * sn) * k, y: n.y + (q.x * sn + q.y * cs) * k };
+}
+function sheetToHeaderLocal(n, p) {
+  const r = -nodeRot(n) * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+  const k = S.pxPerM > 0 ? S.pxPerM : 1;
+  const dx = (p.x - n.x) / k, dy = (p.y - n.y) / k;
+  return { x: dx * cs - dy * sn, y: dx * sn + dy * cs };
+}
+/* Where a tap sits: on the line of a traced header, or down the long axis
+   of the nominal shell. */
+function tapLocal(n, t) {
+  const p = llhPath(n);
+  if (p) return pathPointAt(p, t.s);
+  const m = nodeSizeM(n);
+  const f = (clamp(parseFloat(t.s) || 0, 0, 1) - 0.5) * 0.9;
+  return m.y >= m.x ? { x: 0, y: f * m.y } : { x: f * m.x, y: 0 };
+}
+function tapSheetPt(n, t) {
+  return S.pxPerM > 0 ? headerLocalToSheet(n, tapLocal(n, t)) : { x: n.x, y: n.y };
+}
+function tapSOf(n, p) {
+  const q = sheetToHeaderLocal(n, p);
+  const path = llhPath(n);
+  if (path) return pathNearestS(path, q);
+  const m = nodeSizeM(n);
+  const f = m.y >= m.x ? q.y / (m.y * 0.9) : q.x / (m.x * 0.9);
+  return +clamp(f + 0.5, 0, 1).toFixed(4);
+}
+/* The box the rest of the tool sees, refitted around the line. The line is
+   re-centred on its own extent and the header moved to match, so nothing on
+   the sheet shifts. */
+function fitHeaderToPath(n) {
+  const p = llhPath(n);
+  if (!p) return;
+  const xs = p.map(q => q.x), ys = p.map(q => q.y);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  if (Math.abs(cx) > 1e-6 || Math.abs(cy) > 1e-6) {
+    const c = S.pxPerM > 0 ? headerLocalToSheet(n, { x: cx, y: cy }) : { x: n.x, y: n.y };
+    n.path = p.map(q => ({ x: +(q.x - cx).toFixed(4), y: +(q.y - cy).toFixed(4) }));
+    n.x = c.x; n.y = c.y;
+  }
+  const od = llhShellOdM(n);
+  n.sizeXm = +(Math.max(...xs) - Math.min(...xs) + od).toFixed(3);
+  n.sizeYm = +(Math.max(...ys) - Math.min(...ys) + od).toFixed(3);
+}
+function setHeaderShape(n, ptsPx) {
+  if (!n || n.type !== 'llh' || !(S.pxPerM > 0) || !ptsPx || ptsPx.length < 2) return false;
+  pushUndo('trace the header shape');
+  // where every run joins it now, so each can be put on the new line
+  const ends = [];
+  S.segs.forEach(sg => ['a', 'b'].forEach(end => {
+    if ((end === 'a' ? sg.a : sg.b) === n.id) ends.push({ sg, end, at: segEndPoint(sg, end) });
+  }));
+  n.rot = 0;
+  n.path = ptsPx.map(p => ({ x: +((p.x - n.x) / S.pxPerM).toFixed(4), y: +((p.y - n.y) / S.pxPerM).toFixed(4) }));
+  n.lengthM = +polyLenM(n.path).toFixed(2);
+  fitHeaderToPath(n);
+  ends.forEach(e => {
+    const s = pathNearestS(n.path, sheetToHeaderLocal(n, e.at || n));
+    const port = headerPort(n, s);
+    if (e.end === 'a') e.sg.aPort = port; else e.sg.bPort = port;
+    reseatSeg(e.sg);
+  });
+  return true;
+}
+function clearHeaderShape(n) {
+  if (!llhPath(n)) return;
+  pushUndo('clear the header shape');
+  delete n.path;
+  delete n.sizeXm; delete n.sizeYm;
+  S.segs.forEach(sg => {
+    if (sg.a === n.id && sg.aPort) delete sg.aPort.s;
+    if (sg.b === n.id && sg.bPort) delete sg.bPort.s;
+  });
+  reseatNode(n);
+}
+/* A port on the line, with the u/v it would have on the box as a fallback
+   for anything that reads only those. */
+function headerPort(n, s) {
+  const q = pathPointAt(n.path, s);
+  const m = nodeSizeM(n);
+  return { s: +s.toFixed(4), u: +clamp(q.x / (m.x / 2), -1, 1).toFixed(4), v: +clamp(q.y / (m.y / 2), -1, 1).toFixed(4) };
+}
+function nextTapName(n) {
+  let k = 0;
+  llhTaps(n).forEach(t => {
+    const m = String(t.name || '').match(/^Secondary\s*(\d+)$/);
+    if (m) k = Math.max(k, parseInt(m[1]));
+  });
+  return 'Secondary ' + (k + 1);
+}
+function addTap(n, s) {
+  if (!n || n.type !== 'llh') return null;
+  pushUndo('add a secondary tap');
+  if (!Array.isArray(n.taps)) n.taps = [];
+  const t = { id: nid(), name: nextTapName(n), s: +clamp(s, 0, 1).toFixed(4), basis: 'kw', kw: 0, dT: '' };
+  n.taps.push(t);
+  return t;
+}
+/* The next tap goes in the middle of the biggest gap along the header. */
+function nextTapS(n) {
+  const ss = [0, 1].concat(llhTaps(n).map(t => parseFloat(t.s) || 0)).sort((a, b) => a - b);
+  let best = { g: -1, s: 0.5 };
+  for (let i = 1; i < ss.length; i++) if (ss[i] - ss[i - 1] > best.g) best = { g: ss[i] - ss[i - 1], s: (ss[i] + ss[i - 1]) / 2 };
+  return best.s;
+}
+function hitTap(p) {
+  const tol = 9 / zoom;
+  let best = null;
+  S.nodes.forEach(n => {
+    if (n.type !== 'llh') return;
+    llhTaps(n).forEach(t => {
+      const d = dist(tapSheetPt(n, t), p);
+      if (d < tol && (!best || d < best.d)) best = { d, node: n, tap: t };
+    });
+  });
+  return best;
 }
 
 /* ---------- sizing the shell ----------
@@ -2476,7 +2783,10 @@ function autoNameRuns(quiet) {
   buildTree();
   let pm = 0, sm = 0, sb = 0, b = 0;
   const runSegs = {};            // the sections each run is made of, in order
+  const walkedN = new Set();     // a vessel two sources feed is named from once
   const walk = (nodeId, runName, fromSep) => {
+    if (walkedN.has(nodeId)) return;
+    walkedN.add(nodeId);
     const outs = S.segs.filter(s => s.up === nodeId);
     // the heaviest leg carries on as the same run; the rest branch off it
     outs.sort((x, y) => (y.kw || 0) - (x.kw || 0));
@@ -2508,7 +2818,7 @@ function autoNameRuns(quiet) {
       }
     });
   };
-  S.nodes.filter(n => n.type === 'source').forEach(r => walk(r.id, null, false));
+  rootNodes().forEach(r => walk(r.id, null, false));
   /* One main can be cut into several sections by the tees along it, and each
      section is its own row and its own circuit. A main in one piece keeps its
      plain number; a main in pieces is numbered from the plant. */
@@ -2682,19 +2992,39 @@ function assignLoadFeed(n, seg, fromId) {
 }
 
 function buildTree() {
-  const roots = S.nodes.filter(n => n.type === 'source');
-  S.segs.forEach(s => { s.up = null; s.down = null; s.parentSeg = null; s.depth = 0; s.orphan = true; });
+  S.segs.forEach(s => { s.up = null; s.down = null; s.parentSeg = null; s.depth = 0; s.orphan = true; s.mergeInto = null; });
   S.nodes.forEach(n => { n.feedSeg = null; n.feedSegCool = null; n.reached = false; });
+  markHxSources();
+  const roots = rootNodes();
   if (roots.length === 0) return { roots: [], orphans: S.segs.slice() };
 
   const seen = new Set();
   const q = [];
   roots.forEach(r => { seen.add(r.id); r.reached = true; q.push({ id: r.id, seg: null, depth: 0 }); });
 
+  /* Which of a vessel's runs lead back where its water comes from, worked
+     out once. A separator looks for the node it was first reached from; an
+     in-line vessel looks for a root without crossing a separator. */
+  const rootward = new Map();
+  const feeder = new Map();
+  const isRootward = (vessel, seg) => {
+    const key = vessel.id + ':' + seg.id;
+    if (!rootward.has(key)) {
+      rootward.set(key, isSeparator(vessel)
+        ? (feeder.has(vessel.id) && leadsToFeeder(vessel, seg, feeder.get(vessel.id)))
+        : leadsToRoot(vessel, seg));
+    }
+    return rootward.get(key);
+  };
+
   while (q.length) {
     const cur = q.shift();
+    const curNode = nodeById(cur.id);
     neighbours(cur.id).forEach(({ seg, other }) => {
       if (seg.up !== null && seg.up !== undefined) return;   // already directed
+      /* A vessel does not walk out along a run that leads back to the
+         plant. That run is reached from the plant side and directed in. */
+      if (isVessel(curNode) && !isRoot(curNode) && isRootward(curNode, seg)) return;
       const n = nodeById(other);
       if (seen.has(other)) {
         /* A 4-pipe load is one box with two circuits. The second run in
@@ -2724,6 +3054,7 @@ function buildTree() {
       seg.up = cur.id; seg.down = other; seg.orphan = false;
       seg.parentSeg = cur.seg; seg.depth = cur.depth;
       if (n) { assignLoadFeed(n, seg, cur.id); n.reached = true; }
+      feeder.set(other, cur.id);
       seen.add(other);
       if (!(n && n.type === 'consumer'))
         q.push({ id: other, seg: seg.id, depth: cur.depth + 1 });
@@ -2749,7 +3080,111 @@ function buildTree() {
     seg.depth = feed ? (feed.depth || 0) + 1 : 0;
     load.reached = true;
   });
+  markMerges();
   return { roots, orphans: S.segs.filter(s => s.orphan) };
+}
+
+/* ---------- where two sources meet ----------
+   A buffer with a CHP and a plate exchanger both piped into it, and one
+   flow out to the header, is a merge: each inlet carries what its own
+   source makes, not what leaves the vessel. Without this every inlet
+   rolled up the whole outlet flow and was sized for it.
+
+   A node is a merge when its incoming runs come from different roots. Each
+   inlet carries its roots' rated flow — a plant's stream (typed, or kW at
+   its ΔT), an HX-as-source's secondary rate (typed, or rated kW at the
+   secondary ΔT). A source with no rating shares whatever the outlet still
+   needs; a standby carries nothing and is sized to take over from the
+   largest. Check says when the rated sources cannot make the outlet flow.
+   Two runs into a vessel from the same root — the flow and the return of a
+   single-pipe primary, or duty and standby pumps — are not a merge. */
+function upstreamRoots(nodeId, memo, stack) {
+  if (memo.has(nodeId)) return memo.get(nodeId);
+  const n = nodeById(nodeId);
+  if (isRoot(n)) { const own = new Set([nodeId]); memo.set(nodeId, own); return own; }
+  if (stack.has(nodeId)) return new Set();
+  stack.add(nodeId);
+  const out = new Set();
+  S.segs.forEach(s => {
+    if (s.orphan || s.down !== nodeId || s.up == null) return;
+    upstreamRoots(s.up, memo, stack).forEach(r => out.add(r));
+  });
+  stack.delete(nodeId);
+  memo.set(nodeId, out);
+  return out;
+}
+function mergeInlets(m) {
+  return S.segs.filter(s => !s.orphan && s.down === m.id && s.up != null);
+}
+function markMerges() {
+  const memo = new Map();
+  S.nodes.forEach(m => { m.mergeRoots = null; });
+  S.nodes.forEach(m => {
+    if (!m || m.type === 'consumer' || isRoot(m)) return;
+    const inc = mergeInlets(m);
+    if (inc.length < 2) return;
+    const all = new Set();
+    const per = inc.map(s => {
+      const r = upstreamRoots(s.up, memo, new Set());
+      r.forEach(x => all.add(x));
+      return r;
+    });
+    if (all.size < 2) return;
+    m.mergeRoots = [...all];
+    inc.forEach((s, i) => {
+      if (per[i].size && per[i].size < all.size) { s.mergeInto = m.id; s.mergeFrom = [...per[i]]; }
+    });
+  });
+}
+function rootRatedLps(r) {
+  if (!r) return 0;
+  if (r.type === 'source') return plantStreamLps(r);
+  if (hxIsSource(r)) {
+    if (r.secBasis === 'flow') {
+      const v = parseFloat(r.secLps);
+      if (v > 0) return v;
+    }
+    const kw = parseFloat(r.kw) || 0;
+    return kw > 0 ? flowFromKwAt(kw, hxSecDT(r), hxSecTm(r)) : 0;
+  }
+  return 0;
+}
+function rootRunning(r) { return !(r && r.type === 'source' && !plantRunning(r)); }
+/* What each source at a merge carries, and what it is sized for. */
+const mergeBusy = new Set();
+function mergeAlloc(m) {
+  if (!m || !m.mergeRoots || mergeBusy.has(m.id)) return null;
+  mergeBusy.add(m.id);
+  let d;
+  try { d = nodeDemand(m.id); } finally { mergeBusy.delete(m.id); }
+  const roots = m.mergeRoots.map(nodeById).filter(Boolean);
+  const run = roots.filter(rootRunning);
+  const flow = {}, size = {};
+  let rated = 0;
+  const unrated = [];
+  run.forEach(r => {
+    const v = rootRatedLps(r);
+    if (v > 0) { flow[r.id] = v; rated += v; } else unrated.push(r);
+  });
+  const spare = Math.max(0, d.lps - rated);
+  unrated.forEach(r => { flow[r.id] = unrated.length ? spare / unrated.length : 0; });
+  const biggest = run.reduce((mx, r) => Math.max(mx, flow[r.id] || 0), 0);
+  roots.forEach(r => {
+    if (!rootRunning(r)) { flow[r.id] = 0; size[r.id] = Math.max(rootRatedLps(r), biggest); }
+    else size[r.id] = flow[r.id];
+  });
+  const made = run.reduce((s, r) => s + (flow[r.id] || 0), 0);
+  return { d, flow, size, made, short: d.lps > 0 && made < d.lps * (1 - 1e-6) && unrated.length === 0 };
+}
+function mergeShare(sg) {
+  if (!sg || sg.mergeInto == null) return null;
+  const a = mergeAlloc(nodeById(sg.mergeInto));
+  if (!a) return null;
+  const ids = sg.mergeFrom || [];
+  const lps = ids.reduce((s, id) => s + (a.flow[id] || 0), 0);
+  const sizeLps = ids.reduce((s, id) => s + (a.size[id] || 0), 0);
+  const kw = a.made > 0 ? a.d.kw * lps / a.made : 0;
+  return { kw, lps, n: a.d.n, sizeLps, merge: true };
 }
 
 /* Consumers downstream of a node, following the directed tree. */
@@ -2990,7 +3425,15 @@ function segDuty(sg) {
   if (sg.down === null || sg.down === undefined) return { kw: 0, lps: 0, n: 0 };
   const off = coolerSegDuty(sg);
   if (off) return off;
+  /* Plants straight onto a header keep the duty / assist / standby split
+     they always had. Anything else meeting at a merge — an HX-as-source
+     beside a plant, two sources into an in-line buffer — takes its share. */
   const sh = plantFeedShare(sg);
+  const merged = sg.mergeInto != null
+    && (nodeById(sg.mergeInto).mergeRoots || []).some(id => hxIsSource(nodeById(id)));
+  if (sh && !merged) return sh;
+  const ms = mergeShare(sg);
+  if (ms) return ms;
   if (sh) return sh;
   const d = nodeDemand(sg.down, null, sg.service);
   return { kw: d.kw, lps: d.lps, n: d.n, sizeLps: d.lps };
@@ -3263,7 +3706,12 @@ function solve() {
     if (n.type === 'consumer') { n.lps = n.lps; n.flowLps = consumerFlow(n); n.dutyKw = consumerKw(n); }
   });
   /* The header shells, once the flows either side of them are known. */
-  S.nodes.forEach(n => { if (n.type === 'llh') n.shell = llhShell(n); });
+  S.nodes.forEach(n => {
+    if (n.type !== 'llh') return;
+    n.shell = llhShell(n);
+    // a traced header's box follows the shell it has been sized to
+    if (llhPath(n)) fitHeaderToPath(n);
+  });
 
   /* And now the critical path in each hydraulic circuit, so the schedule, the
      drawing and the export all agree on it. Every group's index is ticked:
@@ -3289,7 +3737,7 @@ function solve() {
    drawing, the check and the export all read the same grouping rather than
    each working it out again. */
 function connectedSourceClusters() {
-  const srcs = S.nodes.filter(n => n.type === 'source');
+  const srcs = rootNodes();
   const seen = new Set();
   const clusters = [];
   srcs.forEach(s => {
@@ -3300,7 +3748,7 @@ function connectedSourceClusters() {
     while (q.length) {
       const id = q.shift();
       const n = nodeById(id);
-      if (n && n.type === 'source') cluster.push(n);
+      if (isRoot(n)) cluster.push(n);
       neighbours(id).forEach(({ other }) => {
         if (seen.has(other)) return;
         seen.add(other);
@@ -3474,8 +3922,13 @@ function waterVolume(w, gs, firstSet) {
     if ((n.type === 'llh' || n.type === 'buffer') && gs.has(n.hgroup)) v.vessels += vesselLitres(n);
     if (n.type === 'source' && w.nodes.some(x => x.id === n.id)) v.plant += parseFloat(n.waterL) || 0;
     if (n.type === 'hx') {
-      if (gs.has(n.hgroup)) v.hx += parseFloat(n.priWaterL) || 0;          // its primary side
-      if (gs.has(n.subGroup)) v.hx += parseFloat(n.secWaterL) || 0;        // its secondary side
+      if (hxIsSource(n)) {
+        // its primary is not on this drawing; its secondary is this water
+        if (gs.has(n.hgroup)) v.hx += parseFloat(n.secWaterL) || 0;
+      } else {
+        if (gs.has(n.hgroup)) v.hx += parseFloat(n.priWaterL) || 0;        // its primary side
+        if (gs.has(n.subGroup)) v.hx += parseFloat(n.secWaterL) || 0;      // its secondary side
+      }
     }
     if (n.type === 'consumer') {
       ['heat', 'cool'].forEach(side => {
@@ -3681,6 +4134,8 @@ let zoom = 1;
 let tool = 'select';          // select | pan | calib | source | consumer | trace
 let sel = null;               // { kind:'node'|'seg', id }
 let draft = null;             // in-progress trace or calibration
+let shapeFor = null;          // the header whose shape the tape is tracing
+let tapFor = null;            // the header taking secondary taps by click
 let hoverPt = null;
 let clipboard = null;         // duplicated component settings
 let marquee = null;           // the lasso being dragged out with Select: { x0, y0, x1, y1, moved }
@@ -4298,7 +4753,8 @@ function snapMeasureAt(p) {
   return best;
 }
 function previewMeasurePoint(p) {
-  const sn = snapMeasureAt(p);
+  // tracing a header's own shape: square to the last point, no pull to the header itself
+  const sn = shapeFor == null ? snapMeasureAt(p) : null;
   if (sn) return sn.at;
   const prev = draft && draft.pts.length ? draft.pts[draft.pts.length - 1] : null;
   return orthoPoint(prev, p);
@@ -4306,7 +4762,18 @@ function previewMeasurePoint(p) {
 function finishMeasure() {
   if (!draft || draft.kind !== 'tape') return false;
   const pts = dedupePts(draft.pts);
+  const hdr = draft.shapeFor != null ? nodeById(draft.shapeFor) : null;
   draft = null;
+  if (hdr) {
+    shapeFor = null;
+    if (pts.length < 2) { toast('A header shape needs at least two points'); render(); return true; }
+    setHeaderShape(hdr, pts);
+    setTool('select');
+    select('node', hdr.id);
+    render();
+    toast((hdr.name || 'Header') + ' traced — ' + fmt(llhShellLengthM(hdr), 2) + ' m of shell');
+    return true;
+  }
   if (pts.length < 2) { render(); return true; }
   pushUndo('add a tape measure');
   if (!S.measures) S.measures = [];
@@ -5159,6 +5626,37 @@ function drawInline(g, n, k, picked) {
   }
 }
 
+/* A secondary tap on a header: a dot on the shell and its name and duty,
+   standing off to the side the line does not run along. */
+function drawTaps(g, n, k) {
+  if (!(S.pxPerM > 0)) return;
+  const lv = labelLevel();
+  llhTaps(n).forEach(t => {
+    const at = tapSheetPt(n, t);
+    const picked = isSel('node', n.id);
+    g.appendChild(mk('circle', { cx: at.x, cy: at.y, r: 4.2 * k,
+      fill: tapLps(t) > 0 ? 'var(--live)' : 'var(--white)', stroke: 'var(--graphite)', 'stroke-width': 1.4 * k }));
+    if (lv < 1) return;
+    const txt = String(t.name || 'Secondary').slice(0, 16) + (lv >= 2 && tapKw(t) > 0 ? '  ' + fmt(tapKw(t), 0) + ' kW' : '');
+    /* Written square off the shell: beside a vertical length, above a
+       horizontal one, so it never lies along the line it labels. */
+    const a2 = tapSheetPt(n, { s: Math.max(0, (parseFloat(t.s) || 0) - 0.01) });
+    const b2 = tapSheetPt(n, { s: Math.min(1, (parseFloat(t.s) || 0) + 0.01) });
+    const vertical = Math.abs(b2.y - a2.y) > Math.abs(b2.x - a2.x);
+    const off = Math.max(llhShellOdM(n) * S.pxPerM / 2, 0) + 6 * k;
+    // and on the outside of the shape, away from its middle
+    const out = vertical ? (at.x >= n.x ? 1 : -1) : (at.y > n.y + 1e-6 ? 1 : -1);
+    g.appendChild(mk('text', vertical
+      ? { x: at.x + out * off, y: at.y + 3 * k, 'text-anchor': out > 0 ? 'start' : 'end' }
+      : { x: at.x, y: at.y + out * off + (out > 0 ? 6 * k : 0), 'text-anchor': 'middle' }, txt));
+    const lab = g.lastChild;
+    lab.setAttribute('font-size', 8.5 * k);
+    lab.setAttribute('font-family', 'Azeret Mono, monospace');
+    lab.setAttribute('font-weight', picked ? 700 : 500);
+    lab.setAttribute('fill', 'var(--ink-soft)');
+  });
+}
+
 function drawVessel(g, n, k, picked) {
   const llh = n.type === 'llh';
   const hx = n.type === 'hx';
@@ -5176,9 +5674,23 @@ function drawVessel(g, n, k, picked) {
       width: 2 * hf.hw + 8 * k, height: 2 * hf.hh + 8 * k,
       rx: 5 * k, fill: 'none', stroke: 'var(--measure)', 'stroke-width': 2.5 * k }));
   }
+  const shape = llh ? llhPath(n) : null;
+  if (shape && S.pxPerM > 0) {
+    /* A traced header is drawn as its shell along the line: the outside
+       diameter at true size, with a hairline floor so it can be found. */
+    const d = 'M' + shape.map(q => (q.x * S.pxPerM) + ' ' + (q.y * S.pxPerM)).join(' L');
+    const wOd = Math.max(llhShellOdM(n) * S.pxPerM, 5 * k);
+    box.appendChild(mk('path', { d, fill: 'none', stroke: n.reached ? 'var(--graphite)' : 'var(--alarm)',
+      'stroke-width': wOd + 4 * k, 'stroke-linejoin': 'miter', 'stroke-linecap': 'butt' }));
+    box.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--white)',
+      'stroke-width': wOd, 'stroke-linejoin': 'miter', 'stroke-linecap': 'butt' }));
+    box.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--measure)',
+      'stroke-width': 2.2 * k, 'stroke-dasharray': (5 * k) + ' ' + (3 * k), 'stroke-linejoin': 'miter' }));
+  } else {
   box.appendChild(mk('rect', { x: -hf.hw, y: -hf.hh, width: 2 * hf.hw, height: 2 * hf.hh,
     rx: Math.min((llh ? 3 : hx ? 6 : 14) * k, hf.hw * 0.5), fill: 'var(--white)', 'fill-opacity': 0.94,
     stroke: n.reached ? (hx ? 'var(--measure)' : 'var(--graphite)') : 'var(--alarm)', 'stroke-width': 2 * k }));
+  }
   if (hx) {
     // plates, so it does not read as a header or a buffer
     const inset = hf.hw * 0.35;
@@ -5188,46 +5700,57 @@ function drawVessel(g, n, k, picked) {
         stroke: 'var(--measure)', 'stroke-width': 1.2 * k, opacity: 0.55 }));
     }
   }
-  if (sep) {
+  if (sep && !shape) {
     // the hydraulic break, drawn across the shell
     box.appendChild(mk('line', { x1: -hf.hw + 3 * k, y1: 0, x2: hf.hw - 3 * k, y2: 0,
       stroke: 'var(--measure)', 'stroke-width': 2.4 * k, 'stroke-dasharray': (5 * k) + ' ' + (3 * k) }));
   }
-  if (n.type === 'buffer' && n.ports === 2) {
+  if (n.type === 'buffer' && n.ports === 2 && n.multiIn) {
+    // several in, one out: the inlets fan into one leaving flow
+    [-0.5, 0, 0.5].forEach(f => box.appendChild(mk('line', { x1: -hf.hw, y1: f * hf.hh, x2: hf.hw * 0.35, y2: 0,
+      stroke: 'var(--flow)', 'stroke-width': 1.6 * k })));
+    box.appendChild(mk('line', { x1: hf.hw * 0.35, y1: 0, x2: hf.hw, y2: 0,
+      stroke: 'var(--flow)', 'stroke-width': 2.4 * k }));
+  } else if (n.type === 'buffer' && n.ports === 2) {
     // an in-line vessel: one way through it, on the leg it was placed in
     box.appendChild(mk('line', { x1: -hf.hw, y1: 0, x2: hf.hw, y2: 0,
       stroke: n.leg === 'flow' ? 'var(--flow)' : 'var(--return)', 'stroke-width': 2 * k }));
   }
   g.appendChild(box);
   drawPorts(g, n, k, picked);
+  if (llh) drawTaps(g, n, k);
   const label = String(n.name || '').slice(0, 12);
   const lv = labelLevel();
-  if (lv >= 1) g.appendChild(mk('text', { x: n.x, y: y - 6 * k, 'text-anchor': 'middle',
+  // a header with taps keeps its own writing clear of theirs
+  const ex = (llh && llhTaps(n).length) ? 16 : 0;
+  if (lv >= 1) g.appendChild(mk('text', { x: n.x, y: y - (6 + ex) * k, 'text-anchor': 'middle',
     'font-size': 10 * k, 'font-weight': 700, 'font-family': 'Archivo, sans-serif',
     fill: 'var(--ink)' }, label));
   const sub = hx
     ? ((hxKind(n) === 'shell' ? 'S&T' : 'plate') + '  '
-        + fmt(hxPriSup(n), 0) + '/' + fmt(hxPriRet(n), 0)
-        + ' \u2192 ' + fmt(hxSecSup(n), 0) + '/' + fmt(hxSecRet(n), 0))
+        + (hxIsSource(n) ? 'out ' : fmt(hxPriSup(n), 0) + '/' + fmt(hxPriRet(n), 0) + ' \u2192 ')
+        + fmt(hxSecSup(n), 0) + '/' + fmt(hxSecRet(n), 0))
     : llh
     ? (n.shell && n.shell.pipe ? n.shell.pipe.nom + '  ' + fmt(n.shell.vPri, 2) + ' m/s' : 'header')
-    : (fmt(parseFloat(n.litres) || 0, 0) + ' L' + (n.ports === 4 ? '  4-port' : '  in ' + (n.leg || 'return')));
-  if (lv >= 2) g.appendChild(mk('text', { x: n.x, y: y + (h + 15) * k, 'text-anchor': 'middle',
+    : (fmt(parseFloat(n.litres) || 0, 0) + ' L' + (n.ports === 4 ? '  4-port'
+        : n.multiIn ? '  several in, one out' : '  in ' + (n.leg || 'return')));
+  if (lv >= 2) g.appendChild(mk('text', { x: n.x, y: y + (h + 15 + ex) * k, 'text-anchor': 'middle',
     'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace',
     fill: 'var(--ink-soft)' }, sub));
   if (sep && lv >= 2) {
-    g.appendChild(mk('text', { x: n.x, y: y + (h + 25) * k, 'text-anchor': 'middle',
+    g.appendChild(mk('text', { x: n.x, y: y + (h + 25 + ex) * k, 'text-anchor': 'middle',
       'font-size': 8 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
-      fill: 'var(--measure-ink, #8a5d00)' }, hx ? 'SEPARATES \u2014 two waters' : 'SEPARATES'));
+      fill: 'var(--measure-ink, #8a5d00)' }, hxIsSource(n) ? 'SOURCE \u2014 primary not drawn'
+        : hx ? 'SEPARATES \u2014 two waters' : 'SEPARATES'));
   }
   if (!n.reached) {
-    g.appendChild(mk('text', { x: n.x, y: y - 16 * k, 'text-anchor': 'middle',
+    g.appendChild(mk('text', { x: n.x, y: y - (16 + ex) * k, 'text-anchor': 'middle',
       'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
       fill: 'var(--alarm)' }, 'NOT CONNECTED'));
   }
   // the fault worth seeing without opening anything: the primary is short
   if (llh && n.shell && n.shell.reversed) {
-    g.appendChild(mk('text', { x: n.x, y: y + (h + 35) * k, 'text-anchor': 'middle',
+    g.appendChild(mk('text', { x: n.x, y: y + (h + 35 + ex) * k, 'text-anchor': 'middle',
       'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 700,
       fill: 'var(--alarm)' }, 'PRIMARY < SECONDARY'));
   }
@@ -5439,6 +5962,7 @@ function setTool(t) {
   }
   tool = t;
   draft = null; hoverPt = null;
+  shapeFor = null;
   hintLong = false;
   buildRail();
   syncPanCursor();
@@ -5623,10 +6147,14 @@ function addBuffer(p) {
     + 'is a secondary main on its own pump, and its loss stops there instead of being added to the '
     + 'primary.<br><br>'
     + '<strong>Four-port, common flow</strong> has four connections but is piped so primary and '
-    + 'secondary stay one circuit.</div>'
+    + 'secondary stay one circuit.<br><br>'
+    + '<strong>Several in, one out</strong> is in line and does not separate: a plate exchanger, a CHP '
+    + 'and a boiler can each pipe into it, and one flow leaves for the header. Each inlet carries what '
+    + 'its own source makes.</div>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
     + '<button class="btn ghost" id="bvIn">Two-port, in the return</button>'
-    + '<button class="btn ghost" id="bvInF">Two-port, in the flow</button></div>'
+    + '<button class="btn ghost" id="bvInF">Two-port, in the flow</button>'
+    + '<button class="btn ghost" id="bvMulti">Several in, one out</button></div>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
     + '<button class="btn go" id="bv4s">Four-port, separating</button>'
     + '<button class="btn ghost" id="bv4c">Four-port, common flow</button></div>');
@@ -5640,6 +6168,7 @@ function addBuffer(p) {
   };
   el('bvIn').addEventListener('click', () => place({ ports: 2, leg: 'return', sep: false }));
   el('bvInF').addEventListener('click', () => place({ ports: 2, leg: 'flow', sep: false }));
+  el('bvMulti').addEventListener('click', () => place({ ports: 2, leg: 'flow', sep: false, multiIn: true }));
   el('bv4s').addEventListener('click', () => place({ ports: 4, sep: true,
     primaryBasis: 'margin', marginPct: 10, primaryLps: 0 }));
   el('bv4c').addEventListener('click', () => place({ ports: 4, sep: false }));
@@ -6694,9 +7223,14 @@ function llhForm(n) {
     + '<div class="row2">'
     + '<label class="fld"><span>Height above finished floor <em>m</em></span>'
     +   '<input type="number" data-f="height" step="0.1" value="' + heightOf(n) + '"></label>'
-    + '<label class="fld"><span>Shell length <em>m</em></span>'
-    +   '<input type="number" data-f="lengthM" step="0.1" value="' + (n.lengthM || 1) + '"></label>'
+    + (llhPath(n)
+        ? '<label class="fld"><span>Shell length, traced <em>m</em></span>'
+          + '<input type="number" disabled value="' + fmt(llhShellLengthM(n), 2) + '"></label>'
+        : '<label class="fld"><span>Shell length <em>m</em></span>'
+          + '<input type="number" data-f="lengthM" step="0.1" value="' + (n.lengthM || 1) + '"></label>')
     + '</div>'
+    + headerShapeFields(n)
+    + headerTapFields(n)
 
     + '<div class="sub-hd">The flow rule</div>'
     + '<label class="fld"><span>Primary flow</span><select data-f="primaryBasis">'
@@ -6755,6 +7289,103 @@ function llhForm(n) {
     + rowBtns();
 }
 
+/* The shape of the header, and the button that traces it. */
+function headerShapeFields(n) {
+  const shaped = !!llhPath(n);
+  return '<div class="sub-hd">Shape</div>'
+    + '<div class="note">' + (shaped
+        ? 'Traced as a line of <strong>' + fmt(llhShellLengthM(n), 2) + ' m</strong>, drawn at the shell&rsquo;s '
+          + 'outside diameter. Runs join it on the line &mdash; primary in at one end, out at the other, '
+          + 'secondaries anywhere between &mdash; and the volume is the bore over that length.'
+        : 'Drawn as a nominal straight shell. If it runs along a wall, turns a corner or comes back on '
+          + 'itself, trace it: click along the line of the header, double-click or <kbd>Enter</kbd> to '
+          + 'finish. The corners lock square the same as a run.') + '</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
+    + '<button type="button" class="btn ghost" data-hdr="shape">' + (shaped ? 'Trace it again' : 'Trace the header shape') + '</button>'
+    + (shaped ? '<button type="button" class="btn ghost" data-hdr="clear">Back to a straight shell</button>' : '')
+    + '</div>';
+}
+/* Secondary tap points: loads shown on the header without drawing the
+   secondary side. Name, duty, ΔT and where along the header. */
+function headerTapFields(n) {
+  const taps = llhTaps(n);
+  const d = llhTapDemand(n);
+  const box = 'border:1px solid var(--line, #d8d4c8);border-radius:4px;padding:6px;margin-bottom:6px';
+  const num = 'width:58px';
+  const rows = taps.map(t => '<div style="' + box + '">'
+    + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">'
+    +   '<input data-tap="' + t.id + '" data-tf="name" value="' + esc(t.name || '') + '" style="flex:1;min-width:0">'
+    +   '<button type="button" class="btn ghost" data-tapdel="' + t.id + '" title="Remove this secondary">&times;</button>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px">'
+    +   '<label>kW <input type="number" min="0" step="1" data-tap="' + t.id + '" data-tf="kw" value="'
+    +     ((parseFloat(t.kw) || 0) > 0 ? t.kw : '') + '" style="' + num + '"></label>'
+    +   '<label>&Delta;T <input type="number" min="0" step="1" data-tap="' + t.id + '" data-tf="dT" placeholder="'
+    +     S.settings.dT + '" value="' + ((parseFloat(t.dT) || 0) > 0 ? t.dT : '') + '" style="width:46px"></label>'
+    +   '<label>along <input type="number" min="0" max="100" step="5" data-tap="' + t.id + '" data-tf="pos" value="'
+    +     Math.round((parseFloat(t.s) || 0) * 100) + '" style="width:50px">%</label>'
+    +   '<span class="mono" style="margin-left:auto">' + fmtVol(tapLps(t)) + '</span>'
+    + '</div></div>').join('');
+  return '<div class="sub-hd">Secondaries &mdash; shown, not drawn</div>'
+    + '<div class="note">A tap is a secondary leaving the header with a duty against it, for a plant-room '
+    + 'layout that stops here. It counts toward the secondary, so the primary margin and the shell size '
+    + 'are worked out on it. Traced secondaries add to it. A tap has no pipe of its own, so it crosses to '
+    + 'the sizer inside the header&rsquo;s flow, not as a circuit.</div>'
+    + rows
+    + (taps.length
+        ? '<table class="mini"><tr><td>' + taps.length + ' secondar' + (taps.length === 1 ? 'y' : 'ies')
+          + ' shown</td><td class="n">' + fmt(d.kw, 1) + ' kW</td><td class="n"><strong>' + fmtVol(d.lps)
+          + '</strong></td></tr></table>'
+        : '')
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 8px">'
+    + '<button type="button" class="btn ghost" data-hdr="tap">+ Add a secondary</button>'
+    + '<button type="button" class="btn ghost" data-hdr="tapclick">' + (tapFor === n.id ? 'Placing &mdash; click the header (Esc to stop)' : 'Click on the header to place') + '</button>'
+    + '</div>';
+}
+function wireHeaderControls() {
+  const body = el('insBody');
+  const n = (sel && sel.kind === 'node') ? nodeById(sel.id) : null;
+  if (!body || !n || n.type !== 'llh') return;
+  const after = () => { render(); openInspector(); };
+  body.querySelectorAll('[data-hdr]').forEach(b => b.addEventListener('click', () => {
+    const what = b.dataset.hdr;
+    if (what === 'shape') {
+      if (!(S.pxPerM > 0)) { toast('Set the scale first — the shape is traced in metres'); return; }
+      setTool('tape');
+      shapeFor = n.id;
+      toast('Click along the line of ' + (n.name || 'the header') + '; double-click or Enter to finish');
+      render();
+      return;
+    }
+    if (what === 'clear') { clearHeaderShape(n); after(); return; }
+    if (what === 'tap') { addTap(n, nextTapS(n)); after(); return; }
+    if (what === 'tapclick') {
+      tapFor = tapFor === n.id ? null : n.id;
+      if (tapFor) toast('Click on ' + (n.name || 'the header') + ' to drop a secondary; Esc to stop');
+      after();
+    }
+  }));
+  body.querySelectorAll('[data-tapdel]').forEach(b => b.addEventListener('click', () => {
+    pushUndo('remove a secondary tap');
+    n.taps = llhTaps(n).filter(t => String(t.id) !== b.dataset.tapdel);
+    after();
+  }));
+  body.querySelectorAll('[data-tf]').forEach(inp => inp.addEventListener('change', () => {
+    const t = llhTaps(n).find(x => String(x.id) === inp.dataset.tap);
+    if (!t) return;
+    pushUndo('edit a secondary tap');
+    const f = inp.dataset.tf;
+    if (f === 'name') t.name = inp.value;
+    else {
+      const v = parseFloat(inp.value);
+      if (f === 'pos') t.s = isFinite(v) ? +clamp(v / 100, 0, 1).toFixed(4) : t.s;
+      else if (f === 'dT') t.dT = v > 0 ? v : '';
+      else if (f === 'kw') { t.basis = 'kw'; t.kw = v > 0 ? v : 0; }
+    }
+    after();
+  }));
+}
+
 /* ---------- the heat exchanger ----------
    Two waters. The four temperatures and the two flows are the whole of
    the input; everything else is derived. It always separates, so there
@@ -6773,9 +7404,19 @@ function hxForm(n) {
   const heatGap = sec.kw > 0 && qPri > 0
     ? Math.abs(qPri - sec.kw) / Math.max(qPri, sec.kw) : 0;
 
+  const asSrc = hxIsSource(n);
+  const rated = asSrc ? rootRatedLps(n) : 0;
   let flag = '';
-  if (!n.reached) {
-    flag = '<div class="note bad">Not connected to plant. Trace a run to it, or nothing below it is exported.</div>';
+  if (asSrc) {
+    flag = '<div class="note ok">Acting as the <strong>heat source</strong> for this drawing: its primary '
+      + 'is not traced, so the secondary is where the water starts. Its pump, its index run and its '
+      + 'static head are the primary&rsquo;s.'
+      + (sec.lps > 0 ? ' Carrying <strong>' + fmtVol(sec.lps) + '</strong>, ' + fmt(sec.kw, 1) + ' kW.' : '')
+      + '</div>';
+  } else if (!n.reached) {
+    flag = '<div class="note bad">Not connected to plant. Trace a run to it, or nothing below it is exported. '
+      + 'If its primary is not on this drawing, set <strong>Primary side</strong> to '
+      + '<em>Not on this drawing</em> and it becomes the source.</div>';
   } else if (sec.lps <= 0) {
     flag = '<div class="note bad">Nothing is connected on the secondary side, so there is no circuit to pump and no duty to size the primary against.</div>';
   } else if (mismatch > 0.02) {
@@ -6793,9 +7434,13 @@ function hxForm(n) {
   }
 
   return ''
-    + '<div class="note">This exchanger <strong>always separates</strong> the circuits. Everything '
-    + 'past it is its own hydraulic circuit on its own pump, at its own temperatures. Runs leaving '
-    + 'it are numbered <strong>SM</strong>. The two pump duties are never added.</div>'
+    + (asSrc
+        ? '<div class="note">Its primary is not on this drawing, so this exchanger is <strong>where the '
+          + 'water starts</strong>: what leaves it is the primary, numbered <strong>PM</strong>. Loads below '
+          + 'take their &Delta;T from its secondary temperatures.</div>'
+        : '<div class="note">This exchanger <strong>always separates</strong> the circuits. Everything '
+          + 'past it is its own hydraulic circuit on its own pump, at its own temperatures. Runs leaving '
+          + 'it are numbered <strong>SM</strong>. The two pump duties are never added.</div>')
     + '<label class="fld"><span>Name</span><input data-f="name" value="' + esc(n.name || '') + '"></label>'
     + '<div class="row2">'
     + '<label class="fld"><span>Kind</span><select data-f="kind">'
@@ -6807,7 +7452,25 @@ function hxForm(n) {
     + '</div>'
 
     + '<div class="sub-hd">Primary &mdash; plant side</div>'
-    + '<div class="row2">'
+    + '<label class="fld"><span>Primary side</span><select data-f="priOff">'
+    +   '<option value="auto"' + (n.priOff !== true && n.priOff !== false ? ' selected' : '') + '>Auto &mdash; '
+    +     (asSrc ? 'nothing feeds it here, so it is the source' : 'fed from plant on this drawing') + '</option>'
+    +   '<option value="on"' + (n.priOff === false ? ' selected' : '') + '>Fed from plant on this drawing</option>'
+    +   '<option value="off"' + (n.priOff === true ? ' selected' : '') + '>Not on this drawing &mdash; acts as the source</option>'
+    + '</select></label>'
+    + (n.priOff !== true && !asSrc && n.reached
+        ? '<div class="note">Auto reads a plant on the same pipework as feeding this exchanger. Where a CHP '
+          + 'or boiler shares a buffer with it and the exchanger&rsquo;s own primary is off the sheet, '
+          + 'choose <em>Not on this drawing</em>.</div>' : '')
+    + (asSrc
+        ? '<label class="fld"><span>Rated output <em>kW</em></span>'
+          + '<input type="number" data-f="kw" step="1" min="0" value="' + ((parseFloat(n.kw) || 0) > 0 ? n.kw : '') + '"></label>'
+          + '<div class="note">Where it shares a buffer or header with other sources, its inlet carries '
+          + (rated > 0 ? '<strong>' + fmtVol(rated) + '</strong> &mdash; this output at the secondary &Delta;T, '
+                       : 'its rated output at the secondary &Delta;T, ')
+          + 'or the secondary flow typed below. Left empty, it shares whatever the others do not make.</div>'
+        : '')
+    + (asSrc ? '' : '<div class="row2">'
     + '<label class="fld"><span>Flow <em>&deg;C</em></span>'
     +   '<input type="number" data-f="priSup" step="1" value="' + hxPriSup(n) + '"></label>'
     + '<label class="fld"><span>Return <em>&deg;C</em></span>'
@@ -6816,8 +7479,8 @@ function hxForm(n) {
     + '<label class="fld"><span>Primary flow</span><select data-f="priBasis">'
     +   '<option value="duty"' + (n.priBasis !== 'flow' ? ' selected' : '') + '>From the duty at this &Delta;T</option>'
     +   '<option value="flow"' + (n.priBasis === 'flow' ? ' selected' : '') + '>A figure I will give</option>'
-    + '</select></label>'
-    + (n.priBasis === 'flow'
+    + '</select></label>')
+    + (!asSrc && n.priBasis === 'flow'
         ? '<label class="fld"><span>Primary flow <em>' + volLabel() + '</em> ' + volToggle() + '</span>'
           + '<input type="number" data-vol="priLps" step="' + (volUnit() === 'm3h' ? '1' : '0.01') + '" value="'
           + lpsToVol(n.priLps || 0).toFixed(volUnit() === 'm3h' ? 1 : 2) + '"></label>'
@@ -6843,9 +7506,9 @@ function hxForm(n) {
     + flag
     + '<table class="mini">'
     +   '<tr><td>Duty through it</td><td class="n">' + fmt(sec.kw, 1) + ' kW</td><td></td></tr>'
-    +   '<tr><td>Primary, ' + fmt(hxPriSup(n), 0) + '/' + fmt(hxPriRet(n), 0) + ' &nbsp;'
+    +   (asSrc ? '' : '<tr><td>Primary, ' + fmt(hxPriSup(n), 0) + '/' + fmt(hxPriRet(n), 0) + ' &nbsp;'
       + fmt(hxPriDT(n), 1) + ' K</td><td class="n">' + fmtVol(priLps) + '</td>'
-      + '<td class="n">' + fmt(qPri, 1) + ' kW</td></tr>'
+      + '<td class="n">' + fmt(qPri, 1) + ' kW</td></tr>')
     +   '<tr><td>Secondary, ' + fmt(hxSecSup(n), 0) + '/' + fmt(hxSecRet(n), 0) + ' &nbsp;'
       + fmt(hxSecDT(n), 1) + ' K</td><td class="n">' + fmtVol(secWant) + '</td>'
       + '<td class="n">' + fmt(qSecOwn, 1) + ' kW</td></tr>'
@@ -6880,6 +7543,32 @@ function hxForm(n) {
     + rowBtns();
 }
 
+/* What each source puts into a vessel several of them feed, against what
+   leaves it. */
+function mergeInletTable(n) {
+  const inl = mergeInlets(n);
+  if (!n.mergeRoots && !(n.multiIn && inl.length)) return '';
+  const a = n.mergeRoots ? mergeAlloc(n) : null;
+  const rows = inl.map(sg => {
+    const from = (sg.mergeFrom || []).map(id => (nodeById(id) || {}).name || '?').join(', ')
+      || ((nodeById(sg.up) || {}).name || '');
+    return '<tr><td>' + esc(sg.ref || '') + ' &mdash; ' + esc(from) + '</td><td class="n">' + fmtVol(sg.lps || 0)
+      + '</td><td class="n">' + fmt(sg.kw || 0, 1) + ' kW</td></tr>';
+  }).join('');
+  return '<div class="sub-hd">Inlets</div>'
+    + '<table class="mini">' + rows
+    + (a ? '<tr><td><strong>Leaving</strong></td><td class="n"><strong>' + fmtVol(a.d.lps) + '</strong></td>'
+        + '<td class="n">' + fmt(a.d.kw, 1) + ' kW</td></tr>' : '')
+    + '</table>'
+    + (a && a.short
+        ? '<div class="note warn">The sources piped in make <strong>' + fmtVol(a.made) + '</strong> between them '
+          + 'and the run out asks for <strong>' + fmtVol(a.d.lps) + '</strong>. The difference is drawn back '
+          + 'through the vessel. Raise a source&rsquo;s rated output, or check what the header is asking for.</div>'
+        : (a ? '<div class="note">Each inlet carries its own source&rsquo;s rated output &mdash; a plant&rsquo;s kW at '
+          + 'its &Delta;T, an exchanger&rsquo;s at its secondary &Delta;T. A source with no rating shares what '
+          + 'the others do not make.</div>' : ''));
+}
+
 /* ---------- the buffer ----------
    Volume is taken, not invented — but what that volume buys in run time is
    worked out and said, because a vessel that is too small for the plant it is
@@ -6905,14 +7594,19 @@ function bufferForm(n) {
         : n.ports === 4
           ? 'Four-port, <strong>common flow</strong>: it adds volume but the pipework either side stays '
             + 'one circuit on one pump.'
+          : n.multiIn
+          ? '<strong>Several in, one out</strong>, in line: each source piped in carries its own output, '
+            + 'and the run out to the header carries what the header asks for. One circuit, not separated.'
           : 'Two-port, in the <strong>' + (n.leg || 'return') + '</strong>: a piece of the main with volume '
             + 'in it. One circuit, one pump.') + '</div>'
     + '<label class="fld"><span>Name</span><input data-f="name" value="' + esc(n.name || '') + '"></label>'
     + '<div class="row2">'
     + '<label class="fld"><span>Connections</span><select data-f="ports">'
-    +   '<option value="2"' + (n.ports !== 4 ? ' selected' : '') + '>Two-port, in line</option>'
+    +   '<option value="2"' + (n.ports !== 4 && !n.multiIn ? ' selected' : '') + '>Two-port, in line</option>'
+    +   '<option value="m"' + (n.ports !== 4 && n.multiIn ? ' selected' : '') + '>Several in, one out</option>'
     +   '<option value="4"' + (n.ports === 4 ? ' selected' : '') + '>Four-port</option></select></label>'
-    + (n.ports === 4
+    + (n.multiIn && n.ports !== 4 ? '<div></div>' : '')
+    + (n.multiIn && n.ports !== 4 ? '' : n.ports === 4
         ? '<label class="fld"><span>Hydraulically</span><select data-f="sep">'
           +   '<option value="1"' + (n.sep ? ' selected' : '') + '>Separating</option>'
           +   '<option value="0"' + (n.sep ? '' : ' selected') + '>Common flow</option></select></label>'
@@ -6930,6 +7624,7 @@ function bufferForm(n) {
     +   '<input type="number" data-f="kpa" step="0.5" placeholder="' + VESSEL_KPA.buffer + ' assumed" value="'
     +   (n.kpa === '' || n.kpa === undefined ? '' : n.kpa) + '"></label>'
 
+    + mergeInletTable(n)
     + '<div class="sub-hd">What that volume buys</div>'
     + '<div class="row2">'
     + '<label class="fld"><span>Minimum run time wanted <em>min</em></span>'
@@ -7166,7 +7861,7 @@ function vesselLitres(n) {
   const s = n.shell || llhShell(n);
   if (!s.pipe) return 0;
   const area = Math.PI * Math.pow(s.pipe.id / 1000, 2) / 4;
-  return area * (parseFloat(n.lengthM) || 1) * 1000;
+  return area * llhShellLengthM(n) * 1000;
 }
 function kwToDT(kw, lps) {
   const f = fluid();
@@ -7707,8 +8402,17 @@ function wireInspector() {
          something that is not a string: how many ports, and whether the
          vessel separates. Stored as what they mean, or a "0" comes back
          truthy and a common-flow buffer starts breaking the network. */
-      if (f === 'ports') obj.ports = parseInt(inp.value) || 2;
+      if (f === 'ports') {
+        // several in, one out is an in-line buffer that takes more than one source
+        obj.multiIn = inp.value === 'm';
+        obj.ports = inp.value === 'm' ? 2 : (parseInt(inp.value) || 2);
+      }
       else if (f === 'sep') obj.sep = inp.value === '1' || inp.value === 'true';
+      else if (f === 'priOff') {
+        if (inp.value === 'off') obj.priOff = true;
+        else if (inp.value === 'on') obj.priOff = false;
+        else delete obj.priOff;
+      }
       else if (inp.type === 'number') {
         // a half-typed number is not a figure: keep what was there rather than
         // store NaN, which JSON writes as null and the next open trips over
@@ -7721,7 +8425,7 @@ function wireInspector() {
       if (f === 'kind' && node && node.type === 'consumer' && isStockLoadName(node.name)) {
         node.name = nextKindName(obj.kind);
       }
-      if (f === 'ports' || f === 'sep' || f === 'primaryBasis' || f === 'priBasis' || f === 'secBasis' || f === 'kind') {
+      if (f === 'ports' || f === 'sep' || f === 'primaryBasis' || f === 'priBasis' || f === 'secBasis' || f === 'kind' || f === 'priOff') {
         autoNameRuns(true); openInspector();
       }
       /* Turning or stretching a component moves its connection points, and
@@ -7808,6 +8512,7 @@ function wireInspector() {
     });
   }
   wirePlacementButtons();
+  wireHeaderControls();
   const pumpSetBtn = el('insPumpSet');
   if (pumpSetBtn) pumpSetBtn.addEventListener('click', fitPumpSet);
   const dupIt = el('insDupItem');
@@ -7884,17 +8589,30 @@ function auditTrace() {
 
   /* A header with nothing on its secondary side is either half-drawn or in
      the wrong place, and it sizes to nothing either way. */
-  const emptySep = S.nodes.filter(n => isSeparator(n) && n.reached && sepSecondary(n).lps <= 0);
+  const emptySep = S.nodes.filter(n => isSeparator(n) && n.reached && !isRoot(n) && sepSecondary(n).lps <= 0);
   if (emptySep.length) add('sepempty', 'bad',
     emptySep.map(n => n.name).join(', ') + ' has nothing connected below it, so there is no secondary '
     + 'circuit to pump'
-    + (emptySep.some(n => n.type === 'llh') ? ' and no secondary flow to size the shell on' : '') + '.', false);
+    + (emptySep.some(n => n.type === 'llh') ? ' and no secondary flow to size the shell on'
+        + ' &mdash; trace the secondaries, or add them as taps on the header' : '')
+    + (emptySep.some(n => n.type === 'hx' && n.priOff !== false)
+        ? '. If an exchanger&rsquo;s primary is not on this drawing, set its Primary side to '
+          + '<em>Not on this drawing</em> and it becomes the source' : '') + '.', false);
+
+  /* Sources into one vessel that cannot make what leaves it. */
+  const shortM = S.nodes.filter(n => n.mergeRoots && (mergeAlloc(n) || {}).short);
+  if (shortM.length) add('mergeshort', 'warn',
+    shortM.map(n => { const a = mergeAlloc(n);
+      return n.name + ' (' + fmt(a.made, 2) + ' l/s in, ' + fmt(a.d.lps, 2) + ' l/s out)'; }).join(', ')
+    + ' &mdash; the sources piped in make less than the run out asks for. Raise a source&rsquo;s rated '
+    + 'output or check the header.', false);
 
   /* Heat has to balance across an exchanger. Different ΔTs are fine —
      that is the point — but a typed flow that cannot carry the duty, or
      load ΔTs that put a different rate on the secondary pipes, is a fault
      worth seeing here rather than in the sizer. */
-  S.nodes.filter(n => n.type === 'hx' && n.reached).forEach(n => {
+  /* An HX acting as the source has no primary on this drawing to balance. */
+  S.nodes.filter(n => n.type === 'hx' && n.reached && !hxIsSource(n)).forEach(n => {
     const sec = sepSecondary(n);
     if (sec.kw <= 0) return;
     const want = hxSecondaryFlow(n, sec.kw);
@@ -8372,7 +9090,10 @@ function renderValveSchedule() {
 
 function pipeScheduleRows() {
   const rows = [];
+  const walkedN = new Set();
   const walk = (nodeId, depth) => {
+    if (walkedN.has(nodeId)) return;
+    walkedN.add(nodeId);
     S.segs.filter(s => s.up === nodeId).forEach(sg => {
       const down = nodeById(sg.down);
       const isCons = down && down.type === 'consumer';
@@ -8380,7 +9101,7 @@ function pipeScheduleRows() {
       if (down) walk(down.id, depth + 1);
     });
   };
-  S.nodes.filter(n => n.type === 'source').forEach(r => walk(r.id, 0));
+  rootNodes().forEach(r => walk(r.id, 0));
   S.segs.filter(s => s.orphan).forEach(sg => rows.push({ sg, down: null, depth: 0, isCons: false, orphan: true }));
   return rows;
 }
@@ -9085,6 +9806,12 @@ function buildSizerProject() {
   const idOf = {};
   const dropped = [];
   let next = 1;
+  /* A node's children cross once. A second run into a vessel — the
+     single-pipe return of a header's primary, a second source into a buffer
+     — is exported as a run of its own carrying its own flow, and the walk
+     stops there rather than writing the header and everything below it out
+     again. */
+  const walked = new Set();
 
   const walk = (nodeId, parentCircuit, sideDT) => {
     const dTnow = sideDT || S.settings.dT;
@@ -9175,11 +9902,19 @@ function buildSizerProject() {
         c.kw = 0;
         c.isBypass = true;
         c.offload = true;
+      } else if (sg.mergeInto != null || (down && walked.has(down.id)) || feedsMerge(sg)) {
+        /* One source's share into a merge, or the other leg into a vessel
+           already written out: its own figure, nothing below it. */
+        // sized for what it may have to carry: a standby takes over
+        c.mode = 'fromFlow';
+        c.lps = +((sg.sizeLps > 0 ? sg.sizeLps : sg.lps) || 0).toFixed(3);
+        c.kw = 0;
       } else {
         c.mode = 'fromChildren'; c.kw = 0; c.lps = 0;
       }
       circuits.push(c);
-      if (!down) return;
+      if (!down || walked.has(down.id)) return;
+      walked.add(down.id);
       /* A header is a circuit in its own right — a short, deliberately slow
          piece of pipe that the sizer can size like any other, which is what
          the LLH tick in the sizer has always been for. Putting it in the
@@ -9218,7 +9953,7 @@ function buildSizerProject() {
          and it is used for the volume. The metre here is nominal so the
          sizer still has something to size the shell against. */
       length: 0.01,
-      shellLengthM: +(parseFloat(n.lengthM) || (n.type === 'llh' ? 1.0 : 0.5)).toFixed(2),
+      shellLengthM: +(n.type === 'llh' ? llhShellLengthM(n) : (parseFloat(n.lengthM) || 0.5)).toFixed(2),
       lengthsPaired: false, lengthReturn: 0,
       fittingsMode: 'counted', fittingSchedule: {}, fittings: 0,
       dT: n.type === 'hx' ? +hxPriDT(n).toFixed(2) : S.settings.dT,
@@ -9254,6 +9989,7 @@ function buildSizerProject() {
       secondaryLps: +(n.type === 'hx' ? secHx : sec.lps).toFixed(3),
       marginPct: s ? +s.marginPct.toFixed(1) : null,
       ports: n.type === 'buffer' ? (n.ports || 2) : 4,
+      multiIn: n.type === 'buffer' && !!n.multiIn,
       bufferLeg: n.type === 'buffer' && n.ports !== 4 ? (n.leg || 'return') : '',
       hxPriSup: n.type === 'hx' ? +hxPriSup(n) : null,
       hxPriRet: n.type === 'hx' ? +hxPriRet(n) : null,
@@ -9267,7 +10003,25 @@ function buildSizerProject() {
     return cid;
   }
 
-  S.nodes.filter(n => n.type === 'source').forEach(r => walk(r.id, null));
+  /* A run above a merge carries its own source's share. The sizer's roll-up
+     walks through the vessel to the header below it, so its flow is given. */
+  function feedsMerge(sg) {
+    const seen = new Set();
+    const down = (id) => {
+      if (id == null || seen.has(id)) return false;
+      seen.add(id);
+      return S.segs.some(o => o.up === id && (o.mergeInto != null || down(o.down)));
+    };
+    return down(sg.down);
+  }
+
+  /* An exchanger acting as the source starts its own walk at its secondary
+     temperatures; a plant at the project's. */
+  rootNodes().forEach(r => {
+    if (walked.has(r.id)) return;
+    walked.add(r.id);
+    walk(r.id, null, hxIsSource(r) ? hxSecDT(r) : undefined);
+  });
 
   const t = totals();
   const src = S.nodes.find(n => n.type === 'source');
@@ -9377,6 +10131,13 @@ function buildSizerProject() {
           hxPriRet: n.type === 'hx' ? +hxPriRet(n) : null,
           hxSecSup: n.type === 'hx' ? +hxSecSup(n) : null,
           hxSecRet: n.type === 'hx' ? +hxSecRet(n) : null,
+          // an HX whose primary is off the sheet is where this water starts
+          asSource: hxIsSource(n),
+          shellLengthM: n.type === 'llh' ? +llhShellLengthM(n).toFixed(2) : null,
+          traced: !!llhPath(n),
+          // secondaries shown on the header but not drawn — inside secondaryLps
+          taps: llhTaps(n).map(t => ({ name: t.name || '', kw: +tapKw(t).toFixed(2),
+            dT: +tapDT(t).toFixed(1), lps: +tapLps(t).toFixed(3), along: +(parseFloat(t.s) || 0).toFixed(3) })),
         };
       }),
       /* Vessels that do not separate still hold water and still resist. The
@@ -9413,6 +10174,7 @@ function exportPlantItems() {
   S.nodes.filter(n => n.type === 'source').forEach(n =>
     add(n.name || 'Plant', /chill|cool/i.test(n.plant || '') ? 'chiller' : 'boiler', parseFloat(n.waterL) || 0, n.hgroup));
   S.nodes.filter(n => n.type === 'hx').forEach(n => {
+    if (hxIsSource(n)) { add((n.name || 'HX') + ' secondary', 'phe', parseFloat(n.secWaterL) || 0, n.hgroup); return; }
     add((n.name || 'HX') + ' primary', 'phe', parseFloat(n.priWaterL) || 0, n.hgroup);
     add((n.name || 'HX') + ' secondary', 'phe', parseFloat(n.secWaterL) || 0, n.subGroup);
   });
@@ -9487,8 +10249,9 @@ function putHandoff(proj) {
 }
 
 function exportToSizer() {
-  if (S.nodes.filter(n => n.type === 'source').length === 0) {
-    modal('Nothing to export', '<p>Place the plant first &mdash; it is the root everything hangs off.</p>'
+  if (rootNodes().length === 0) {
+    modal('Nothing to export', '<p>Place the plant first &mdash; it is the root everything hangs off. '
+      + 'A heat exchanger whose primary is not on the drawing can be the root instead.</p>'
       + '<button class="btn" onclick="closeModal()">Close</button>');
     return;
   }
@@ -9644,10 +10407,11 @@ function imgForSave() {
    are worked out again on open. A key added to solve() and not listed here
    goes into the file, and from there into every copy that is ever made of it. */
 const NODE_DERIVED = ['feedSeg', 'feedSegCool', 'reached', 'flowLps', 'sharedLps', 'dutyKw',
-  'shell', 'hgroup', 'subGroup', 'uiTab'];
+  'shell', 'hgroup', 'subGroup', 'uiTab', 'asSource', 'mergeRoots'];
 const SEG_DERIVED = ['up', 'down', 'parentSeg', 'depth', 'orphan', 'kw', 'lps', 'nCons', 'runM',
   'lenM', 'pipe', 'hydM', 'fit', 'fitPa', 'nFit', 'straightKpa', 'fitKpa', 'valveKpa', 'nValves',
-  'dropKpa', 'equivPct', 'coilKpa', 'totalKpa', 'isIndex', 'spine', 'sizeLps', 'hgroup'];
+  'dropKpa', 'equivPct', 'coilKpa', 'totalKpa', 'isIndex', 'spine', 'sizeLps', 'hgroup',
+  'mergeInto', 'mergeFrom'];
 
 function projectBundle(withImg) {
   const out = JSON.parse(JSON.stringify({
@@ -10101,6 +10865,15 @@ function turnAbout(deg, cOld, cNew) {
 function turnTakeoff(deg, cOld, cNew) {
   const T = turnAbout(deg, cOld, cNew);
   S.nodes.forEach(n => { const q = T(n); n.x = q.x; n.y = q.y; });
+  /* A traced header's line is in its own frame, so it is turned as a
+     direction rather than moved as a point — or an L traced along two walls
+     would stay put while the walls turned under it. */
+  const O = T({ x: 0, y: 0 });
+  S.nodes.forEach(n => {
+    if (!llhPath(n)) return;
+    n.path = n.path.map(q => { const t = T(q); return { x: +(t.x - O.x).toFixed(4), y: +(t.y - O.y).toFixed(4) }; });
+    fitHeaderToPath(n);
+  });
   S.segs.forEach(sg => { if (sg.pts) sg.pts = sg.pts.map(T); });
   (S.measures || []).forEach(m => { if (m.pts) m.pts = m.pts.map(T); });
   if (S.calib && S.calib.a && S.calib.b) { S.calib.a = T(S.calib.a); S.calib.b = T(S.calib.b); }
@@ -10493,6 +11266,24 @@ const HELP = [
       + 'main. Click its edge ring to finish the run and drop the pencil, then start again from the far edge for the '
       + 'run out. The load past it is still on that pipe. A second run onto a load already reached is the other leg '
       + 'of the same circuit, not a loop.' },
+    { id: 'plantroom', t: 'The plant room says nothing is connected', tool: ['hx', 'llh', 'buffer', 'select'],
+      b: 'A plate exchanger whose primary is not on the drawing is the heat source for it. On its own it is taken '
+      + 'that way automatically; with a CHP or boiler on the same pipework, set <b>Primary side</b> on the exchanger '
+      + 'to <b>Not on this drawing</b>. A primary loop round pumps, buffer and header with no loads on it is fine — '
+      + 'traced in pairs or as single flow and return pipes, the return back to the pumps is the same water, not a '
+      + 'secondary. Give the header its secondaries, drawn or as taps, and the loop sizes.' },
+    { id: 'multibuffer', t: 'Several things pipe into one buffer', tool: ['buffer'], b: 'Make it <b>Several in, '
+      + 'one out</b>. Each inlet carries its own source’s rated output — a plant’s kW at its ΔT, an '
+      + 'exchanger’s rated kW at its secondary ΔT — and the run out carries what the header asks for. '
+      + 'Check says when the sources cannot make it. It does not separate.' },
+    { id: 'llhshape', t: 'The header turns a corner, or is a horseshoe', tool: ['llh', 'select'], b: 'Select the '
+      + 'header and <b>Trace the header shape</b>: click along its line, double-click or <kbd>Enter</kbd> to finish. '
+      + 'It is drawn at the shell’s size, runs join it on the line, and the shell length is the traced length. '
+      + 'The size is the smallest shell under 0.4 m/s on the primary flow.' },
+    { id: 'llhtaps', t: 'I do not want to draw the secondaries', tool: ['llh', 'select'], b: 'Add them as taps on the '
+      + 'header: <b>+ Add a secondary</b>, or <b>Click on the header to place</b> and click along it. Give each a '
+      + 'kW (and a ΔT if it is not the project’s). They count toward the secondary, so the margin and the '
+      + 'shell size follow them.', done: () => S.nodes.some(n => llhTaps(n).length) },
     { id: 'names', t: 'What do PM, SM, SB and B mean?', b: '<span class="mono">PM1, PM2</span> primary mains from '
       + 'the plant; <span class="mono">SM</span> secondary mains leaving a header or exchanger; <span class="mono">SB</span> '
       + 'sub-mains that still feed more than one load; <span class="mono">B</span> branches into a load; '
@@ -11266,6 +12057,26 @@ function build3D() {
       });
       return;
     }
+    /* A traced header is its shell along the line it was traced on, at its
+       own height — not a box the size of the L it makes. */
+    if (llhPath(n) && S.pxPerM > 0) {
+      const odM = llhShellOdM(n);
+      const line = n.path.map(q => w3(W, headerLocalToSheet(n, q), z));
+      items.push({ t: 'line', pts: line, w: trueSize ? 1.4 : clamp(1.4 + odM * 1000 / 40, 3, 9),
+        wM: trueSize ? odM : 0, c: n.reached ? '#b07d12' : '#bb3b2e', bundle: -n.id, leg: 0,
+        centre: line });
+      llhTaps(n).forEach(t => {
+        const at = w3(W, tapSheetPt(n, t), z);
+        items.push({ t: 'line', pts: [at, { X: at.X, Y: at.Y, Z: at.Z + Math.max(0.3, odM * 1.5) }],
+          w: 2, c: '#2f8f5b' });
+      });
+      if (V3.labels) labels.push({
+        at: { X: c.X, Y: c.Y, Z: c.Z + (odM + 0.2) * zk },
+        text: String(n.name || ''),
+        sub: (n.shell && n.shell.pipe ? n.shell.pipe.nom + '  ' : '') + fmt(llhShellLengthM(n), 1) + ' m  ' + fmt(z, 2) + ' m',
+      });
+      return;
+    }
     if (isVessel(n)) {
       const sep = isSeparator(n);
       const hx = n.type === 'hx';
@@ -11280,8 +12091,8 @@ function build3D() {
         at: { X: c.X, Y: c.Y, Z: c.Z + (bh / 2 + 0.1) * zk },
         text: String(n.name || ''),
         sub: (hx ? ((hxKind(n) === 'shell' ? 'S&T  ' : 'plate  ')
-                    + fmt(hxPriSup(n), 0) + '/' + fmt(hxPriRet(n), 0)
-                    + ' \u2192 ' + fmt(hxSecSup(n), 0) + '/' + fmt(hxSecRet(n), 0) + '  ')
+                    + (hxIsSource(n) ? 'out ' : fmt(hxPriSup(n), 0) + '/' + fmt(hxPriRet(n), 0) + ' \u2192 ')
+                    + fmt(hxSecSup(n), 0) + '/' + fmt(hxSecRet(n), 0) + '  ')
                  : (n.type === 'llh' && n.shell && n.shell.pipe ? n.shell.pipe.nom + '  ' : ''))
              + fmt(z, 2) + ' m',
       });
@@ -11652,6 +12463,23 @@ sc.addEventListener('pointerdown', ev => {
 
 function applyToolPointer(ev, p) {
 
+  if (tool === 'select' && tapFor != null) {
+    /* Placing secondaries: a click on the header drops one where it lands;
+       a click anywhere else stops placing and is taken as an ordinary click. */
+    const hn = nodeById(tapFor);
+    // on a traced header the line is the target, not the box around an L
+    const off = hn && llhPath(hn) && S.pxPerM > 0
+      ? dist(tapSheetPt(hn, { s: tapSOf(hn, p) }), p) - llhShellOdM(hn) * S.pxPerM / 2
+      : (hn ? distToNode(hn, p) : Infinity);
+    if (hn && off < 6 / zoom) {
+      addTap(hn, tapSOf(hn, p));
+      select('node', hn.id);
+      render();
+      return;
+    }
+    tapFor = null;
+  }
+
   if (tool === 'select') {
     /* Valves are tested before nodes and runs: they are small, they sit on
        top of a run, and a click on one is nearly always meant for it. */
@@ -11709,7 +12537,7 @@ function applyToolPointer(ev, p) {
 
   if (tool === 'tape') {
     const q = previewMeasurePoint(p);
-    if (!draft) draft = { kind: 'tape', pts: [] };
+    if (!draft) draft = { kind: 'tape', pts: [], shapeFor };
     draft.pts.push({ x: q.x, y: q.y });
     render();
     return;
@@ -11975,7 +12803,8 @@ document.addEventListener('keydown', ev => {
     if (el('helpPane').classList.contains('on')) { toggleHelp(false); return; }
     // a drag or a lasso that lost its pointerup is dropped here too
     if (drag || panning || pendingPan || marquee) { dropPointerState(); render(); return; }
-    if (draft) { draft = null; render(); return; }
+    if (draft) { draft = null; shapeFor = null; render(); return; }
+    if (tapFor != null) { tapFor = null; if (sel) openInspector(); render(); return; }
     if (sel) { sel = null; closeInspector(); return; }
     setTool('select'); return;
   }
