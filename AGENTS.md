@@ -26,6 +26,7 @@ node tests/persistence-repair-test.mjs
 node tests/trace-multiselect-truesize-help-test.mjs
 node tests/viscosity-basis-test.mjs
 node tests/pressurisation-test.mjs
+node tests/plantroom-header-test.mjs
 ```
 
 `chain-consistency-test` evaluates the blocks that exist as copies in more than one file — `waterMu` / `waterRho` / `waterCp`, `FITTING_TYPES`, the authority rule, the brand bar, the handoff keys — and fails if any copy has drifted. Run it after touching any of them. `viscosity-basis-test` is the acceptance set for `viscosityMode`, the Al-Shemmeri `waterMu`, the calculation-basis panel and the straight-pipe check. `persistence-repair-test` covers what happens when a file that has been through several hands is opened: the id counter, the repairs, the settings reset, the revision stamp. `pressurisation-test` covers the static head and cold fill (the high point off the trace or a labelled point, the override on the plant, `coldFill()` to BS EN 12828), the system volume per water (counted parts, what is not on the trace, a typed total) and `vesselSizing()` — the larger of the water-reserve and fill-pressure requirements, never their sum — plus the simulator's pressure panel. `trace-multiselect-truesize-help-test` covers the lasso and group editing, true size on the plan / 3D / PDF, the help pane and the long-session guards (`scheduleRender`, `dropPointerState`, the autosave image cache, `asOneUndo`).
@@ -39,6 +40,8 @@ With **Select** (`V`), drag on open paper to lasso several units, runs and valve
 Trace opens **Two pipes / Single pipe** as soon as the tool is armed. Hover a run for branch dots (a pair shows flow and return). Click the edge ring on a load or vessel to connect and drop the pencil. Double-click empty paper to zoom in on that spot. There is no Tee tool and no automatic terminal set. Set **Height** in the hint bar before a click to start a riser — each point on the run has its own, the same as AC Trace, and 3D check draws them. Click a run to edit the list, or Level / Set all.
 
 Several chillers or boilers on one header are one primary (duty / assist / standby on the plant). An inline **Pump** (`K`) shows indicative flow, index head and absorbed kW; an inline **Cooler** (`Y`) sits in the line and does not open a new circuit.
+
+A plant room with no plant drawn works: a PHE whose primary is off the sheet is the source (**Primary side** on the HX; auto when nothing on its pipework is a plant). A primary loop through pumps, buffer and header is fine paired or in single pipes — the return back to the pumps is not a secondary. A buffer can be **Several in, one out**: each source's inlet carries its own rated flow. A header can be traced to its shape (L, horseshoe) and given secondary **taps** with a kW each instead of drawing the secondaries; the shell sizes at 0.4 m/s on the primary. `plantroom-header-test` covers all of it.
 
 A two-port buffer is in the line: click the edge ring to finish, then start again from the far side. The load past it still sits on that pipe. A second run onto the same load (return, or flow through the buffer) is the other leg, not a loop.
 

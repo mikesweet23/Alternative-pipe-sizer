@@ -176,6 +176,7 @@ What separates:
 | Plate or shell-and-tube heat exchanger | **always** | Two waters. Primary and secondary temperatures and flows are inputs. No shared volume, so the header margin rule does **not** apply — primary flow is the duty at the primary ΔT (or a typed rate) |
 | Four-port buffer | **asked** | Usually piped to separate, but it can be a common-flow vessel, and the two are different systems. Asked once on placement, never assumed |
 | Two-port buffer | no | It sits in the flow or the return as a piece of the main |
+| Several in, one out buffer | no | In line; each source piped in carries its own rated flow (see *merges* below) |
 
 Where it lives in each tool:
 
@@ -255,6 +256,76 @@ buffer until a product is selected). Giving it a length put friction in the
 sizer that Pipe Trace had not counted, and the two then disagreed by a tenth of
 a kPa for no reason anybody could find. The shell length is a dimension, and it
 is what the volume is worked out from.
+
+### A header traced to its shape, and secondaries shown as taps
+
+A header in a plant room runs along a wall, turns a corner, comes back on
+itself. **Trace the header shape** in the header inspector arms Tape with
+`shapeFor` set; clicks along the line (square lock as a run), double-click or
+`Enter`, and `setHeaderShape()` stores `path` on the header — metres about its
+centre, in its own frame before `rot`, so it moves, turns and copies with it.
+`fitHeaderToPath()` re-centres the line on its extent and sets
+`sizeXm`/`sizeYm` to that extent plus the shell's OD on every solve, so the
+lasso, hit-testing and the box the rest of the tool knows still work. A sheet
+rotation turns the line (`turnTakeoff()`), not only the centre.
+
+On a traced header a run joins **on the line**: its port carries `s`, the
+fraction along `path`, beside `u`/`v` as a fallback (`headerPort()`;
+`portPoint()`, `portAt()` and `portFacing()` read it). Primary in at one end,
+out at the other, secondaries anywhere. Shell length is the traced length
+(`llhShellLengthM()`), so the volume is bore × traced length, and it is drawn
+on the plan and in 3D as its shell along the line, OD at true size.
+*Back to a straight shell* drops `path` and the `s` ports.
+
+**Taps** (`taps` on the header: name, `kw`, `dT`, `s`) are secondaries shown,
+not drawn — for a plant-room layout that stops at the header. Added from the
+inspector, or *Click on the header to place* (`tapFor`) and click along it.
+`llhTapDemand()` adds them into `nodeDemand()` and `sepSecondary()`, so the
+margin, the primary flow and the 0.4 m/s shell size follow them, and Check's
+"nothing connected below" stops firing. A tap has no pipe and crosses to the
+sizer inside the header's own flow and in `traceMeta.separators[].taps`, not
+as a circuit. Traced secondaries and taps add together.
+
+### Where the water starts, rings and merges
+
+**A root is a plant, or an HX whose primary is off the sheet** (`isRoot()`,
+`rootNodes()`). `priOff` on the HX: `true` (Not on this drawing — acts as the
+source), `false` (fed from plant here), unset for auto, which makes it the
+source when nothing on its pipework is a plant (`markHxSources()`, derived
+`asSource`). With a CHP and a PHE on one buffer auto cannot tell, so the
+inspector and Check say to set it. A source HX loses its primary inputs and
+gains a rated kW; its secondary temperatures are the water's.
+
+**A vessel never walks out along a run that leads back where its water came
+from** (`leadsToRoot()`, `leadsToFeeder()` in `buildTree()`). A header or HX
+asks whether the run leads back to the node it was first reached from; an
+in-line vessel asks whether it reaches a root without crossing a separator.
+Such a run is reached from the other side and directed *into* the vessel.
+This is what makes a primary loop round pumps, buffer and header work — paired,
+or with a single-pipe return back to the pumps. The return was being walked
+out of the header as one of its secondaries.
+
+**A single-pipe return leaving the same node as its flow is not a second
+circuit** (`isEchoReturn()`): the roll-ups skip it when the node also has a
+flow leg out, which fixed a doubled secondary on any header traced in single
+pipes.
+
+**A merge is a node fed from more than one root** (`markMerges()`,
+`mergeInto`/`mergeFrom` on the inlet runs, `mergeRoots` on the node, all
+derived). Each inlet carries its roots' rated flow (`rootRatedLps()`: a plant's
+stream or kW at its ΔT; a source HX's typed secondary flow or rated kW at its
+secondary ΔT); unrated sources share what the outlet still needs; a standby
+carries nothing and is sized to take over. `nodeDemand()` and `segDuty()` use
+`mergeShare()`; plants straight onto a header keep `plantFeedShare()`. Check
+warns when the rated sources make less than the outlet. A buffer can be set
+**Several in, one out** (`multiIn`), which is the in-line case drawn and
+labelled as such; the split works on any non-separating node.
+
+The sizer export walks each node once (`walked`): a second run into a vessel,
+a merge inlet and every run above one (`feedsMerge()`) cross `fromFlow` with
+their own figure, because the sizer's roll-up would walk through the vessel to
+the header. Before this, two plants on one header wrote the header and every
+load below it out once per plant.
 
 ### Buffer volume
 
@@ -874,7 +945,9 @@ the two sides can never be added together by accident.
 
 `traceMeta.hydraulicGroups` is one entry per pump, and `traceMeta.separators`
 carries each header or exchanger's two flows, and for an HX the four
-temperatures and the duty. A tool reading only `indexKpa` still gets the
+temperatures and the duty — plus `asSource` (an HX whose primary is off the
+sheet), and for a header `shellLengthM`, `traced` and `taps` (name, kW, ΔT,
+l/s, position along). A buffer's vessel circuit carries `multiIn`. A tool reading only `indexKpa` still gets the
 primary, which is what it always got.
 
 The project also carries a top-level **`valveSchedule`**: the whole take-off as
@@ -1643,6 +1716,22 @@ fluid basis has moved with them.
 14. **Break the flow rule on purpose.** Set the header's primary flow below the
     secondary and confirm it is called out in three places: on the drawing
     under the header, in the header panel, and in Check.
+
+### If you touched roots, merges or the traced header
+
+`node tests/plantroom-header-test.mjs` checks the source for every piece. Then
+in the browser: Concept, a PHE, a pump, a buffer and a header in a line, a
+paired run between each, and two taps on the header (100 and 50 kW). Check is
+clean, the runs are PM, and the primary is 150 kW ÷ the flow at 20 K × 1.1.
+Redo it with single pipes and a single return from the header back to the
+PHE: same flows, the return carries the primary, the header's secondary is not
+doubled. Put a boiler on the PHE primary and the loop is the PHE's secondary
+group. Add a CHP into the buffer, set it *Several in, one out*, set the PHE to
+*Not on this drawing* with a rated kW: each inlet carries its own source's
+flow, and Check warns when they add up to less than the header wants. Trace
+the header as an L: it draws at its shell size, a run lands on the line, the
+volume uses the traced length, rotating the sheet turns it, and Send to Sizer
+sizes every run the same as Trace.
 
 ### If you touched static head or cold fill
 
