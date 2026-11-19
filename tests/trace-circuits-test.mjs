@@ -69,6 +69,14 @@ ok(/return t\(head\.circuitName\) \|\| t\(head\.traceCircuitName\);/.test(sizer)
 ok(/function goToCircuit\(id\)/.test(sizer) && /class="circ-pill"/.test(sizer), 'the name shows on the main, and the card jumps to it');
 ok(/\+ circuitsReportHtml\(\)/.test(sizer) && /<h2>6a\. Circuits<\/h2>/.test(sizer), 'the sizer report has the circuits');
 ok(/The sizer has the same view/.test(claude), 'CLAUDE.md describes the sizer side');
+ok(/const schedRow = \(\{c,r\}\) =>/.test(sizer) && /<tr class="circ"><td colspan="13">' \+ circuitHeadText\(cc\)/.test(sizer),
+  'the sizer report schedule is grouped by circuit');
+ok(/function treeOrder\(\)/.test(sizer) && /if \(feeder\) c\.fedBy = circuitLabelOf\(feeder\);/.test(sizer)
+  && /function circuitLoadsText\(c\)/.test(sizer), 'the sizer links a header main to its secondaries, in tree order');
+ok(/<th class="n">Units L<\/th><\/tr><\/thead>/.test(sizer) && /circuitChainText\(c\) \+ '<\/p>'/.test(sizer),
+  'section 6a carries units water and each index hop by hop');
+ok(/const keepNames = \/Pipe Trace\/\.test\(source\)/.test(sizer), 'names typed in the sizer survive a re-send from Trace');
+ok(/Section 3 of the sizer report is grouped by/.test(claude), 'CLAUDE.md describes the sizer report');
 
 if (failed) { console.error('\n' + failed + ' failed'); process.exit(1); }
 console.log('\nall passed');

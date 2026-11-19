@@ -5934,13 +5934,68 @@ function circuitMembers(head) {
   walk(head);
   return out;
 }
+/* The list in the order the pipework is met from the plant: a root, then
+   down each branch before the next. A header's secondaries then follow the
+   main that feeds them, the way Pipe Trace lists them. */
+function treeOrder() {
+  const order = new Map(), seen = new Set();
+  let i = 0;
+  const walk = c => {
+    if (seen.has(c.id)) return;
+    seen.add(c.id); order.set(c.id, i++);
+    childrenOf(c.id).forEach(walk);
+  };
+  rootCircuits().forEach(walk);
+  circuits.forEach(c => { if (!order.has(c.id)) order.set(c.id, i++); });
+  return order;
+}
+/* Every consumer anywhere below a circuit, through headers and exchangers. */
+function consumersBelow(c, seen) {
+  seen = seen || new Set();
+  if (seen.has(c.id)) return 0;
+  seen.add(c.id);
+  return childrenOf(c.id).reduce((n, k) => n + (isConsumer(k) ? 1 : 0) + consumersBelow(k, seen), 0);
+}
+/* "2 loads", or for a main that only reaches a header, what it feeds. */
+function circuitLoadsText(c) {
+  const own = c.loads + ' load' + (c.loads === 1 ? '' : 's');
+  if (!c.feeds.length) return own;
+  return (c.loads ? own + ', and ' : '') + 'feeds ' + c.feeds.join(', ')
+    + (c.beyond ? ' (' + c.beyond + ' load' + (c.beyond === 1 ? '' : 's') + ' beyond)' : '');
+}
+/* The line that opens a circuit: everything about it in one place. */
+function circuitHeadText(c) {
+  const i = c.idx;
+  return (c.name ? '<b>' + escHtml(c.name) + '</b> \u00b7 ' + escHtml(c.ref) : '<b>' + escHtml(c.ref) + '</b>')
+    + (c.fedBy ? ' \u00b7 off ' + escHtml(c.offRef) + ', fed by ' + escHtml(c.fedBy) : '')
+    + ' \u00b7 ' + circuitLoadsText(c) + ', ' + c.kw.toFixed(1) + ' kW, ' + c.lps.toFixed(2) + ' l/s'
+    + (i ? ' \u00b7 index ' + escHtml(i.end.ref) + ' <b>' + c.kpa.toFixed(2) + ' kPa</b> (straight '
+        + i.straight.toFixed(2) + ', fittings ' + i.fit.toFixed(2) + ', terminal ' + (i.load + i.vessel).toFixed(2) + ')'
+      : ' \u00b7 no complete path')
+    + ' \u00b7 duty ' + c.lps.toFixed(2) + ' l/s @ ' + c.duty.toFixed(1) + ' kPa (' + c.mH.toFixed(2) + ' m)'
+    + ' \u00b7 ' + c.pipeL.toFixed(0) + ' L pipe water' + (c.unitsL !== null ? ', ' + c.unitsL.toFixed(0) + ' L in units' : '');
+}
+/* The index hop by hop, for the card and the report. */
+function circuitChainText(c) {
+  if (!c.idx) return '';
+  // a header carries no pipe; its own kPa is the last hop, so it is not listed twice
+  return c.idx.chain.filter(m => !isSeparatorCircuit(m)).map(m => {
+      const r = calculateCircuit(m);
+      return escHtml(m.ref) + ' ' + (r.recommended ? r.recommended.nom + ' ' : '') + (r.pipeLoss_kPa || 0).toFixed(2) + ' kPa';
+    }).join(' \u2192 ')
+    + (c.idx.load > 0 ? ' \u2192 consumer ' + c.idx.load.toFixed(2) + ' kPa' : '')
+    + (c.idx.vessel > 0 ? ' \u2192 ' + escHtml(c.idx.end.ref) + ' ' + c.idx.vessel.toFixed(2) + ' kPa' : '')
+    + ' = <b>' + c.kpa.toFixed(2) + ' kPa</b>';
+}
+
 function circuitSummaries() {
   const rho = parseFloat(document.getElementById('rho').value) || 999;
   const sf = parseFloat(document.getElementById('safetyFactor').value) || 0;
   const tm = (passThrough && passThrough.traceMeta && Array.isArray(passThrough.traceMeta.circuits))
     ? passThrough.traceMeta.circuits : [];
   const groups = hydraulicGroups();
-  return circuits.filter(isCircuitHead).map(head => {
+  const order = treeOrder();
+  const list = circuits.filter(isCircuitHead).map(head => {
     const members = circuitMembers(head);
     const ids = new Set(members.map(m => m.id));
     const res = new Map(members.map(m => [m.id, calculateCircuit(m)]));
@@ -5985,8 +6040,22 @@ function circuitSummaries() {
       mH: duty * 1000 / (rho * 9.81), routeM, pipeL,
       unitsL: isFinite(unitsTyped) ? unitsTyped
         : (traced && traced.waterL ? (traced.waterL.terminals || 0) + (traced.waterL.vessels || 0) : null),
+      // the headers and exchangers it ends at, and the loads beyond them
+      feeds: members.filter(isSeparatorCircuit).map(m => m.ref),
+      beyond: members.filter(isSeparatorCircuit).reduce((n, m) => n + consumersBelow(m), 0),
+      fedBy: '', offRef: '',
     };
+  }).sort((a, b) => order.get(a.head.id) - order.get(b.head.id));
+  /* A circuit off a header says which circuit feeds that header, so the main
+     to a header and the secondaries beyond it read as the one job they are. */
+  list.forEach(c => {
+    const p = (c.head.parentId === null || c.head.parentId === undefined) ? null : circuitById(c.head.parentId);
+    if (!p || !isSeparatorCircuit(p)) return;
+    const feeder = list.find(o => o.ids.has(p.id));
+    c.offRef = p.ref;
+    if (feeder) c.fedBy = circuitLabelOf(feeder);
   });
+  return list;
 }
 function circuitLabelOf(c) { return c.name ? c.name + ' (' + c.ref + ')' : c.ref; }
 
@@ -6030,8 +6099,10 @@ function renderCircuitsView() {
       +   ' onchange="setCircuitName(' + c.head.id + ',this.value)">'
       +   '<button type="button" class="circ-go" onclick="goToCircuit(' + c.head.id + ')" title="Show its main in the list">'
       +   escHtml(c.ref) + ' &rarr;</button>'
-      +   (many ? '<div class="circ-sub">' + escHtml(c.groupLabel) + '</div>' : '') + '</td>'
-      + '<td class="derived-cell">' + c.loads + '</td>'
+      +   (c.fedBy ? '<div class="circ-sub">off ' + escHtml(c.offRef) + ', fed by ' + escHtml(c.fedBy) + '</div>'
+            : (many ? '<div class="circ-sub">' + escHtml(c.groupLabel) + '</div>' : '')) + '</td>'
+      + '<td class="derived-cell">' + c.loads
+      +   (c.feeds.length ? '<div class="circ-sub">+' + c.beyond + ' via ' + escHtml(c.feeds.join(', ')) + '</div>' : '') + '</td>'
       + '<td class="derived-cell">' + f(c.kw, 1) + '</td>'
       + '<td class="derived-cell">' + f(c.lps, 2) + '</td>'
       + '<td>' + (i ? escHtml(i.end.ref) : '<span style="color:var(--muted)">&mdash;</span>')
@@ -6066,14 +6137,7 @@ function renderCircuitsView() {
       + '<td class="derived-cell">' + f(l.reduce((t, c) => t + c.pipeL, 0), 0) + '</td><td></td></tr>';
   }).join('');
   const chains = cs.filter(c => c.idx).map(c =>
-    '<div class="circ-chain"><b>' + escHtml(circuitLabelOf(c)) + '</b> &mdash; '
-    + c.idx.chain.map(m => {
-        const r = calculateCircuit(m);
-        return escHtml(m.ref) + ' ' + (r.recommended ? r.recommended.nom + ' ' : '') + f(r.pipeLoss_kPa, 2) + ' kPa';
-      }).join(' &rarr; ')
-    + (c.idx.load > 0 ? ' &rarr; consumer ' + f(c.idx.load, 2) + ' kPa' : '')
-    + (c.idx.vessel > 0 ? ' &rarr; ' + escHtml(c.idx.end.ref) + ' ' + f(c.idx.vessel, 2) + ' kPa' : '')
-    + ' = <b>' + f(c.kpa, 2) + ' kPa</b></div>').join('');
+    '<div class="circ-chain"><b>' + escHtml(circuitLabelOf(c)) + '</b> &mdash; ' + circuitChainText(c) + '</div>').join('');
   box.innerHTML =
       '<div style="font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:12px">'
     + 'Each circuit\u2019s own index run, on the sizes selected above. Name a circuit here or in Pipe Trace; '
@@ -6107,16 +6171,24 @@ function circuitsReportHtml() {
     + '<table class="rpt"><thead><tr><th>Circuit</th><th class="n">Loads</th><th class="n">kW</th>'
     + '<th class="n">l/s</th><th>Index ends at</th><th class="n">Straight kPa</th><th class="n">Fittings kPa</th>'
     + '<th class="n">Terminal kPa</th><th class="n">Circuit kPa</th><th class="n">Duty kPa</th>'
-    + '<th class="n">m head</th><th class="n">Pipe water L</th></tr></thead><tbody>'
-    + cs.map(c => '<tr><td>' + escHtml(circuitLabelOf(c)) + '</td><td class="n">' + c.loads + '</td>'
+    + '<th class="n">m head</th><th class="n">Pipe water L</th><th class="n">Units L</th></tr></thead><tbody>'
+    + cs.map(c => '<tr><td>' + escHtml(circuitLabelOf(c))
+      + (c.fedBy ? '<br><span style="font-size:7pt;color:#5a6875">off ' + escHtml(c.offRef) + ', fed by ' + escHtml(c.fedBy) + '</span>' : '')
+      + '</td><td class="n">' + c.loads
+      + (c.feeds.length ? '<br><span style="font-size:7pt;color:#5a6875">+' + c.beyond + ' via ' + escHtml(c.feeds.join(', ')) + '</span>' : '') + '</td>'
       + '<td class="n">' + f(c.kw, 1) + '</td><td class="n">' + f(c.lps, 2) + '</td>'
       + '<td>' + (c.idx ? escHtml(c.idx.end.ref) : '\u2014') + '</td>'
       + '<td class="n">' + (c.idx ? f(c.idx.straight, 2) : '\u2014') + '</td>'
       + '<td class="n">' + (c.idx ? f(c.idx.fit, 2) : '\u2014') + '</td>'
       + '<td class="n">' + (c.idx ? f(c.idx.load + c.idx.vessel, 2) : '\u2014') + '</td>'
       + '<td class="n">' + f(c.kpa, 2) + '</td><td class="n">' + f(c.duty, 1) + '</td>'
-      + '<td class="n">' + f(c.mH, 2) + '</td><td class="n">' + f(c.pipeL, 0) + '</td></tr>').join('')
-    + '</tbody></table>';
+      + '<td class="n">' + f(c.mH, 2) + '</td><td class="n">' + f(c.pipeL, 0) + '</td>'
+      + '<td class="n">' + (c.unitsL === null ? '\u2014' : f(c.unitsL, 0)) + '</td></tr>').join('')
+    + '</tbody></table>'
+    + cs.filter(c => c.idx).map(c => '<p style="font-size:8.5pt;margin:4px 0"><strong>' + escHtml(circuitLabelOf(c))
+      + '</strong> \u2014 ' + circuitChainText(c) + '</p>').join('')
+    + '<p style="font-size:8.5pt;color:#5a6875">Units L is the terminal units and vessels on that circuit, '
+    + 'carried from Pipe Trace; a circuit not traced shows \u2014.</p>';
 }
 
 /* ============ ONE PUMP PER HYDRAULIC CIRCUIT ============
@@ -6745,8 +6817,9 @@ function exportPDFReport() {
   }
   const findingsList = findings.map(f=>'<li>'+f+'</li>').join('') || '<li>No circuits populated.</li>';
 
-  // Schedule
-  const schedule = results.map(({c,r}) => {
+  // Schedule, grouped by circuit: a heading per circuit, its rows in the
+  // order met from its main, a circuit total; anything on no circuit last
+  const schedRow = ({c,r}) => {
     if (r.error) return '<tr><td>'+escHtml(c.ref)+'</td><td>'+escHtml(MAT_LABEL[c.material])+'</td><td colspan="10" class="flag">'+escHtml(r.error)+'</td></tr>';
     const rec = r.recommended;
     const st = r.status==='ok'?'OK':r.status==='velocity_warn'?'Vel. review':'No fit';
@@ -6761,7 +6834,29 @@ function exportPDFReport() {
       + '<td class="n">'+r.totalLoss_kPa.toFixed(1)+'</td>'
       + '<td class="n">'+instKgM.toFixed(1)+'</td><td class="n">'+instKg.toFixed(0)+'</td>'
       + '<td style="color:'+stc+';font-weight:600">'+st+'</td></tr>';
-  }).join('');
+  };
+  const schedule = (() => {
+    const cs = circuitSummaries();
+    const order = treeOrder();
+    const byId = new Map(results.map(x => [x.c.id, x]));
+    const placed = new Set();
+    let html = cs.map(cc => {
+      const rows = cc.members.slice().sort((a, b) => order.get(a.id) - order.get(b.id))
+        .map(m => byId.get(m.id)).filter(Boolean);
+      rows.forEach(x => placed.add(x.c.id));
+      const kg = rows.reduce((t, x) => t + (x.r.error ? 0 : x.r.weights.combined_kg_total * (1 + upliftPct / 100)), 0);
+      return '<tr class="circ"><td colspan="13">' + circuitHeadText(cc) + '</td></tr>'
+        + rows.map(schedRow).join('')
+        + '<tr class="sub"><td>' + escHtml(cc.name || cc.ref) + ' total</td><td></td>'
+        + '<td class="n">' + cc.kw.toFixed(1) + '</td><td></td><td class="n">' + cc.lps.toFixed(2) + '</td>'
+        + '<td colspan="4" class="n">index</td><td class="n">' + cc.kpa.toFixed(1) + '</td>'
+        + '<td></td><td class="n">' + kg.toFixed(0) + '</td><td></td></tr>';
+    }).join('');
+    const rest = results.filter(x => !placed.has(x.c.id));
+    if (rest.length) html += (cs.length ? '<tr class="circ"><td colspan="13"><b>Not on a circuit</b> \u00b7 '
+      + 'headers and exchangers acting as the source, and rows fed from nothing</td></tr>' : '') + rest.map(schedRow).join('');
+    return html;
+  })();
 
   // ===== Capacity & Uplift: what each selected pipe could carry at the Pa/m limit =====
   const capRows = results.map(({c,r}) => {
@@ -7026,6 +7121,7 @@ function exportPDFReport() {
     + '.meta{display:grid;grid-template-columns:1fr 1fr;gap:3px 24px;margin-bottom:18px;font-size:10pt}.meta .r{display:flex;justify-content:space-between;border-bottom:1px dotted #ccc;padding:2px 0}.meta .l{color:#5a6875;font-weight:600}'
     + 'h2{font-size:13px;color:#0b2a38;margin:18px 0 8px;padding-bottom:4px;border-bottom:2px solid #7ad1e4}p{margin-bottom:8px;text-align:justify}ul{margin:0 0 10px 18px}li{margin-bottom:5px;text-align:justify}.flag{color:#c74418;font-weight:700}'
     + '.rpt{width:100%;border-collapse:collapse;margin-bottom:10px;font-size:9pt}.rpt th{background:#0b2a38;color:#fff;text-align:left;padding:6px;font-size:8pt;text-transform:uppercase}.rpt th.n,.rpt td.n{text-align:right}.rpt td{padding:5px 6px;border-bottom:1px solid #e0e0e0}.rpt tr:nth-child(even) td{background:#f5fafb}.rpt .sub td{border-top:2px solid #0b2a38;font-weight:700;background:#e8f4f8!important}'
+    + '.rpt tr.circ td{background:#e3efe7!important;border-top:2px solid #0b7a4b;font-size:7.6pt;padding:5px 6px;text-transform:none}'
     + '.tag{font-size:7pt;background:#7ad1e4;color:#0a0a0a;padding:1px 4px;border-radius:2px;font-weight:700}'
     + '.tiles{display:flex;gap:10px;margin-bottom:14px}.tile{flex:1;border:1px solid #d0d8dc;border-radius:4px;padding:10px;text-align:center}.tile .v{font-size:20px;font-weight:800;color:#1a5670}.tile .l{font-size:8pt;color:#5a6875;text-transform:uppercase}'
     + '.pump3{display:flex;gap:10px;margin:12px 0}.pc{flex:1;background:#0b2a38;color:#fff;border-radius:4px;padding:12px;text-align:center}.pc.flow{background:#123e52}.pc .pl{font-size:8pt;color:#7ad1e4;text-transform:uppercase}.pc .pv{font-size:26px;font-weight:900;margin:3px 0}.pc .pu{font-size:9pt;color:rgba(255,255,255,0.75)}'
@@ -7286,7 +7382,18 @@ function applyProjectData(data, opts) {
         + 'It will open, but anything that version added will not be understood here. '
         + 'Refresh the page to make sure you are on the latest build before saving over it.');
     }
+    /* Names typed in the sizer survive a re-send from Pipe Trace: a main
+       that Trace sends without a name keeps the one given here, matched
+       on its reference. A name given in Trace wins. */
+    const keepNames = /Pipe Trace/.test(source)
+      ? new Map(circuits.filter(c => isCircuitHead(c) && c.circuitName).map(c => [c.ref, c.circuitName])) : null;
     const repaired = installProject(data);
+    if (keepNames && keepNames.size) {
+      circuits.forEach(c => {
+        if (!c.circuitName && !c.traceCircuitName && keepNames.has(c.ref)) c.circuitName = keepNames.get(c.ref);
+      });
+      renderCircuits();
+    }
     // Refresh the glycol display labels WITHOUT touching rho/cp — the loaded
     // values must survive. onBasisChange respects the restored autoProps state:
     // auto recalculates (deterministic), manual keeps the file's figures.

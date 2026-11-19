@@ -382,7 +382,15 @@ on the main only); a green pill shows it on the main's row in the list, and
 the arrow unfolds the list and scrolls to that main (`goToCircuit()`). Pipe
 water is the sizer's `water_l_total`; terminal units and vessels come from
 `traceCircuitUnitsL` on the main, because the sizer does not count them per
-circuit. Duty is the circuit index plus the safety factor; plant-side
+circuit. The card and the report say what links circuits as Trace does —
+a main to a header reads *feeds LLH 1 (n loads beyond)*, a secondary *off
+LLH 1, fed by …* — and list in tree order (`treeOrder()`), so secondaries
+follow their feeder. **Section 3 of the sizer report is grouped by
+circuit**: a heading (`circuitHeadText()`), the circuit's rows, a circuit
+total; section 6a adds Units L and each index hop by hop
+(`circuitChainText()`). A name typed in the sizer is kept when Trace is
+sent again and has no name for that main (matched on `ref`); a name given
+in Trace wins. Duty is the circuit index plus the safety factor; plant-side
 resistances and static head stay in the pump panel and are not added. On
 the three-circuit test job the two tools agree to the penny on every
 circuit. `tests/trace-circuits-test.mjs` checks the pieces in both files.
