@@ -327,6 +327,34 @@ their own figure, because the sizer's roll-up would walk through the vessel to
 the header. Before this, two plants on one header wrote the header and every
 load below it out once per plant.
 
+### Several mains off one plant are several circuits
+
+Each run that leaves a root or a separator — the plant, a header, a heat
+exchanger — and everything it feeds in the same hydraulic group is a
+**circuit** (`buildCircuits()` on every solve, `S.circuits`, `sg.circuit`
+derived and never saved). A head is a run with no parent in its own group
+(`isCircuitHead()`); a single-pipe return beside its flow is that circuit's
+return, not another one. The name is `circuitName` on the head run, typed at
+the top of the run inspector (`circuitBox()`), separate from `ref` so Rename
+runs cannot take it; it shows as a green pill over the main's size label.
+
+`circuitSummary()` gives each its own index — the same walk as
+`indexRunFor()`, held to the circuit's runs — split into straight pipe,
+fittings, placed valves and the terminal, the pump duty (flow at that head,
+in kPa and metres on `fluid().rho`), route and pipe metres, and water: pipe
+bore × installed legs, terminal `waterL` and any vessel it feeds. It is
+reporting only; no size or loss changes. The group index (`S.indexes`) is
+still the worst circuit in the group, which is what one shared pump has to
+make — the Circuits table says so in a row of its own, so the duty is there
+whichever way the circuits are pumped.
+
+Where it shows: every run's inspector, **Schedule → Circuits** (a row picks
+the whole circuit with `selectCircuit()`; each index hop by hop below), the
+**Circuits** cell in the status strip, section 8 of the PDF, and the export —
+`traceCircuit` on every sizer circuit and `traceMeta.circuits`, which the
+sizer carries through untouched. `tests/trace-circuits-test.mjs` checks the
+pieces.
+
 ### Buffer volume
 
 Taken, not invented. The litres are yours; what the tool does is say what that

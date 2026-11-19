@@ -328,6 +328,9 @@
   }
   .status .st.warn { background: #fff6e4; }
   .status .st.warn span { color: #8a5d00; }
+  .status .st.click { cursor: pointer; background: #eef7f1; }
+  .status .st.click:hover { background: #dff0e6; }
+  .status .st.click span { color: #1d6b41; }
 
   .zoomer {
     position: absolute; right: 12px; bottom: 12px; z-index: 6;
@@ -536,6 +539,19 @@
   .derived dt { color: var(--ink-soft); }
   .derived dd { margin: 0; font-family: 'Azeret Mono', monospace; font-weight: 600; text-align: right; }
 
+  /* the circuit a run belongs to, at the top of the run inspector */
+  .circbox {
+    border: 1px solid var(--rule); border-left: 3px solid var(--live);
+    border-radius: 4px; padding: 10px 12px 12px; margin: 0 0 14px;
+  }
+  .circbox .derived { margin: 8px 0 10px; }
+  .circbox .derived dl { grid-template-columns: max-content 1fr; }
+  .circbox .derived dt { white-space: nowrap; }
+  .circbox .derived dd { white-space: normal; }
+  .circhd { font-size: 12.5px; line-height: 1.5; color: var(--ink-soft); }
+  .circhd b { color: var(--ink); }
+  .circhd .btn { margin-top: 6px; }
+
   .note {
     font-size: 11.5px; line-height: 1.55; color: var(--ink-soft);
     border-left: 2px solid var(--measure); padding-left: 10px; margin: 12px 0;
@@ -600,7 +616,8 @@
   table.sched th.n, table.sched td.n { text-align: right; }
   table.sched td { padding: 6px 9px; border-bottom: 1px solid var(--rule); }
   table.sched td.n { text-align: right; font-family: 'Azeret Mono', monospace; }
-  table.sched td.dim { color: var(--muted); }
+  table.sched td.dim, table.sched span.dim { color: var(--muted); }
+  table.sched td.n { white-space: nowrap; }
   table.sched tr.pick td { background: #fff6e4; }
   table.sched tr.idx td { background: #fdf3e0; }
   table.sched tr.cons td:first-child { box-shadow: inset 3px 0 0 var(--live); }
@@ -850,6 +867,7 @@
           <div class="segbtn" id="schedTabs">
             <button data-tab="pipe" class="on">Pipework</button>
             <button data-tab="valve">Valves &amp; fittings</button>
+            <button data-tab="circ">Circuits</button>
           </div>
           <span id="schedNote" style="font-size:12px;color:var(--muted)"></span>
           <div style="flex:1"></div>
@@ -3733,6 +3751,9 @@ function solve() {
   const onIndex = new Set();
   S.indexes.forEach(r => r.ids.forEach(id => onIndex.add(id)));
   S.segs.forEach(sg => { sg.isIndex = onIndex.has(sg.id); });
+  /* Each main off the plant (or off a header or exchanger) as a circuit of
+     its own, with its own index run, losses and volume. */
+  S.circuits = buildCircuits();
   /* Static head and cold fill, one per water. Worked out after the groups
      because a heat exchanger is where one water stops and the next begins. */
   S.waters = pressureWaters();
@@ -4067,6 +4088,158 @@ function indexRun() {
 }
 /* kept under the old name so nothing that reads it has to change */
 function worstPath() { return S.index || indexRun(); }
+
+/* ---------- circuits ----------
+   A circuit is a main leaving the thing that pumps it — the plant, or a
+   header or heat exchanger for a secondary — and everything fed through it
+   in the same hydraulic group. Three mains off one boiler are three
+   circuits, each with its own index run, its own losses and its own water,
+   whether each has its own pump or one pump serves them all; the group's
+   index (S.indexes) is still the worst of them, which is what a shared pump
+   has to make.
+
+   The head run carries the name (`circuitName`), typed in the run
+   inspector. It is separate from `ref`, which Rename runs renumbers. Every
+   run below it reports to it through `sg.circuit`, derived on every solve.
+   Reporting only: nothing here changes a size or a loss. */
+function isCircuitHead(sg) {
+  if (!sg || sg.orphan || sg.up === null || sg.up === undefined) return false;
+  const par = sg.parentSeg !== null && sg.parentSeg !== undefined ? segById(sg.parentSeg) : null;
+  if (par && par.hgroup === sg.hgroup) return false;
+  // the single-pipe return beside a flow leg is that circuit's return, not another circuit
+  const outs = S.segs.filter(o => o.up === sg.up && o.down !== null && o.down !== undefined);
+  return !isEchoReturn(sg, outs);
+}
+function circuitTopOf(sg) {
+  let x = sg, guard = 0;
+  while (x && guard++ < 1000) {
+    const par = x.parentSeg !== null && x.parentSeg !== undefined ? segById(x.parentSeg) : null;
+    if (!par || par.hgroup !== x.hgroup) return x;
+    x = par;
+  }
+  return null;
+}
+function circuitNameOf(head, members) {
+  const typed = v => typeof v === 'string' && v.trim() ? v.trim() : '';
+  if (typed(head.circuitName)) return typed(head.circuitName);
+  // a tee cut in near the plant can leave the name on the second section
+  const named = (members || []).find(m => typed(m.circuitName));
+  return named ? typed(named.circuitName) : '';
+}
+function buildCircuits() {
+  S.segs.forEach(sg => { sg.circuit = null; });
+  const heads = S.segs.filter(isCircuitHead);
+  const headIds = new Set(heads.map(h => h.id));
+  S.segs.forEach(sg => {
+    if (sg.orphan) return;
+    const top = circuitTopOf(sg);
+    if (top && headIds.has(top.id)) sg.circuit = top.id;
+  });
+  // a single return leaving beside its flow goes with the circuit that reaches its far end
+  const nodeCirc = new Map();
+  S.segs.forEach(sg => {
+    if (sg.circuit !== null && sg.down !== null && sg.down !== undefined
+        && !(sg.mode === 'single' && sg.leg === 'return')) nodeCirc.set(sg.down, sg.circuit);
+  });
+  S.segs.forEach(sg => {
+    if (sg.circuit !== null || sg.orphan) return;
+    const top = circuitTopOf(sg);
+    if (top && nodeCirc.has(top.down)) sg.circuit = nodeCirc.get(top.down);
+  });
+  const order = new Map(pipeScheduleRows().map((r, i) => [r.sg.id, i]));
+  return heads.map(circuitSummary)
+    .sort((a, b) => (a.group - b.group) || ((order.get(a.headId) || 0) - (order.get(b.headId) || 0)));
+}
+function circuitSummary(h) {
+  const members = S.segs.filter(x => x.circuit === h.id);
+  const ids = new Set(members.map(x => x.id));
+  const sum = f => members.reduce((t, x) => t + (x[f] || 0), 0);
+  const from = nodeById(h.up);
+  /* The index inside this circuit: the end with the highest loss back to the
+     top of the circuit — the same walk as indexRunFor(), held to these runs. */
+  const ends = [];
+  S.nodes.forEach(n => {
+    const add = (feedId, side) => { if (feedId !== null && feedId !== undefined && ids.has(feedId)) ends.push({ n, feedId, side }); };
+    if (n.type === 'consumer') { add(n.feedSeg, 'heat'); if (isFourPipe(n)) add(n.feedSegCool, 'cool'); }
+    else if (isSeparator(n)) add(n.feedSeg, 'heat');
+  });
+  let idx = null;
+  ends.forEach(e => {
+    const chain = [];
+    let x = segById(e.feedId), guard = 0;
+    while (x && ids.has(x.id) && guard++ < 1000) { chain.push(x); x = x.parentSeg !== null && x.parentSeg !== undefined ? segById(x.parentSeg) : null; }
+    const coil = e.n.type === 'consumer' ? (parseFloat(loadSide(e.n, e.side).coilKpa) || 0) : vesselKpa(e.n);
+    const c = chain.reduce((t, y) => ({
+      pipe: t.pipe + (y.straightKpa || 0), fit: t.fit + (y.fitKpa || 0), valve: t.valve + (y.valveKpa || 0),
+      run: t.run + (y.dropKpa || 0) }), { pipe: 0, fit: 0, valve: 0, run: 0 });
+    const drop = c.run + coil;
+    if (!idx || drop > idx.drop) {
+      idx = { node: e.n, side: e.side, chain: chain.reverse(), drop, coil,
+              pipeKpa: c.pipe, fitKpa: c.fit, valveKpa: c.valve, otherKpa: Math.max(0, c.run - c.pipe - c.fit - c.valve),
+              runKpa: c.run, endsAtVessel: e.n.type !== 'consumer' };
+    }
+  });
+  /* What it holds: the pipe (both legs where paired), the terminals and any
+     vessel it feeds. Loads with no water content typed are counted, not guessed. */
+  let pipeL = 0, termL = 0, vesselL = 0, loads = 0, noWater = 0, kw = 0;
+  members.forEach(x => { if (x.pipe) pipeL += Math.PI * Math.pow(x.pipe.id / 1000, 2) / 4 * (x.hydM || 0) * 1000; });
+  S.nodes.forEach(n => {
+    if (n.type === 'consumer') {
+      ['heat', 'cool'].forEach(side => {
+        if (side === 'cool' && !isFourPipe(n)) return;
+        const f = side === 'cool' ? n.feedSegCool : n.feedSeg;
+        if (f === null || f === undefined || !ids.has(f)) return;
+        loads++;
+        kw += isFourPipe(n) ? consumerKw(n, side) : consumerKw(n);
+        const l = parseFloat(loadSide(n, side).waterL) || 0;
+        if (l > 0) termL += l; else noWater++;
+      });
+    } else if ((n.type === 'llh' || n.type === 'buffer') && n.feedSeg !== null && n.feedSeg !== undefined && ids.has(n.feedSeg)) {
+      vesselL += vesselLitres(n);
+    }
+  });
+  const standby = !!(from && from.type === 'source' && from.dutyRole === 'standby');
+  const lps = standby ? (h.sizeLps || 0) : (h.lps || 0);
+  const g = groupOf(h.hgroup) || {};
+  const kpa = idx ? idx.drop : 0;
+  return {
+    headId: h.id, head: h, ids, members,
+    name: circuitNameOf(h, members), ref: h.ref || '',
+    from: from ? (from.name || '') : '', fromType: from ? from.type : '',
+    group: h.hgroup === null || h.hgroup === undefined ? 0 : h.hgroup,
+    groupLabel: g.sepId === null || g.sepId === undefined ? 'Primary' : 'Off ' + (g.sepName || 'header'),
+    standby, lps, kw: h.kw || kw, loads, index: idx, kpa,
+    headM: kpa * 1000 / (fluid().rho * 9.80665),
+    routeM: sum('runM'), pipeM: sum('hydM'), runs: members.length,
+    pipeL, termL, vesselL, noWater, volL: pipeL + termL + vesselL,
+  };
+}
+function circuitLabel(c) { return c.name ? c.name + ' (' + c.ref + ')' : c.ref; }
+function circuitOf(sg) {
+  return sg && sg.circuit !== null && sg.circuit !== undefined
+    ? (S.circuits || []).find(c => c.headId === sg.circuit) || null : null;
+}
+/* Pick the whole circuit on the drawing: its runs, the loads at its ends and
+   the valves on it, as one selection. */
+function selectCircuit(headId) {
+  const c = (S.circuits || []).find(x => x.headId === headId);
+  if (!c) return;
+  const m = emptyMulti();
+  m.segs = c.members.map(x => x.id);
+  S.nodes.forEach(n => {
+    if (n.type === 'consumer' && (c.ids.has(n.feedSeg) || c.ids.has(n.feedSegCool))) m.nodes.push(n.id);
+  });
+  m.items = S.items.filter(it => c.ids.has(it.seg)).map(it => it.id);
+  sel = settleMulti(m);
+  if (sel) openInspector();
+  render();
+  toast(circuitLabel(c) + ' \u2014 ' + c.runs + ' run' + (c.runs === 1 ? '' : 's') + ', '
+    + c.loads + ' load' + (c.loads === 1 ? '' : 's') + ', index ' + fmt(c.kpa, 1) + ' kPa');
+}
+/* Pump duty as it would be asked for: flow at head. */
+function circuitDuty(c) {
+  return fmtVol(c.lps) + ' @ ' + fmt(c.kpa, 1) + ' kPa (' + fmt(c.headM, 2) + ' m)';
+}
 
 /* ---------- totals ---------- */
 function totals() {
@@ -5072,11 +5245,20 @@ function renderInner() {
   }
 
   // ---- segments ----
+  /* The circuit of the run that is picked is lit underneath, so where it
+     goes and where it stops can be seen at a glance. */
+  const pickedSeg = sel && sel.kind === 'seg' ? segById(sel.id) : null;
+  const litCircuit = pickedSeg && pickedSeg.circuit !== null && pickedSeg.circuit !== undefined ? pickedSeg.circuit : null;
   S.segs.forEach(sg => {
     const picked = isSel('seg', sg.id);
     const d = sg.pts.map((p, i) => (i ? 'L' : 'M') + p.x + ' ' + p.y).join(' ');
     const single = sg.mode === 'single';
     const pw = pipeWidthDraw(sg, k);
+
+    if (!picked && litCircuit !== null && sg.circuit === litCircuit) {
+      g.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--live)',
+        'stroke-width': pw + 9 * k, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: .22 }));
+    }
 
     if (picked) {
       g.appendChild(mk('path', { d, fill: 'none', stroke: 'var(--measure)',
@@ -5125,7 +5307,17 @@ function renderInner() {
       g.appendChild(mk('text', { x: mx, y: my + 2.6 * k, 'text-anchor': 'middle',
         'font-size': 10 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 500,
         fill: sg.pipe && (sg.pipe.over || sg.pipe.slow) ? 'var(--alarm)' : 'var(--ink)' }, txt));
+      /* A named circuit carries its name on its main, over the size. */
+      const circ = sg.circuit === sg.id ? circuitOf(sg) : null;
+      if (circ && circ.name && (exporting || labelLevel() >= 1)) {
+        const nw = circ.name.length * 6.4 + 18;
+        g.appendChild(mk('rect', { x: mx - nw / 2 * k, y: my - 28 * k, width: nw * k, height: 17 * k,
+          rx: 8.5 * k, fill: 'var(--live)' }));
+        g.appendChild(mk('text', { x: mx, y: my - 16 * k, 'text-anchor': 'middle',
+          'font-size': 10.5 * k, 'font-family': 'Archivo, sans-serif', 'font-weight': 700, fill: '#fff' }, circ.name));
+      }
     }
+
   });
 
   /* ---- placed valves and in-line items ----
@@ -5831,6 +6023,12 @@ function renderStatus() {
     + (S.indexes || []).slice(1).map(r =>
         cell(((groupOf(r.group) || {}).sepName || 'Secondary') + ' index',
              fmt(r.drop, 0) + ' kPa')).join('')
+    /* More than one main off the plant: each is a circuit, and the strip
+       says how many and opens the table of them. */
+    + ((S.circuits || []).length > 1
+        ? '<div class="st click" id="stCirc" title="Each circuit with its own index, pump duty and water">'
+          + '<b>Circuits</b><span>' + S.circuits.length + ' &middot; worst '
+          + fmt(Math.max.apply(null, S.circuits.map(c => c.kpa)), 0) + ' kPa</span></div>' : '')
     + (S.nodes.some(n => n.type === 'llh' && n.shell && n.shell.reversed)
         ? cell('Header', 'primary short', true) : '')
     /* Static head and cold fill, one cell per water. The primary on its own
@@ -7987,10 +8185,44 @@ function segDerivedRows(sg, single, p) {
   return rows;
 }
 
+/* The circuit a run belongs to, at the top of its inspector: the name, typed
+   on the main that leaves the plant, and the figures for the whole circuit —
+   its own index, the losses that make it up, the pump duty and the water. */
+function circuitBox(sg) {
+  const c = circuitOf(sg);
+  if (!c) return '';
+  const isHead = c.headId === sg.id;
+  const i = c.index;
+  const row = (k, v) => '<dt>' + k + '</dt><dd>' + v + '</dd>';
+  return '<div class="circbox">'
+    + (isHead
+      ? '<label class="fld"><span>Circuit name <em>this main and everything it feeds</em></span>'
+        + '<input data-f="circuitName" placeholder="e.g. North wing radiators" value="' + esc(sg.circuitName || '') + '"></label>'
+      : '<div class="circhd">Part of circuit <b>' + esc(circuitLabel(c)) + '</b> '
+        + '<button type="button" class="btn ghost sm" data-circhead="' + c.headId + '">Go to its main to name it</button></div>')
+    + '<div class="derived"><dl>'
+    + row('From', esc(c.from) + (c.standby ? ' &middot; standby' : '') + ' &middot; ' + esc(c.groupLabel))
+    + row('Loads', c.loads + (c.kw ? ' &middot; ' + fmt(c.kw, 1) + ' kW' : ''))
+    + row('Flow', fmtVol(c.lps))
+    + (i ? row('Index', esc(i.node.name) + ' &middot; ' + i.chain.length + ' run' + (i.chain.length === 1 ? '' : 's'))
+        + row('Pipe, index', fmt(i.pipeKpa, 2) + ' kPa')
+        + row('Fittings, index', fmt(i.fitKpa, 2) + ' kPa')
+        + row('Valves, index', fmt(i.valveKpa + i.otherKpa, 2) + ' kPa')
+        + row(i.endsAtVessel ? 'Through ' + esc(i.node.name) : 'Terminal', fmt(i.coil, 2) + ' kPa')
+        + row('<b>Circuit index</b>', '<b>' + fmt(c.kpa, 2) + ' kPa</b>')
+      : row('Index', 'no load reached yet'))
+    + row('Pump duty', circuitDuty(c))
+    + row('Water', fmt(c.volL, 0) + ' L' + (c.noWater ? ' &middot; ' + c.noWater + ' load' + (c.noWater === 1 ? '' : 's') + ' without water content' : ''))
+    + '</dl></div>'
+    + '<button type="button" class="btn ghost sm" data-circsel="' + c.headId + '">Show the whole circuit</button>'
+    + '</div>';
+}
+
 function segForm(sg) {
   const single = sg.mode === 'single';
   const p = sg.pipe;
   return ''
+    + circuitBox(sg)
     + '<label class="fld"><span>Reference</span><input data-f="ref" value="' + esc(sg.ref) + '"></label>'
     + '<label class="fld"><span>Pipes in this run</span><select data-f="mode">'
     +   '<option value="pair"' + (single ? '' : ' selected') + '>Flow and return together</option>'
@@ -8370,6 +8602,12 @@ function wireInspector() {
       m.pts.splice(i, 1);
       render(); openInspector();
     });
+  });
+  el('insBody').querySelectorAll('[data-circsel]').forEach(btn => {
+    btn.addEventListener('click', () => selectCircuit(parseInt(btn.dataset.circsel, 10)));
+  });
+  el('insBody').querySelectorAll('[data-circhead]').forEach(btn => {
+    btn.addEventListener('click', () => select('seg', parseInt(btn.dataset.circhead, 10)));
   });
   el('insBody').querySelectorAll('[data-f]').forEach(inp => {
     /* Write the typed length as the keys go in. Rebuilding the inspector
@@ -8991,8 +9229,10 @@ function renderSchedule() {
   solve();
   el('schedTabs').querySelectorAll('button').forEach(b =>
     b.classList.toggle('on', b.dataset.tab === schedTab));
-  el('schedTitle').textContent = schedTab === 'valve' ? 'Valve & fittings schedule' : 'Pipework schedule';
+  el('schedTitle').textContent = schedTab === 'valve' ? 'Valve & fittings schedule'
+    : schedTab === 'circ' ? 'Circuits' : 'Pipework schedule';
   if (schedTab === 'valve') { renderValveSchedule(); return; }
+  if (schedTab === 'circ') { renderCircuitSchedule(); return; }
   el('schedIndex').style.display = '';
   renderPipeSchedule();
 }
@@ -9207,6 +9447,135 @@ function renderPipeSchedule() {
       el('drawer').classList.remove('on');
     });
   });
+}
+
+/* ==========================================================================
+   CIRCUITS
+   One row per main leaving the plant (or a header or heat exchanger), with
+   its own index run and what makes it up, the pump duty that follows, and
+   the water it holds. Click a row to pick the whole circuit on the drawing;
+   name it on its main in the run inspector.
+   ========================================================================== */
+function circuitTableHtml(cs, report) {
+  const many = new Set(cs.map(c => c.group)).size > 1;
+  const body = cs.map(c => {
+    const i = c.index;
+    return '<tr' + (report ? '' : ' data-circ="' + c.headId + '" style="cursor:pointer"') + '>'
+      + '<td><strong>' + esc(c.name || c.ref) + '</strong>'
+      +   (c.name ? ' <span class="' + (report ? 'tag' : 'chip') + '">' + esc(c.ref) + '</span>' : '')
+      +   (c.standby ? ' <span class="' + (report ? 'tag' : 'chip') + '">standby</span>' : '')
+      +   (!report && !c.name ? ' <span class="chip">name it</span>' : '') + '</td>'
+      + '<td>' + esc(c.from) + (many ? ' <span class="dim">' + esc(c.groupLabel) + '</span>' : '') + '</td>'
+      + '<td class="n">' + c.loads + '</td>'
+      + '<td class="n">' + fmt(c.kw, 1) + '</td>'
+      + '<td class="n">' + fmtVol(c.lps) + '</td>'
+      + '<td>' + (i ? esc(i.node.name) : '<span class="dim">\u2014</span>') + '</td>'
+      + '<td class="n">' + (i ? fmt(i.pipeKpa, 2) : '\u2014') + '</td>'
+      + '<td class="n">' + (i ? fmt(i.fitKpa, 2) : '\u2014') + '</td>'
+      + '<td class="n">' + (i ? fmt(i.valveKpa + i.otherKpa, 2) : '\u2014') + '</td>'
+      + '<td class="n">' + (i ? fmt(i.coil, 2) : '\u2014') + '</td>'
+      + '<td class="n"><strong>' + fmt(c.kpa, 2) + '</strong></td>'
+      + '<td class="n">' + fmtVol(c.lps) + ' @ ' + fmt(c.kpa, 1) + ' kPa<br><span class="dim">' + fmt(c.headM, 2) + ' m head</span></td>'
+      + '<td class="n">' + fmt(c.routeM, 1) + '</td>'
+      + '<td class="n">' + fmt(c.pipeM, 1) + '</td>'
+      + '<td class="n">' + fmt(c.pipeL, 0) + '</td>'
+      + '<td class="n">' + fmt(c.termL + c.vesselL, 0)
+      +   (c.noWater ? '<br><span class="dim">' + c.noWater + ' untyped</span>' : '') + '</td>'
+      + '<td class="n"><strong>' + fmt(c.volL, 0) + '</strong></td></tr>';
+  }).join('');
+  /* Circuits off one plant may share its pump. If they do, that pump moves
+     all of them at the worst index among them — said once per group, beside
+     the circuits, so it is the right duty whichever way it is pumped. */
+  const groups = {};
+  cs.forEach(c => { (groups[c.group] = groups[c.group] || []).push(c); });
+  const shared = Object.keys(groups).map(k => groups[k]).filter(list => list.filter(c => !c.standby).length > 1)
+    .map(list => {
+      const run = list.filter(c => !c.standby);
+      const lps = run.reduce((t, c) => t + c.lps, 0);
+      const worst = run.reduce((a, c) => c.kpa > a.kpa ? c : a, run[0]);
+      return '<tr class="sub"><td colspan="11">If one pump at ' + esc(list[0].from || 'the plant')
+        + ' serves ' + (many ? 'the ' + esc(list[0].groupLabel.toLowerCase()) + ' ' : '') + 'circuits together'
+        + ' &mdash; index on ' + esc(worst.name || worst.ref) + '</td>'
+        + '<td class="n">' + fmtVol(lps) + ' @ ' + fmt(worst.kpa, 1) + ' kPa</td>'
+        + '<td class="n">' + fmt(run.reduce((t, c) => t + c.routeM, 0), 1) + '</td>'
+        + '<td class="n">' + fmt(run.reduce((t, c) => t + c.pipeM, 0), 1) + '</td>'
+        + '<td class="n">' + fmt(run.reduce((t, c) => t + c.pipeL, 0), 0) + '</td>'
+        + '<td class="n">' + fmt(run.reduce((t, c) => t + c.termL + c.vesselL, 0), 0) + '</td>'
+        + '<td class="n">' + fmt(run.reduce((t, c) => t + c.volL, 0), 0) + '</td></tr>';
+    }).join('');
+  return '<thead><tr>'
+    + '<th>Circuit</th><th>From</th>'
+    + '<th class="n">Loads</th><th class="n">kW</th><th class="n">Flow</th>'
+    + '<th>Index<i>worst terminal</i></th>'
+    + '<th class="n">Pipe kPa<i>index, straight</i></th>'
+    + '<th class="n">Fittings kPa<i>index</i></th>'
+    + '<th class="n">Valves kPa<i>index, placed</i></th>'
+    + '<th class="n">Terminal kPa<i>coil or vessel</i></th>'
+    + '<th class="n">Circuit kPa<i>index total</i></th>'
+    + '<th class="n">Pump duty<i>flow @ head</i></th>'
+    + '<th class="n">Route m<i>one way</i></th>'
+    + '<th class="n">Pipe m<i>all legs</i></th>'
+    + '<th class="n">Pipe L</th>'
+    + '<th class="n">Units L<i>terminals, vessels</i></th>'
+    + '<th class="n">Water L<i>circuit total</i></th></tr></thead>'
+    + '<tbody>' + (body || '<tr><td colspan="17">No circuits yet &mdash; nothing is connected back to plant.</td></tr>')
+    + shared + '</tbody>';
+}
+
+/* Each circuit's index run, hop by hop, so its figure can be followed. */
+function circuitChainsHtml(cs, report) {
+  return cs.filter(c => c.index).map(c => {
+    const i = c.index;
+    const hop = sg => report
+      ? esc(sg.ref) + (sg.pipe ? ' ' + sg.pipe.nom : '') + ' ' + fmt(sg.dropKpa, 2) + ' kPa'
+      : '<span class="hop" data-seg="' + sg.id + '"><b>' + esc(sg.ref) + '</b> '
+        + (sg.pipe ? sg.pipe.nom + ' ' : '') + fmt(sg.dropKpa, 2) + ' kPa</span>';
+    const arw = report ? ' \u2192 ' : '<span class="arw">&rarr;</span>';
+    const end = i.coil > 0
+      ? arw + (report ? esc(i.node.name) + ' ' + fmt(i.coil, 2) + ' kPa'
+          : '<span class="hop coil"><b>' + esc(i.node.name) + '</b> ' + (i.endsAtVessel ? 'through' : 'coil')
+            + ' ' + fmt(i.coil, 2) + ' kPa</span>') : '';
+    const tot = report ? ' = <strong>' + fmt(c.kpa, 2) + ' kPa</strong>'
+      : '<span class="arw">=</span><span class="hop tot">' + fmt(c.kpa, 2) + ' kPa</span>';
+    return report
+      ? '<p><strong>' + esc(circuitLabel(c)) + '</strong> \u2014 ' + i.chain.map(hop).join(arw) + end + tot
+        + '. Pump duty ' + circuitDuty(c) + '.</p>'
+      : '<h4>' + esc(circuitLabel(c)) + ' &mdash; index ' + esc(i.node.name) + '</h4>'
+        + '<div class="chain">' + i.chain.map(hop).join(arw) + end + tot + '</div>';
+  }).join(report ? '' : '<div style="height:10px"></div>');
+}
+
+function renderCircuitSchedule() {
+  el('schedTakeoff').style.display = 'none';
+  const cs = S.circuits || [];
+  el('schedTable').innerHTML = circuitTableHtml(cs, false);
+  const named = cs.filter(c => c.name).length;
+  el('schedNote').innerHTML = cs.length + ' circuit' + (cs.length === 1 ? '' : 's')
+    + (cs.length ? ' &middot; ' + named + ' named' : '')
+    + '<br><span style="font-size:11px">A circuit is a main leaving the plant, a header or a heat '
+    + 'exchanger, and everything it feeds. Click a row to pick it on the drawing; name it on its main '
+    + 'in the run inspector. Index figures are pipe and fittings both legs, valves placed, and the '
+    + 'terminal at the end.</span>';
+  const box = el('schedIndex');
+  const chains = circuitChainsHtml(cs, false);
+  box.style.display = chains ? 'block' : 'none';
+  box.innerHTML = chains;
+  box.querySelectorAll('.hop[data-seg]').forEach(h => {
+    h.style.cursor = 'pointer';
+    h.addEventListener('click', () => { select('seg', parseInt(h.dataset.seg)); el('drawer').classList.remove('on'); });
+  });
+  el('schedTable').querySelectorAll('tr[data-circ]').forEach(tr => {
+    tr.addEventListener('click', () => {
+      el('drawer').classList.remove('on');
+      selectCircuit(parseInt(tr.dataset.circ, 10));
+    });
+  });
+}
+function openCircuits() {
+  if (V3.on) close3D();
+  schedTab = 'circ';
+  el('drawer').classList.add('on');
+  renderSchedule();
 }
 
 /* The index run written out hop by hop, so the pump head can be read off the
@@ -9592,6 +9961,8 @@ function buildTraceReportHtml(plan) {
     + '.rpt th{background:#1c1f26;color:#fbfaf7;text-align:left;padding:5px 6px;font-size:7.4pt;font-weight:600}'
     + '.rpt th.n,.rpt td.n{text-align:right}'
     + '.rpt td{padding:4px 6px;border-bottom:1px solid #d9d5cc}'
+    + '.rpt th i{display:block;font-style:normal;font-weight:400;opacity:.7;font-size:6.6pt}'
+    + '.dim{color:#5c6069;font-size:7pt}'
     + '.rpt tr:nth-child(even) td{background:#f1efe9}'
     + '.rpt .sub td{border-top:2px solid #1c1f26;font-weight:700;background:#ece8df!important}'
     + '.rpt tr.idx td{background:#f8eed4!important}'
@@ -9716,7 +10087,15 @@ function buildTraceReportHtml(plan) {
         + '</td><td class="n"></td><td class="n">' + fmt(vKpa, 2) + '</td></tr>'
         + '</tbody></table>'
       : '<p>No valves placed yet. Elbows and tees are on the fittings sheet above.</p>')
-    + '<h2>8. Index run</h2>'
+    + '<h2>8. Circuits and index runs</h2>'
+    + ((S.circuits || []).length
+      ? '<p>Each main leaving the plant, a header or a heat exchanger is a circuit, with its own index '
+        + 'run, losses, pump duty and water content. Index kPa is pipe and fittings on both legs, valves '
+        + 'placed and the terminal at the end.</p>'
+        + '<table class="rpt">' + circuitTableHtml(S.circuits, true) + '</table>'
+        + circuitChainsHtml(S.circuits, true)
+        + '<h3 style="font-size:10pt;margin:12px 0 4px">By pump group</h3>'
+      : '')
     + idxHtml
     + '<h2>9. Static head and cold fill</h2>'
     + pressureReportHtml()
@@ -9879,6 +10258,8 @@ function buildSizerProject() {
            end from a topology that no longer shows the separation. */
         hydraulicGroup: sg.hgroup === null || sg.hgroup === undefined ? 0 : sg.hgroup,
         groupLabel: (groupOf(sg.hgroup) || {}).label || 'Primary',
+        // which circuit off the plant this run is part of, by the name given on its main
+        traceCircuit: (c0 => c0 ? circuitLabel(c0) : '')(circuitOf(sg)),
         // what was placed on this run, so the sizer can show it and a P&ID
         // export has the valves rather than only their pressure effect
         traceValves: segItems(sg.id).map(it => ({
@@ -10125,6 +10506,25 @@ function buildSizerProject() {
         endsAtVessel: !!r.endsAtVessel,
         runs: r.chain.map(s => s.ref),
         flowLps: +groupFlow(r.group).toFixed(3),
+      })),
+      /* One entry per main off the plant, header or exchanger — its own
+         index, losses, pump duty and water. Reporting only: the sizer works
+         its own figures out from the circuits. */
+      circuits: (S.circuits || []).map(c => ({
+        name: c.name, ref: c.ref, from: c.from, group: c.group, standby: c.standby,
+        loads: c.loads, kw: +c.kw.toFixed(2), flowLps: +c.lps.toFixed(3),
+        indexTerminal: c.index ? (c.index.node.name || '') : '',
+        indexKpa: +c.kpa.toFixed(2),
+        pipeKpa: c.index ? +c.index.pipeKpa.toFixed(2) : 0,
+        fittingsKpa: c.index ? +c.index.fitKpa.toFixed(2) : 0,
+        valvesKpa: c.index ? +(c.index.valveKpa + c.index.otherKpa).toFixed(2) : 0,
+        terminalKpa: c.index ? +c.index.coil.toFixed(2) : 0,
+        headM: +c.headM.toFixed(2),
+        indexRuns: c.index ? c.index.chain.map(x => x.ref) : [],
+        runs: c.members.map(x => x.ref),
+        routeM: +c.routeM.toFixed(1), pipeM: +c.pipeM.toFixed(1),
+        waterL: { pipe: +c.pipeL.toFixed(1), terminals: +c.termL.toFixed(1), vessels: +c.vesselL.toFixed(1),
+                  total: +c.volL.toFixed(1), loadsWithout: c.noWater },
       })),
       separators: S.nodes.filter(isSeparator).map(n => {
         const s = n.type === 'llh' ? (n.shell || llhShell(n)) : null;
@@ -10427,7 +10827,7 @@ const NODE_DERIVED = ['feedSeg', 'feedSegCool', 'reached', 'flowLps', 'sharedLps
 const SEG_DERIVED = ['up', 'down', 'parentSeg', 'depth', 'orphan', 'kw', 'lps', 'nCons', 'runM',
   'lenM', 'pipe', 'hydM', 'fit', 'fitPa', 'nFit', 'straightKpa', 'fitKpa', 'valveKpa', 'nValves',
   'dropKpa', 'equivPct', 'coilKpa', 'totalKpa', 'isIndex', 'spine', 'sizeLps', 'hgroup',
-  'mergeInto', 'mergeFrom'];
+  'mergeInto', 'mergeFrom', 'circuit'];
 
 function projectBundle(withImg) {
   const out = JSON.parse(JSON.stringify({
@@ -11459,6 +11859,13 @@ const HELP = [
       + 'image, or drop the file on the board. If it arrives sideways or a scan is off square, <b>Rotate</b> by '
       + 'the zoom controls (<kbd>R</kbd>, or <kbd>[</kbd> and <kbd>]</kbd> for quarter turns) turns the sheet '
       + 'and everything traced on it together. The scale does not change.', done: () => !!S.img && !S.concept },
+    { id: 'circuits', t: 'I have several circuits off one plant \u2014 name them and see each one\u2019s losses', b: 'Every main '
+      + 'leaving the plant (or a header or heat exchanger) is a circuit. Click the main and type a <b>Circuit name</b> '
+      + 'at the top of the run inspector; the name sits on the main on the drawing. Any run shows its circuit there: '
+      + 'its index terminal, pipe, fittings, valves and terminal kPa, the circuit total, the pump duty and the water. '
+      + '<b>Schedule \u2192 Circuits</b> (or the Circuits cell in the status strip) lists every circuit side by side, '
+      + 'with each index run hop by hop; click a row to pick the whole circuit. The same table is in the PDF and '
+      + 'goes to the sizer.' },
     { id: 'newsheet', t: 'I have a new revision of the drawing \u2014 keep the trace', tool: ['align', 'calib'], b: '<b>Change '
       + 'drawing</b> swaps the sheet and keeps everything traced. If the new sheet is a different paper size, '
       + 'cropped differently or the plan has moved on the page, <b>Align</b> (&#8982; by the zoom): click two '
@@ -13289,6 +13696,8 @@ el('hgtIn').addEventListener('keydown', ev => ev.stopPropagation());
 
 el('zRot').addEventListener('click', rotateDialog);
 el('zAlign').addEventListener('click', () => startAlign());
+// the strip is rebuilt on every render, so its one clickable cell is handled here
+el('status').addEventListener('click', ev => { if (ev.target.closest('#stCirc')) openCircuits(); });
 el('zIn').addEventListener('click', () => setZoom(zoom * 1.2));
 el('zOut').addEventListener('click', () => setZoom(zoom / 1.2));
 el('zFit').addEventListener('click', zoomFit);
