@@ -348,6 +348,22 @@ still the worst circuit in the group, which is what one shared pump has to
 make — the Circuits table says so in a row of its own, so the duty is there
 whichever way the circuits are pumped.
 
+**The Pipework schedule is grouped by circuit** (`scheduleByCircuit()`,
+screen and PDF alike): a heading row per circuit (`circuitHeadLine()` — name,
+from, loads, flow, index split, pump duty, water; a click picks the circuit),
+its runs in the order met from its main, and a circuit total; runs on no
+circuit last. Circuits are ordered as the pipework is met from the plant, so
+a header's secondaries follow the main that feeds it. A main that only
+reaches a header reads *feeds LLH 1 (n loads beyond)* rather than 0 loads,
+and each secondary says which circuit feeds its header (`fedBy`) —
+naming the main to a header after the plant beyond it is natural, and the
+two have to read as linked even though each has its own pump.
+
+**Text boxes in the inspector write as the keys go in**, like the installed
+length. A name typed and then a click straight on to the next run closed
+the inspector before `change` fired, and the name was lost — the first
+report of circuits not showing their names was this.
+
 Where it shows: every run's inspector, **Schedule → Circuits** (a row picks
 the whole circuit with `selectCircuit()`; each index hop by hop below), the
 **Circuits** cell in the status strip, section 8 of the PDF, and the export —

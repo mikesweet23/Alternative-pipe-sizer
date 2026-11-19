@@ -44,6 +44,18 @@ ok(/id: 'circuits', t: 'I have several circuits off one plant/.test(trace), 'the
 ok(/Several mains off one plant are several circuits/.test(claude) && /tests\/trace-circuits-test\.mjs/.test(claude),
   'CLAUDE.md describes it');
 
+/* ---- the schedule grouped by circuit, and names that stick ---- */
+ok(/function scheduleByCircuit\(rows\)/.test(trace) && /const groups = scheduleByCircuit\(rows\);/.test(trace)
+  && /const pipeBody = scheduleByCircuit\(pipeRows\)/.test(trace), 'the Pipework schedule, screen and PDF, is grouped by circuit');
+ok(/function circuitHeadLine\(c\)/.test(trace) && /tr\.circhead\[data-circ\]/.test(trace), 'each circuit has a heading that picks it');
+ok(/\.sort\(\(a, b\) => \(order\.get\(a\.headId\) \|\| 0\) - \(order\.get\(b\.headId\) \|\| 0\)\);/.test(trace),
+  'circuits in the order the pipework is met, secondaries after their feeder');
+ok(/if \(feeder\) c\.fedBy = circuitLabel\(feeder\);/.test(trace) && /function circuitLoadsText\(c\)/.test(trace),
+  'a secondary says what feeds it, a main to a header says what it feeds');
+ok(/obj\[inp\.getAttribute\('data-f'\)\] = inp\.value;\s*scheduleRender\(\);/.test(trace),
+  'a name is written as it is typed, so clicking away cannot lose it');
+ok(/The Pipework schedule is grouped by circuit/.test(claude), 'CLAUDE.md describes the grouping');
+
 /* ---- the sizer's view ---- */
 ok(/traceCircuitName: \(c0 => c0 && c0\.headId === sg\.id \? c0\.name : ''\)/.test(trace)
   && /traceCircuitUnitsL:/.test(trace), 'Trace sends the name and the units litres on the main');
