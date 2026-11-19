@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const trace = readFileSync(join(root, 'trace.html'), 'utf8');
 const claude = readFileSync(join(root, 'CLAUDE.md'), 'utf8');
+const sizer = readFileSync(join(root, 'sizer.html'), 'utf8');
 
 let failed = 0;
 function ok(cond, msg) {
@@ -42,6 +43,20 @@ ok(/traceCircuit: \(c0 =>/.test(trace) && /circuits: \(S\.circuits \|\| \[\]\)\.
 ok(/id: 'circuits', t: 'I have several circuits off one plant/.test(trace), 'there is a help tip');
 ok(/Several mains off one plant are several circuits/.test(claude) && /tests\/trace-circuits-test\.mjs/.test(claude),
   'CLAUDE.md describes it');
+
+/* ---- the sizer's view ---- */
+ok(/traceCircuitName: \(c0 => c0 && c0\.headId === sg\.id \? c0\.name : ''\)/.test(trace)
+  && /traceCircuitUnitsL:/.test(trace), 'Trace sends the name and the units litres on the main');
+ok(/id="circuitsView"/.test(sizer) && /renderCircuitsView\(\);\s*renderPumpPanel\(\);/.test(sizer),
+  'the sizer has a Circuits card, drawn on every render');
+ok(/return !p \|\| isSeparatorCircuit\(p\) \|\| circuitGroup\(p\) !== circuitGroup\(c\);/.test(sizer),
+  'the sizer finds the circuits from its own tree');
+ok(/straight \+= r\.straightLoss_kPa \|\| 0; fit \+= r\.fittingsLoss_kPa \|\| 0; load \+= r\.consumerLoad \|\| 0;/.test(sizer),
+  'on its own figures');
+ok(/return t\(head\.circuitName\) \|\| t\(head\.traceCircuitName\);/.test(sizer), 'a name typed in the sizer wins');
+ok(/function goToCircuit\(id\)/.test(sizer) && /class="circ-pill"/.test(sizer), 'the name shows on the main, and the card jumps to it');
+ok(/\+ circuitsReportHtml\(\)/.test(sizer) && /<h2>6a\. Circuits<\/h2>/.test(sizer), 'the sizer report has the circuits');
+ok(/The sizer has the same view/.test(claude), 'CLAUDE.md describes the sizer side');
 
 if (failed) { console.error('\n' + failed + ' failed'); process.exit(1); }
 console.log('\nall passed');

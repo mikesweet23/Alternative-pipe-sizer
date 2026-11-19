@@ -10260,6 +10260,10 @@ function buildSizerProject() {
         groupLabel: (groupOf(sg.hgroup) || {}).label || 'Primary',
         // which circuit off the plant this run is part of, by the name given on its main
         traceCircuit: (c0 => c0 ? circuitLabel(c0) : '')(circuitOf(sg)),
+        // the name alone, on the circuit's main, which the sizer reads as its circuit name
+        traceCircuitName: (c0 => c0 && c0.headId === sg.id ? c0.name : '')(circuitOf(sg)),
+        // and on the main only, the terminal units and vessels it holds, which the sizer does not count
+        traceCircuitUnitsL: (c0 => c0 && c0.headId === sg.id ? +(c0.termL + c0.vesselL).toFixed(1) : null)(circuitOf(sg)),
         // what was placed on this run, so the sizer can show it and a P&ID
         // export has the valves rather than only their pressure effect
         traceValves: segItems(sg.id).map(it => ({

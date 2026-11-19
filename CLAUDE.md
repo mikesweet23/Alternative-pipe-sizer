@@ -351,9 +351,25 @@ whichever way the circuits are pumped.
 Where it shows: every run's inspector, **Schedule → Circuits** (a row picks
 the whole circuit with `selectCircuit()`; each index hop by hop below), the
 **Circuits** cell in the status strip, section 8 of the PDF, and the export —
-`traceCircuit` on every sizer circuit and `traceMeta.circuits`, which the
-sizer carries through untouched. `tests/trace-circuits-test.mjs` checks the
-pieces.
+`traceCircuit` on every sizer circuit and `traceMeta.circuits`.
+
+**The sizer has the same view**, the *Circuits* card above the pump panel
+(`renderCircuitsView()`, `circuitSummaries()`, and section 6a of its
+report). It works the circuits out from its **own tree** — `isCircuitHead()`
+is a non-separator whose parent is missing, a separator or in another
+group; `circuitMembers()` walks down within the group — and on its **own
+figures**: each index is `straightLoss_kPa + fittingsLoss_kPa` up the
+chain, the `consumerLoad` at the end and `separatorKpa()` for a header, so a
+hand-built sizer project gets it too and a re-sized pipe moves it. The name
+is `circuitName` typed in the card, else `traceCircuitName` from Trace (set
+on the main only); a green pill shows it on the main's row in the list, and
+the arrow unfolds the list and scrolls to that main (`goToCircuit()`). Pipe
+water is the sizer's `water_l_total`; terminal units and vessels come from
+`traceCircuitUnitsL` on the main, because the sizer does not count them per
+circuit. Duty is the circuit index plus the safety factor; plant-side
+resistances and static head stay in the pump panel and are not added. On
+the three-circuit test job the two tools agree to the penny on every
+circuit. `tests/trace-circuits-test.mjs` checks the pieces in both files.
 
 ### Buffer volume
 

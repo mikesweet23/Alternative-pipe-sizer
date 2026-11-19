@@ -841,6 +841,22 @@
     background: rgba(122,209,228,0.07);
   }
 
+  /* ---- circuits: names, the card, and the row the card jumps to ---- */
+  .circ-pill {
+    display: inline-block; margin: 3px 0 0 18px; padding: 1px 8px; border-radius: 9px;
+    background: #0b7a4b; color: #fff; font-size: 10.5px; font-weight: 700; white-space: nowrap;
+  }
+  #circuitsView input.circ-name { min-width: 170px; font-weight: 700; }
+  #circuitsView .circ-go {
+    display: inline-block; margin-top: 4px; background: none; border: 1px solid var(--line);
+    border-radius: 3px; padding: 2px 7px; font-size: 11px; color: var(--brand-blue-deep); cursor: pointer;
+  }
+  #circuitsView .circ-go:hover { border-color: var(--brand-blue-deep); }
+  #circuitsView .circ-sub { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  #circuitsView .circ-chain { font-size: 12px; line-height: 1.6; color: var(--ink-soft); padding: 4px 0; border-top: 1px solid var(--line); }
+  #circuitsView .circ-chain b { color: var(--ink); }
+  .circuits-table tr.crow-flash td { background: rgba(11,122,75,0.18) !important; transition: background .3s; }
+
   .circuits-table tr.is-index-run td.recommended-cell {
     background: var(--brand-blue);
   }
@@ -1774,6 +1790,14 @@
 
       <div id="thermalSummary" style="margin-top:18px"></div>
     </div>
+  </div>
+
+  <!-- Circuits: each main off the plant, a header or a heat exchanger, on its own -->
+  <div class="card" id="circuitsView" style="margin-bottom:24px;display:none">
+    <div class="card-title">
+      Circuits <span class="hint">each main off the plant, a header or a heat exchanger, with its own index and pump duty</span>
+    </div>
+    <div id="circuitsViewBody"></div>
   </div>
 
   <!-- Pump Sizing Panel -->
@@ -5569,6 +5593,7 @@ function renderCircuits() {
     if (isCollapsedAncestor(c)) return;   // folded away under a collapsed main
     const result = calculateCircuit(c);
     const tr = document.createElement('tr');
+    tr.id = 'crow-' + c.id;
     tr.classList.add('t-' + circuitType(c));
     if (c.isIndex) tr.classList.add('is-index-run');
     if (c.isLLH)   tr.classList.add('is-llh-row');
@@ -5728,7 +5753,10 @@ function renderCircuits() {
             : '<span style="display:inline-block;width:16px;flex-shrink:0"></span>')
       +   '<input type="text" value="' + c.ref.replace(/"/g,'&quot;') + '" onchange="updateCircuitField(' + c.id + ',\'ref\',this.value)">'
       +   (c.collapsed ? '<span class="fold-count" title="branches hidden">+' + descendantCount(c) + '</span>' : '')
-      + '</div></td>'
+      + '</div>'
+      +   (isCircuitHead(c) && circuitNameOf(c)
+            ? '<div class="circ-pill" title="Circuit name \u2014 edit it in the Circuits card">' + escHtml(circuitNameOf(c)) + '</div>' : '')
+      + '</td>'
       + '<td data-label="Mode"><select class="mode-select" onchange="updateCircuitField(' + c.id + ',\'mode\',this.value)">'
       + '<option value="fromKw"' + (c.mode==='fromKw'?' selected':'') + '>Size from kW</option>'
       + '<option value="fromFlow"' + (c.mode==='fromFlow'?' selected':'') + '>Size from l/s</option>'
@@ -5870,8 +5898,225 @@ function renderCircuits() {
   document.getElementById('w-design').textContent    = designKg.toFixed(0);
   document.getElementById('w-upliftPct').textContent = upliftPct;
 
+  renderCircuitsView();
   renderPumpPanel();
   saveToLocalStorage();
+}
+
+/* ============ CIRCUITS ============
+   A circuit is a main leaving the plant, a header or a heat exchanger, and
+   everything below it in the same hydraulic group — the same thing Pipe
+   Trace calls a circuit. Worked out here from the sizer's own tree, so a
+   project built by hand gets it too, and on the sizer's own figures: the
+   pipe each circuit was sized to, its counted or percentage fittings, and
+   the consumer load at its terminals. Pipe Trace's name for it arrives as
+   `traceCircuitName`; one typed here is `circuitName` and wins.
+
+   Reporting only. The index boxes, the pump panel and the pump groups are
+   untouched; the worst circuit in a group is that group's index run, which
+   is what one shared pump has to make. */
+function isCircuitHead(c) {
+  if (!c || isSeparatorCircuit(c)) return false;
+  const p = (c.parentId === null || c.parentId === undefined) ? null : circuitById(c.parentId);
+  return !p || isSeparatorCircuit(p) || circuitGroup(p) !== circuitGroup(c);
+}
+function circuitNameOf(head) {
+  const t = v => (typeof v === 'string' && v.trim()) ? v.trim() : '';
+  return t(head.circuitName) || t(head.traceCircuitName);
+}
+function circuitMembers(head) {
+  const out = [], seen = new Set(), g = circuitGroup(head);
+  const walk = c => {
+    if (seen.has(c.id)) return;
+    seen.add(c.id); out.push(c);
+    childrenOf(c.id).forEach(k => { if (circuitGroup(k) === g) walk(k); });
+  };
+  walk(head);
+  return out;
+}
+function circuitSummaries() {
+  const rho = parseFloat(document.getElementById('rho').value) || 999;
+  const sf = parseFloat(document.getElementById('safetyFactor').value) || 0;
+  const tm = (passThrough && passThrough.traceMeta && Array.isArray(passThrough.traceMeta.circuits))
+    ? passThrough.traceMeta.circuits : [];
+  const groups = hydraulicGroups();
+  return circuits.filter(isCircuitHead).map(head => {
+    const members = circuitMembers(head);
+    const ids = new Set(members.map(m => m.id));
+    const res = new Map(members.map(m => [m.id, calculateCircuit(m)]));
+    const ends = members.filter(m => isConsumer(m) || isFuture(m) || isSeparatorCircuit(m)
+      || !childrenOf(m.id).some(k => ids.has(k.id)));
+    let idx = null, incomplete = 0;
+    ends.forEach(t => {
+      let straight = 0, fit = 0, load = 0, ok = true;
+      const chain = [];
+      let n = t; const seen = new Set();
+      while (n && ids.has(n.id) && !seen.has(n.id)) {
+        seen.add(n.id); chain.push(n);
+        const r = res.get(n.id);
+        if (!r || r.error || !r.recommended) ok = false;
+        else { straight += r.straightLoss_kPa || 0; fit += r.fittingsLoss_kPa || 0; load += r.consumerLoad || 0; }
+        n = (n.parentId === null || n.parentId === undefined) ? null : circuitById(n.parentId);
+      }
+      if (!ok) { incomplete++; return; }
+      const vessel = separatorKpa(t);
+      const total = straight + fit + load + vessel;
+      if (!idx || total > idx.total) idx = { end: t, chain: chain.reverse(), straight, fit, load, vessel, total };
+    });
+    const hr = res.get(head.id) || {};
+    const lps = hr.error ? 0 : (hr.vflow_ls || 0);
+    const kw = hr.error ? 0 : (hr.kw || 0);
+    let pipeL = 0, routeM = 0;
+    members.forEach(m => {
+      const r = res.get(m.id);
+      if (!r || r.error) return;
+      pipeL += (r.weights && r.weights.water_l_total) || 0;
+      routeM += parseFloat(m.length) || 0;
+    });
+    const unitsTyped = parseFloat(head.traceCircuitUnitsL);
+    const traced = isFinite(unitsTyped) ? null : (tm.find(x => x.ref === head.ref) || null);
+    const kpa = idx ? idx.total : 0;
+    const duty = kpa * (1 + sf / 100);
+    const g = groups.find(x => x.id === circuitGroup(head));
+    return {
+      head, members, ids, name: circuitNameOf(head), ref: head.ref,
+      group: circuitGroup(head), groupLabel: g ? g.label : 'Primary',
+      loads: members.filter(isConsumer).length, kw, lps, idx, incomplete, kpa, duty, sf,
+      mH: duty * 1000 / (rho * 9.81), routeM, pipeL,
+      unitsL: isFinite(unitsTyped) ? unitsTyped
+        : (traced && traced.waterL ? (traced.waterL.terminals || 0) + (traced.waterL.vessels || 0) : null),
+    };
+  });
+}
+function circuitLabelOf(c) { return c.name ? c.name + ' (' + c.ref + ')' : c.ref; }
+
+/* Click a row and the list above opens on that circuit's main, unfolded,
+   and flashes it — the sizer has no drawing to pick it on. */
+function goToCircuit(id) {
+  const c = circuitById(id);
+  if (!c) return;
+  let p = (c.parentId === null || c.parentId === undefined) ? null : circuitById(c.parentId);
+  const seen = new Set();
+  while (p && !seen.has(p.id)) { seen.add(p.id); p.collapsed = false; p = (p.parentId === null || p.parentId === undefined) ? null : circuitById(p.parentId); }
+  c.collapsed = false;
+  renderCircuits();
+  const tr = document.getElementById('crow-' + id);
+  if (!tr) return;
+  tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  tr.classList.add('crow-flash');
+  setTimeout(() => tr.classList.remove('crow-flash'), 1800);
+}
+function setCircuitName(id, v) {
+  const c = circuitById(id);
+  if (!c) return;
+  c.circuitName = String(v || '').trim();
+  renderCircuits();
+}
+
+function renderCircuitsView() {
+  const card = document.getElementById('circuitsView');
+  const box = document.getElementById('circuitsViewBody');
+  if (!card || !box) return;
+  const cs = circuitSummaries();
+  if (!cs.length) { card.style.display = 'none'; box.innerHTML = ''; return; }
+  card.style.display = '';
+  const sf = cs[0].sf;
+  const many = new Set(cs.map(c => c.group)).size > 1;
+  const f = (v, d) => (v || 0).toFixed(d);
+  const rows = cs.map(c => {
+    const i = c.idx;
+    return '<tr>'
+      + '<td><input type="text" class="circ-name" value="' + escHtml(c.name) + '" placeholder="Name this circuit"'
+      +   ' onchange="setCircuitName(' + c.head.id + ',this.value)">'
+      +   '<button type="button" class="circ-go" onclick="goToCircuit(' + c.head.id + ')" title="Show its main in the list">'
+      +   escHtml(c.ref) + ' &rarr;</button>'
+      +   (many ? '<div class="circ-sub">' + escHtml(c.groupLabel) + '</div>' : '') + '</td>'
+      + '<td class="derived-cell">' + c.loads + '</td>'
+      + '<td class="derived-cell">' + f(c.kw, 1) + '</td>'
+      + '<td class="derived-cell">' + f(c.lps, 2) + '</td>'
+      + '<td>' + (i ? escHtml(i.end.ref) : '<span style="color:var(--muted)">&mdash;</span>')
+      +   (c.incomplete ? '<div class="circ-sub" style="color:#b25a00">' + c.incomplete + ' path'
+            + (c.incomplete === 1 ? '' : 's') + ' not sized</div>' : '') + '</td>'
+      + '<td class="derived-cell">' + (i ? f(i.straight, 2) : '&mdash;') + '</td>'
+      + '<td class="derived-cell">' + (i ? f(i.fit, 2) : '&mdash;') + '</td>'
+      + '<td class="derived-cell">' + (i ? f(i.load + i.vessel, 2) : '&mdash;') + '</td>'
+      + '<td class="derived-cell" style="font-weight:800">' + f(c.kpa, 2) + '</td>'
+      + '<td class="derived-cell" style="font-weight:800;color:var(--brand-blue-deep)">' + f(c.duty, 1) + '</td>'
+      + '<td class="derived-cell">' + f(c.mH, 2) + '</td>'
+      + '<td class="derived-cell">' + f(c.routeM, 1) + '</td>'
+      + '<td class="derived-cell">' + f(c.pipeL, 0) + '</td>'
+      + '<td class="derived-cell">' + (c.unitsL === null ? '<span style="color:var(--muted)">&mdash;</span>' : f(c.unitsL, 0)) + '</td>'
+      + '</tr>';
+  }).join('');
+  /* Circuits off one plant may share its pump. If they do, it moves all of
+     them at the worst index among them — given once per group so the duty is
+     there whichever way the job is pumped. */
+  const byGroup = {};
+  cs.forEach(c => { (byGroup[c.group] = byGroup[c.group] || []).push(c); });
+  const shared = Object.keys(byGroup).map(k => byGroup[k]).filter(l => l.length > 1).map(l => {
+    const worst = l.reduce((a, c) => c.kpa > a.kpa ? c : a, l[0]);
+    return '<tr style="background:var(--off-white)"><td colspan="3" style="font-weight:700">One pump for '
+      + (many ? escHtml(l[0].groupLabel.toLowerCase()) : 'all of them') + '</td>'
+      + '<td class="derived-cell" style="font-weight:700">' + f(l.reduce((t, c) => t + c.lps, 0), 2) + '</td>'
+      + '<td colspan="4" style="font-size:12px;color:var(--muted)">index on ' + escHtml(circuitLabelOf(worst)) + '</td>'
+      + '<td class="derived-cell" style="font-weight:700">' + f(worst.kpa, 2) + '</td>'
+      + '<td class="derived-cell" style="font-weight:800;color:var(--brand-blue-deep)">' + f(worst.duty, 1) + '</td>'
+      + '<td class="derived-cell">' + f(worst.mH, 2) + '</td>'
+      + '<td class="derived-cell">' + f(l.reduce((t, c) => t + c.routeM, 0), 1) + '</td>'
+      + '<td class="derived-cell">' + f(l.reduce((t, c) => t + c.pipeL, 0), 0) + '</td><td></td></tr>';
+  }).join('');
+  const chains = cs.filter(c => c.idx).map(c =>
+    '<div class="circ-chain"><b>' + escHtml(circuitLabelOf(c)) + '</b> &mdash; '
+    + c.idx.chain.map(m => {
+        const r = calculateCircuit(m);
+        return escHtml(m.ref) + ' ' + (r.recommended ? r.recommended.nom + ' ' : '') + f(r.pipeLoss_kPa, 2) + ' kPa';
+      }).join(' &rarr; ')
+    + (c.idx.load > 0 ? ' &rarr; consumer ' + f(c.idx.load, 2) + ' kPa' : '')
+    + (c.idx.vessel > 0 ? ' &rarr; ' + escHtml(c.idx.end.ref) + ' ' + f(c.idx.vessel, 2) + ' kPa' : '')
+    + ' = <b>' + f(c.kpa, 2) + ' kPa</b></div>').join('');
+  box.innerHTML =
+      '<div style="font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:12px">'
+    + 'Each circuit\u2019s own index run, on the sizes selected above. Name a circuit here or in Pipe Trace; '
+    + 'the arrow takes you to its main in the list. Duty is the index plus the ' + sf + '% safety factor. '
+    + 'Plant-side resistances and static head are in the pump panel below and are not included here &mdash; '
+    + 'add them where a circuit\u2019s pump pushes through the plant.</div>'
+    + '<div style="overflow-x:auto"><table class="circuits-table" style="min-width:1100px"><thead><tr>'
+    + '<th>Circuit</th><th class="derived">Loads</th><th class="derived">kW</th><th class="derived">Flow l/s</th>'
+    + '<th>Index ends at</th><th class="derived">Straight kPa</th><th class="derived">Fittings kPa</th>'
+    + '<th class="derived">Terminal kPa</th><th class="derived">Circuit kPa</th>'
+    + '<th class="derived">Duty +' + sf + '% kPa</th><th class="derived">m head</th>'
+    + '<th class="derived">Length m, one way</th><th class="derived">Pipe water L</th><th class="derived">Units L</th>'
+    + '</tr></thead><tbody>' + rows + shared + '</tbody></table></div>'
+    + (chains ? '<div style="margin-top:14px">' + chains + '</div>' : '')
+    + '<div style="font-size:12px;color:var(--muted);line-height:1.6;margin-top:10px">'
+    + 'Terminal is the consumer load at the index end (coil and any control valve carried from Pipe Trace) '
+    + 'or the header\u2019s own resistance. Pipe water is the sizer\u2019s own; Units L, the terminal units '
+    + 'and vessels, comes from Pipe Trace where the circuit was traced.</div>';
+}
+
+/* The same table for the report, after the pump duty. */
+function circuitsReportHtml() {
+  const cs = circuitSummaries();
+  if (!cs.length) return '';
+  const f = (v, d) => (v || 0).toFixed(d);
+  return '<h2>6a. Circuits</h2>'
+    + '<p>Each main leaving the plant, a header or a heat exchanger, with its own index run on the sizes '
+    + 'selected. Duty is the index plus the ' + cs[0].sf + '% safety factor; plant-side resistances and '
+    + 'static head are not included. Where circuits share one pump, it moves their total flow at the '
+    + 'worst index among them.</p>'
+    + '<table class="rpt"><thead><tr><th>Circuit</th><th class="n">Loads</th><th class="n">kW</th>'
+    + '<th class="n">l/s</th><th>Index ends at</th><th class="n">Straight kPa</th><th class="n">Fittings kPa</th>'
+    + '<th class="n">Terminal kPa</th><th class="n">Circuit kPa</th><th class="n">Duty kPa</th>'
+    + '<th class="n">m head</th><th class="n">Pipe water L</th></tr></thead><tbody>'
+    + cs.map(c => '<tr><td>' + escHtml(circuitLabelOf(c)) + '</td><td class="n">' + c.loads + '</td>'
+      + '<td class="n">' + f(c.kw, 1) + '</td><td class="n">' + f(c.lps, 2) + '</td>'
+      + '<td>' + (c.idx ? escHtml(c.idx.end.ref) : '\u2014') + '</td>'
+      + '<td class="n">' + (c.idx ? f(c.idx.straight, 2) : '\u2014') + '</td>'
+      + '<td class="n">' + (c.idx ? f(c.idx.fit, 2) : '\u2014') + '</td>'
+      + '<td class="n">' + (c.idx ? f(c.idx.load + c.idx.vessel, 2) : '\u2014') + '</td>'
+      + '<td class="n">' + f(c.kpa, 2) + '</td><td class="n">' + f(c.duty, 1) + '</td>'
+      + '<td class="n">' + f(c.mH, 2) + '</td><td class="n">' + f(c.pipeL, 0) + '</td></tr>').join('')
+    + '</tbody></table>';
 }
 
 /* ============ ONE PUMP PER HYDRAULIC CIRCUIT ============
@@ -6815,6 +7060,7 @@ function exportPDFReport() {
     + capacitySection
     + plantSection
     + pumpSection
+    + circuitsReportHtml()
     + '<h2>7. System Volume &amp; Weight</h2><p>Total system fluid volume <strong>'+totalWaterL.toFixed(0)+' litres</strong> (for expansion vessel sizing and dosing). Estimated installed pipework weight, incl. '+upliftPct+'% allowance for lagging, cladding and fittings, is <strong>'+designKg.toFixed(0)+' kg</strong> (for structural support assessment).</p>'
     + '<table class="rpt"><tbody><tr><td>Pipe metalwork (dry)</td><td class="n">'+totalPipeKg.toFixed(0)+' kg</td></tr><tr><td>Fluid contents</td><td class="n">'+totalWaterKg.toFixed(0)+' kg ('+totalWaterL.toFixed(0)+' L)</td></tr><tr><td>Filled pipework</td><td class="n">'+filledKg.toFixed(0)+' kg</td></tr><tr class="sub"><td>Design weight (incl. '+upliftPct+'% uplift)</td><td class="n">'+designKg.toFixed(0)+' kg</td></tr></tbody></table>'
     + pressurisationReportHtml()
