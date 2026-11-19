@@ -1456,6 +1456,33 @@ the drawing, the scale, the traced geometry and any tape measures
  count of duplicate ids and of Fed-froms naming a circuit not in the file.
  Switching hydraulic group also rebuilds the Consumers panel — it did not,
  so the toggles still drove the previous circuit's nodes.
+- **Change drawing keeps the trace, and Align lays it on the new sheet.**
+  Loading a drawing over a drawing (`loadDrawingFile()` → `showDrawing({
+  replaced })`) keeps the take-off and the scale and asks, in
+  `scaleRecheck()`: same scale and place, **align**, or set the scale again.
+  Align (`startAlign()`, also the ⌖ button by the zoom) takes two points on
+  the trace (`alignSnap()` — a component, a run point, a tape or calibration
+  end) and the same two on the sheet, and `alignTransform()` makes the move,
+  turn and scale about their midpoints. `mapTakeoff(T, s)` applies it to
+  every point the take-off holds — the same function the sheet rotation now
+  goes through — and `S.pxPerM` is multiplied by `s`, so **every traced
+  length is unchanged**: the take-off is re-expressed in the new sheet's
+  pixels, not re-measured. Anything held in metres (component sizes, a traced
+  header's `path`, typed lengths, heights) is turned and never scaled.
+  *Keep it square* drops the turn (default under 1.5°, so two clicks a pixel
+  off cannot set every run off the 90° lock); *Keep the scale* drops the
+  factor. It is one undo step, and **that snapshot carries the scale**
+  (`pushUndo(label, true)`) — every other snapshot leaves it out, or
+  stepping back past an unrelated edit would undo a calibration. Setting
+  the scale again over a trace says it will change every length.
+  **A concept moving on to a drawing** does not keep the concept grid's
+  24 px/m: `showDrawing({ fromConcept, conceptPx })` clears the scale and
+  holds `pendingConceptPx`, the scale gate says the take-off is coming, and
+  once the scale is set `layConceptOnDrawing()` scales it about the sheet
+  corner so a metre is a metre, then offers Align with the scale kept. The
+  concept's undo history is in concept coordinates, so it is cleared.
+  Typed `lengthOverride` still wins until it is cleared on the run.
+  `tests/change-drawing-align-test.mjs` checks the pieces.
 - **Pipe Trace will not let anything be placed before the scale is set.** A
   drawing that arrives without one opens a modal that cannot be dismissed, and
   the plant, load and trace tools stay disabled. Swapping the sheet behind an
@@ -1769,6 +1796,20 @@ must be the one used.
     installed and Scale in the status strip must not move by a millimetre —
     rotation cannot change a distance. Tape measures turn with it. `Ctrl`+`Z`
     puts both the sheet and the take-off back together.
+
+### If you touched Change drawing or Align
+
+`node tests/change-drawing-align-test.mjs`. Then: trace a plant, a load and
+a run with a corner at a known scale; note Route on plan. Change drawing to
+the same plan exported at a bigger paper size and moved on the page, choose
+**Align**, click the plant and the load on the trace, then the same two on
+the new sheet. The trace sits on the pipework, Route on plan has not moved
+by a millimetre, the scale has changed by the paper ratio and the
+calibration line has come across with it. One `Ctrl`+`Z` puts the trace and
+the old scale back together. Then Concept: a plant and a load with a typed
+length, Open drawing, set the scale; the concept is laid on at true size
+(a 1.6 m unit is 1.6 m), the typed length is unchanged, and Align arms with
+*Keep the scale* ticked.
 
 ### If you touched connections, pairs, tape or sharing
 

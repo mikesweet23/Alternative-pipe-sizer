@@ -416,6 +416,7 @@
     border-radius: 3px; padding: 3px 5px; font-family: 'Azeret Mono', monospace; font-size: 11.5px;
   }
   .hint.tape .hgt { display: none; }
+  .hint.align .hgt { display: none; }
   /* label the point just placed as the high point, without leaving the trace */
   .hint .hhp {
     display: none; background: rgba(255,255,255,.10); color: #dfe4ea; border: 1px solid #3f4756;
@@ -834,6 +835,7 @@
 
       <div class="zoomer" id="zoomer" style="display:none">
         <button id="zRot" title="Rotate the drawing &mdash; R, or [ and ] for 90&deg; steps">&#8635;</button>
+        <button id="zAlign" title="Align the trace to this drawing &mdash; two points on the trace, the same two on the sheet">&#8982;</button>
         <button id="zOut" title="Zoom out">&minus;</button>
         <div class="lvl" id="zLvl">100%</div>
         <button id="zIn" title="Zoom in">+</button>
@@ -1690,17 +1692,21 @@ let undoSuspended = false;
    sheet back would leave the trace off the pipework. It is a number, not the
    image — the drawing itself is still deliberately left out. The token says
    which sheet it was, so a snapshot taken before a different drawing was
-   loaded cannot turn the new one. */
-function undoSnapshot() {
+   loaded cannot turn the new one.
+   The scale goes in only when the step itself changes it (`withScale`) —
+   aligning the take-off to a new sheet. Every other snapshot leaves it out,
+   or stepping back past an unrelated edit would quietly undo a calibration. */
+function undoSnapshot(withScale) {
   return JSON.stringify({
     nodes: S.nodes, segs: S.segs, items: S.items, measures: S.measures, nextId: S.nextId,
     imgRot: imgRot(), imgTok: S.img ? S.img.tok : null,
+    scale: withScale ? { pxPerM: S.pxPerM, calib: S.calib } : undefined,
   });
 }
 /* Call before the change, with a few words for the button's tooltip. */
-function pushUndo(label) {
+function pushUndo(label, withScale) {
   if (undoSuspended) return;
-  undoStack.push({ label: label || 'change', state: undoSnapshot() });
+  undoStack.push({ label: label || 'change', state: undoSnapshot(withScale) });
   if (undoStack.length > UNDO_MAX) undoStack.shift();
   refreshUndoBtn();
 }
@@ -1722,6 +1728,12 @@ function undo() {
   catch (e) { refreshUndoBtn(); toast('That undo step could not be read and was dropped'); return; }
   S.nodes = d.nodes; S.segs = d.segs; S.items = d.items || [];
   S.measures = d.measures || []; S.nextId = d.nextId;
+  // an alignment moved the take-off and the scale together; both go back
+  if (d.scale) {
+    S.pxPerM = parseFloat(d.scale.pxPerM) || 0;
+    S.calib = d.scale.calib || null;
+    buildRail();
+  }
   draft = null; sel = null;
   closeInspector();
   refreshUndoBtn();
@@ -5226,6 +5238,7 @@ function renderInner() {
     updateHintAngle(pts);
   }
   (S.measures || []).forEach(m => drawMeasure(g, m, k, false));
+  if (draft && draft.kind === 'align') drawAlign(g, k);
   if (draft && draft.kind === 'calib' && draft.pts.length === 1 && hoverPt) {
     const a = draft.pts[0];
     g.appendChild(mk('line', { x1: a.x, y1: a.y, x2: hoverPt.x, y2: hoverPt.y,
@@ -5875,6 +5888,7 @@ function buildRail() {
 }
 
 const HINTS = {
+  align: 'Align',            // the words come from alignHint(), step by step
   calib: 'Click two points a known distance apart, then type the real dimension.',
   source: 'Click where the plant sits. Drag empty paper to pan.',
   consumer: 'Click where the load sits. Drag empty paper to pan. On the load, tick 4-pipe for heating and cooling.',
@@ -5910,10 +5924,11 @@ function syncHint() {
   if (!h) return;
   const more = el('hintMore');
   if (!HINTS[tool]) {
-    h.classList.remove('on', 'min', 'trace', 'tape', 'drawing');
+    h.classList.remove('on', 'min', 'trace', 'tape', 'drawing', 'align');
     return;
   }
-  const text = hintLong && HINTS_MORE[tool] ? HINTS[tool] + ' ' + HINTS_MORE[tool] : HINTS[tool];
+  const base = tool === 'align' ? alignHint() : HINTS[tool];
+  const text = hintLong && HINTS_MORE[tool] ? base + ' ' + HINTS_MORE[tool] : base;
   el('hintTxt').innerHTML = text;
   if (more) {
     more.hidden = !HINTS_MORE[tool];
@@ -5923,6 +5938,7 @@ function syncHint() {
   h.classList.toggle('min', hintMin);
   h.classList.toggle('trace', tool === 'trace' || tool === 'tape');
   h.classList.toggle('tape', tool === 'tape');
+  h.classList.toggle('align', tool === 'align');
   h.classList.toggle('drawing', !!(draft && (draft.kind === 'trace' || draft.kind === 'tape') && draft.pts.length > 1));
   const oc = el('orthoChk');
   if (oc) oc.checked = !!S.settings.ortho;
@@ -10774,19 +10790,30 @@ function paintDrawing() {
 let imgTokSeq = 0;
 
 function showDrawing(opts) {
+  /* Off the concept grid: its 24 px/m is not this drawing's scale, so the
+     scale is asked for again. A concept take-off is carried and laid on the
+     drawing once the scale is set — layConceptOnDrawing(). Its undo history
+     is in concept coordinates, so it goes. */
+  if (opts && opts.fromConcept) {
+    pendingConceptPx = opts.conceptPx > 0 ? opts.conceptPx : 0;
+    S.pxPerM = 0; S.calib = null;
+    if (pendingConceptPx) { undoStack.length = 0; refreshUndoBtn(); }
+  }
   S.img.tok = ++imgTokSeq;      // a new sheet: rotations recorded against the last one no longer apply
   paintDrawing();
   el('board').style.display = 'none';
   el('zoomer').style.display = 'flex';
   const zRot = el('zRot');
   if (zRot) zRot.style.display = S.img.virtual ? 'none' : '';
+  const zAlign = el('zAlign');
+  if (zAlign) zAlign.style.display = S.img.virtual ? 'none' : '';
   ['bSched','bPdf','bExport','bName','b3d','bCheck'].forEach(id => el(id).disabled = false);
   if (S.img.virtual) {
     el('bOpenDwg').textContent = 'Open drawing';
     el('bOpenDwg').title = 'Load a PDF or image — this concept sheet has no drawing';
   } else {
     el('bOpenDwg').textContent = 'Change drawing';
-    el('bOpenDwg').title = 'Load a different drawing — the scale has to be set again';
+    el('bOpenDwg').title = 'Load a different drawing behind the trace — keep it, align it to the new sheet, or set the scale again';
   }
   syncConceptUi();
   buildRail();
@@ -10797,17 +10824,232 @@ function showDrawing(opts) {
 }
 
 /* A different sheet behind the same trace is usually the same scale, but it
-   is not safe to assume it, so it gets confirmed rather than gated. */
+   is not safe to assume it, so it gets confirmed rather than gated. Three
+   answers: the same sheet at the same scale (carry on), the same building on
+   a sheet exported differently (align the trace onto it, which keeps every
+   length), or a scale that was wrong (set it again, which changes them). */
+function hasTakeoff() {
+  return !!(S.nodes.length || S.segs.length || (S.measures || []).length);
+}
 function scaleRecheck() {
+  if (!hasTakeoff()) {
+    modal('New drawing',
+        '<p style="margin-top:0">The scale from the last drawing is still set at '
+      + '<strong class="mono">' + fmt(S.pxPerM, 1) + ' px/m</strong>. If this sheet is at a '
+      + 'different scale or a different size, set it again before tracing.</p>'
+      + '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
+      + '<button class="btn go" id="srNew">Set the scale again</button>'
+      + '<button class="btn ghost" id="srKeep">Same scale, carry on</button></div>');
+    el('srNew').addEventListener('click', () => { closeModal(true); setTool('calib'); });
+    el('srKeep').addEventListener('click', () => { closeModal(true); toast('Scale kept'); });
+    return;
+  }
   modal('New drawing behind the trace',
-      '<p style="margin-top:0">The scale from the last drawing is still set at '
-    + '<strong class="mono">' + fmt(S.pxPerM, 1) + ' px/m</strong>. If this sheet is at a '
-    + 'different scale or a different size, every traced length is now wrong.</p>'
+      '<p style="margin-top:0">The trace and the scale (<strong class="mono">' + fmt(S.pxPerM, 1)
+    + ' px/m</strong>) have come across from the last drawing. If this sheet is the same layout '
+    + 'exported the same way, carry on. If it is a different paper size, cropped differently, or '
+    + 'the plan has moved on the page, the trace will not sit on the pipework &mdash; align it.</p>'
+    + '<div class="note"><b>Align the trace</b>: click two points on the trace, then the same two '
+    + 'points on this drawing &mdash; a plant, a tee, a column grid crossing. The whole take-off '
+    + 'moves, scales and turns onto the sheet in one step and the scale follows it, so '
+    + '<b>every traced length stays exactly as it was</b>. One <kbd>Ctrl</kbd>+<kbd>Z</kbd> '
+    + 'puts it back. The &#8982; button by the zoom does the same at any time.</div>'
     + '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
-    + '<button class="btn go" id="srNew">Set the scale again</button>'
-    + '<button class="btn ghost" id="srKeep">Same scale, carry on</button></div>');
+    + '<button class="btn go" id="srAlign">Align the trace to this drawing</button>'
+    + '<button class="btn ghost" id="srKeep">Same scale, same place</button>'
+    + '<button class="btn ghost" id="srNew">Set the scale again</button></div>'
+    + '<div class="note" style="margin-top:10px"><b>Set the scale again</b> re-measures the trace '
+    + 'where it lies: every traced length changes by the ratio of the two scales and the trace '
+    + 'does not move. Use it only if the old scale was wrong.</div>');
+  el('srAlign').addEventListener('click', () => { closeModal(true); startAlign(); });
   el('srNew').addEventListener('click', () => { closeModal(true); setTool('calib'); });
-  el('srKeep').addEventListener('click', () => { closeModal(true); toast('Scale kept'); });
+  el('srKeep').addEventListener('click', () => { closeModal(true); toast('Scale and trace kept'); });
+}
+
+/* ---------- laying the trace on a new sheet ----------
+   Two points on the trace, then the same two on the drawing. That fixes a
+   move, a turn and a scale, and mapTakeoff() applies it to every point the
+   take-off holds — nodes, run points, tapes, the calibration line. The scale
+   is multiplied by the same factor, so a run that was 12.40 m is 12.40 m
+   after: the take-off is re-expressed in this sheet's pixels, not
+   re-measured. Sizes, typed lengths and heights are in metres and do not
+   move. "Keep the scale" drops the factor (move and turn only), for a
+   concept already laid at true size; "Keep it square" drops the turn, so two
+   clicks a pixel apart cannot set every run a fraction of a degree off the
+   90° lock. */
+let alignOpts = { keepScale: false };
+
+function startAlign(opts) {
+  if (!S.img || S.img.virtual) { toast('Load a drawing first'); return; }
+  if (!(S.pxPerM > 0)) { scaleGate(); return; }
+  if (!hasTakeoff()) { toast('Nothing traced to align yet'); return; }
+  alignOpts = Object.assign({ keepScale: false }, opts || {});
+  setTool('align');
+  draft = { kind: 'align', pts: [] };
+  syncHint();
+  render();
+}
+
+/* The trace points snap to something that can be found again on the new
+   sheet: a component, a corner or tee, an end of a tape or of the scale. */
+function alignSnap(p) {
+  const tol = 14 / zoom;
+  let best = null, bd = tol;
+  const consider = q => {
+    if (!q || !isFinite(q.x) || !isFinite(q.y)) return;
+    const d = dist(p, q);
+    if (d < bd) { bd = d; best = { x: q.x, y: q.y, snap: true }; }
+  };
+  S.nodes.forEach(consider);
+  S.segs.forEach(sg => (sg.pts || []).forEach(consider));
+  (S.measures || []).forEach(m => (m.pts || []).forEach(consider));
+  if (S.calib) { consider(S.calib.a); consider(S.calib.b); }
+  return best || { x: p.x, y: p.y, snap: false };
+}
+
+function alignHint() {
+  const n = draft && draft.kind === 'align' ? draft.pts.length : 0;
+  const tail = ' Drag to pan, <kbd>Ctrl</kbd>-wheel to zoom. <kbd>Esc</kbd> starts again.';
+  if (n === 0) return 'Align, step 1 of 4: click a point on the <b>trace</b> you can find on the '
+    + 'new drawing &mdash; a plant, a tee, a corner. It snaps to the nearest one.' + tail;
+  if (n === 1) return 'Step 2 of 4: a second point on the <b>trace</b>, as far from the first as '
+    + 'you can.' + tail;
+  if (n === 2) return 'Step 3 of 4: click where point <b>1</b> is on the <b>new drawing</b>.' + tail;
+  if (n === 3) return 'Step 4 of 4: click where point <b>2</b> is on the <b>new drawing</b>.' + tail;
+  return 'Check the figures, then <b>Align</b>. A click on the sheet starts again.';
+}
+
+function alignTransform(pts, o) {
+  const [a, b, A, B] = pts;
+  const s = o.keepScale ? 1 : dist(A, B) / dist(a, b);
+  let th = Math.atan2(B.y - A.y, B.x - A.x) - Math.atan2(b.y - a.y, b.x - a.x);
+  while (th > Math.PI) th -= 2 * Math.PI;
+  while (th <= -Math.PI) th += 2 * Math.PI;
+  const deg = th * 180 / Math.PI;
+  if (o.square) th = 0;
+  // about the midpoints, so whatever cannot be matched exactly is shared
+  const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, M = { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
+  const cs = Math.cos(th) * s, sn = Math.sin(th) * s;
+  const T = p => keepH(p, { x: M.x + (p.x - m.x) * cs - (p.y - m.y) * sn,
+                            y: M.y + (p.x - m.x) * sn + (p.y - m.y) * cs });
+  // how far each trace point lands from where it was clicked, in metres
+  const pxPerM = S.pxPerM * s;
+  const miss = pxPerM > 0 ? Math.max(dist(T(a), A), dist(T(b), B)) / pxPerM : 0;
+  return { T, s, deg, miss, pxPerM };
+}
+
+function alignConfirm(pts) {
+  const raw = alignTransform(pts, { keepScale: false, square: false });
+  const o = { keepScale: !!alignOpts.keepScale, square: Math.abs(raw.deg) < 1.5 };
+  modal('Align the trace to this drawing',
+      '<div id="alSum"></div>'
+    + '<label class="chk" style="display:flex;gap:8px;align-items:flex-start;margin-top:10px">'
+    + '<input type="checkbox" id="alKeep"' + (o.keepScale ? ' checked' : '') + '>'
+    + '<span>Keep the scale &mdash; move and turn only. The scale the clicks give is <strong class="mono">'
+    + fmt(raw.pxPerM, 1) + ' px/m</strong> against <strong class="mono">' + fmt(S.pxPerM, 1) + '</strong> now.</span></label>'
+    + '<label class="chk" style="display:flex;gap:8px;align-items:flex-start;margin-top:6px">'
+    + '<input type="checkbox" id="alSquare"' + (o.square ? ' checked' : '') + '>'
+    + '<span>Keep it square &mdash; no turn. The clicks would turn it <strong class="mono">'
+    + fmt(raw.deg, 2) + '&deg;</strong>.</span></label>'
+    + '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
+    + '<button class="btn go" id="alGo">Align</button>'
+    + '<button class="btn ghost" id="alAgain">Pick the points again</button>'
+    + '<button class="btn ghost" id="alNo">Cancel</button></div>');
+  const sum = () => {
+    o.keepScale = el('alKeep').checked; o.square = el('alSquare').checked;
+    const t = alignTransform(pts, o);
+    el('alSum').innerHTML = '<p style="margin-top:0">The take-off moves onto the drawing'
+      + (o.keepScale ? '' : ', scaled <strong class="mono">&times;' + fmt(t.s, 4) + '</strong>')
+      + (o.square || Math.abs(t.deg) < 0.005 ? '' : ', turned <strong class="mono">' + fmt(t.deg, 2) + '&deg;</strong>')
+      + '. ' + (o.keepScale
+        ? 'The scale stays at <strong class="mono">' + fmt(S.pxPerM, 1) + ' px/m</strong>.'
+        : 'The scale becomes <strong class="mono">' + fmt(t.pxPerM, 1) + ' px/m</strong>, so every '
+          + 'traced length stays as it is.')
+      + '</p><div class="note">Each point lands within <strong class="mono">' + fmt(t.miss * 1000, 0)
+      + ' mm</strong> of where you clicked it.'
+      + (t.miss > 0.25 ? ' That is a long way &mdash; check the two pairs are the same points, or '
+        + 'untick an option.' : '') + '</div>';
+  };
+  el('alKeep').addEventListener('change', sum);
+  el('alSquare').addEventListener('change', sum);
+  sum();
+  el('alGo').addEventListener('click', () => { closeModal(true); applyAlign(pts, o); });
+  el('alAgain').addEventListener('click', () => {
+    closeModal(true); draft = { kind: 'align', pts: [] }; syncHint(); render();
+  });
+  el('alNo').addEventListener('click', () => { closeModal(true); setTool('select'); });
+}
+
+function applyAlign(pts, o) {
+  const t = alignTransform(pts, o);
+  pushUndo('align the trace to the drawing', true);
+  draft = null;
+  mapTakeoff(t.T, t.s);
+  S.pxPerM = t.pxPerM;
+  setTool('select');
+  buildRail();
+  render();
+  toast('Trace aligned' + (o.keepScale ? '' : ' — scale now ' + fmt(S.pxPerM, 1) + ' px/m, lengths unchanged'));
+}
+
+/* The points picked so far, numbered the same on the trace and the sheet. */
+function drawAlign(g, k) {
+  const pts = draft.pts;
+  const TR = 'var(--measure)', SH = '#2a7d4f';
+  const ring = (q, col, lbl, solid) => {
+    g.appendChild(mk('circle', { cx: q.x, cy: q.y, r: 9 * k, fill: solid ? col : 'none',
+      'fill-opacity': solid ? 0.18 : 0, stroke: col, 'stroke-width': 2.2 * k }));
+    g.appendChild(mk('line', { x1: q.x - 14 * k, y1: q.y, x2: q.x + 14 * k, y2: q.y, stroke: col, 'stroke-width': 1.2 * k }));
+    g.appendChild(mk('line', { x1: q.x, y1: q.y - 14 * k, x2: q.x, y2: q.y + 14 * k, stroke: col, 'stroke-width': 1.2 * k }));
+    if (lbl) g.appendChild(mk('text', { x: q.x + 12 * k, y: q.y - 11 * k, 'font-size': 13 * k,
+      'font-family': 'Azeret Mono, monospace', 'font-weight': 700, fill: col }, lbl));
+  };
+  const dash = (a, b, col) => g.appendChild(mk('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+    stroke: col, 'stroke-width': 1.6 * k, 'stroke-dasharray': (7 * k) + ' ' + (4 * k) }));
+  if (pts.length >= 2) dash(pts[0], pts[1], TR);
+  if (pts.length >= 4) dash(pts[2], pts[3], SH);
+  pts.forEach((q, i) => ring(q, i < 2 ? TR : SH, i < 2 ? String(i + 1) : (i - 1) + '′', true));
+  if (pts.length >= 3) dash(pts[0], pts[2], 'rgba(42,125,79,.55)');
+  if (pts.length >= 4) dash(pts[1], pts[3], 'rgba(42,125,79,.55)');
+  if (hoverPt && pts.length < 4) {
+    const next = pts.length;
+    const q = next < 2 ? alignSnap(hoverPt) : hoverPt;
+    if (next === 1) dash(pts[0], q, TR);
+    if (next === 3) dash(pts[2], q, SH);
+    if (next >= 2) dash(pts[next - 2], q, 'rgba(42,125,79,.55)');
+    ring(q, next < 2 ? TR : SH, next < 2 ? String(next + 1) : (next - 1) + '′', false);
+  }
+}
+
+/* ---------- a concept moving on to a drawing ----------
+   The concept grid has its own scale, which has nothing to do with the
+   drawing. So the scale is asked for like any new drawing, and once it is
+   set the take-off is scaled about the sheet corner so a metre on the
+   concept is a metre on the drawing. Where it sits is still the concept
+   grid's idea, so aligning it (move and turn, keep the scale) is offered. */
+let pendingConceptPx = 0;
+
+function layConceptOnDrawing() {
+  const f = S.pxPerM / pendingConceptPx;
+  pendingConceptPx = 0;
+  if (!(f > 0) || !isFinite(f)) return;
+  // the calibration line was just picked on this sheet; it is not concept geometry
+  const cal = S.calib; S.calib = null;
+  mapTakeoff(p => keepH(p, { x: p.x * f, y: p.y * f }), f);
+  S.calib = cal;
+  render();
+  modal('Concept laid on the drawing',
+      '<p style="margin-top:0">The concept is now at this drawing\'s scale: a metre on the concept '
+    + 'is a metre here. Component sizes, heights and the installed lengths typed on runs are '
+    + 'unchanged &mdash; a typed length still wins until it is cleared in the run inspector, and '
+    + 'then the run is measured off the drawing.</p>'
+    + '<div class="note">It sits where it was on the concept grid, which is not where it is in the '
+    + 'building. Align it: two points on the concept, then the same two on the drawing.</div>'
+    + '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
+    + '<button class="btn go" id="lcAlign">Align it to the drawing</button>'
+    + '<button class="btn ghost" id="lcLeave">Leave it where it is</button></div>');
+  el('lcAlign').addEventListener('click', () => { closeModal(true); startAlign({ keepScale: true }); });
+  el('lcLeave').addEventListener('click', () => closeModal(true));
 }
 
 /* ==========================================================================
@@ -10863,7 +11105,16 @@ function turnAbout(deg, cOld, cNew) {
 
 /* Turn everything that holds a point on the plan. */
 function turnTakeoff(deg, cOld, cNew) {
-  const T = turnAbout(deg, cOld, cNew);
+  mapTakeoff(turnAbout(deg, cOld, cNew), 1);
+}
+
+/* Move everything that holds a point on the plan through T — a turn, or the
+   move, turn and scale that lays a take-off on a new sheet. `s` is how much T
+   scales by. Anything held in metres (a traced header's line, a component's
+   size, a typed length) is not a point on the sheet, so it is turned but
+   never scaled. */
+function mapTakeoff(T, s) {
+  s = s > 0 ? s : 1;
   S.nodes.forEach(n => { const q = T(n); n.x = q.x; n.y = q.y; });
   /* A traced header's line is in its own frame, so it is turned as a
      direction rather than moved as a point — or an L traced along two walls
@@ -10871,7 +11122,7 @@ function turnTakeoff(deg, cOld, cNew) {
   const O = T({ x: 0, y: 0 });
   S.nodes.forEach(n => {
     if (!llhPath(n)) return;
-    n.path = n.path.map(q => { const t = T(q); return { x: +(t.x - O.x).toFixed(4), y: +(t.y - O.y).toFixed(4) }; });
+    n.path = n.path.map(q => { const t = T(q); return { x: +((t.x - O.x) / s).toFixed(4), y: +((t.y - O.y) / s).toFixed(4) }; });
     fitHeaderToPath(n);
   });
   S.segs.forEach(sg => { if (sg.pts) sg.pts = sg.pts.map(T); });
@@ -11009,6 +11260,9 @@ function rotateDialog() {
 async function loadDrawingFile(file) {
   if (!file) return;
   const replaced = !!(S.img && !S.img.virtual);  // swapping the sheet behind an existing trace
+  // leaving the concept grid: its scale is not the drawing's, and its take-off comes too
+  const fromConcept = !!(S.img && S.img.virtual);
+  const conceptPx = fromConcept && hasTakeoff() ? S.pxPerM : 0;
   S.concept = false;                 // a real drawing leaves the concept grid
   const isPdf = /pdf$/i.test(file.type) || /\.pdf$/i.test(file.name);
   if (isPdf) {
@@ -11034,7 +11288,7 @@ async function loadDrawingFile(file) {
       await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
       S.img = { src: cv.toDataURL('image/png'), w: cv.width, h: cv.height,
                 label: file.name + (pdf.numPages > 1 ? ' (page 1 of ' + pdf.numPages + ')' : '') };
-      showDrawing({ replaced });
+      showDrawing({ replaced, fromConcept, conceptPx });
       if (pdf.numPages > 1) toast('Loaded page 1 of ' + pdf.numPages);
     } catch (e) {
       modal('That PDF could not be opened',
@@ -11049,7 +11303,7 @@ async function loadDrawingFile(file) {
     const im = new Image();
     im.onload = () => {
       S.img = { src: rd.result, w: im.naturalWidth, h: im.naturalHeight, label: file.name };
-      showDrawing({ replaced });
+      showDrawing({ replaced, fromConcept, conceptPx });
     };
     im.onerror = () => toast('That image could not be read');
     im.src = rd.result;
@@ -11143,6 +11397,9 @@ function scaleGate() {
     + '<div class="note">Pick two points a known distance apart &mdash; a grid line, a bay, '
     + 'a dimension already printed on the drawing &mdash; then type the real figure in metres. '
     + 'The longer the reference, the smaller the error in everything that follows.</div>'
+    + (pendingConceptPx ? '<div class="note" style="margin-top:8px">Your concept take-off comes with '
+      + 'you. Once the scale is set it is laid on this drawing at true size, and you can align it '
+      + 'onto the building. Typed installed lengths are kept.</div>' : '')
     + '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
     + '<button class="btn go" id="sgGo">Set the scale</button>'
     + '<button class="btn ghost" id="sgRot">Rotate the drawing</button>'
@@ -11159,6 +11416,10 @@ function askScale(a, b) {
   modal('Set the scale',
       '<p style="margin-top:0">You picked two points <strong class="mono">' + fmt(px, 0)
     + ' px</strong> apart. What is that on the building?</p>'
+    + (S.pxPerM > 0 && hasTakeoff() && !pendingConceptPx
+      ? '<div class="note" style="margin-bottom:10px">This replaces the scale under a trace that is '
+        + 'already drawn: every traced length changes and nothing moves. To put the trace on a new '
+        + 'sheet and keep its lengths, cancel and use <b>Align</b> (&#8982; by the zoom).</div>' : '')
     + '<label class="fld"><span>Real distance <em>metres</em></span>'
     + '<input type="number" id="calM" step="0.1" min="0.01" value="10" autofocus></label>'
     + '<div style="display:flex;gap:8px;margin-top:12px">'
@@ -11172,6 +11433,7 @@ function askScale(a, b) {
     closeModal(true); setTool('select');
     buildRail();
     toast('Scale set \u2014 ' + fmt(S.pxPerM, 1) + ' px per metre');
+    if (pendingConceptPx > 0) layConceptOnDrawing();
   };
   el('calOk').addEventListener('click', done);
   el('calNo').addEventListener('click', () => {
@@ -11197,6 +11459,13 @@ const HELP = [
       + 'image, or drop the file on the board. If it arrives sideways or a scan is off square, <b>Rotate</b> by '
       + 'the zoom controls (<kbd>R</kbd>, or <kbd>[</kbd> and <kbd>]</kbd> for quarter turns) turns the sheet '
       + 'and everything traced on it together. The scale does not change.', done: () => !!S.img && !S.concept },
+    { id: 'newsheet', t: 'I have a new revision of the drawing \u2014 keep the trace', tool: ['align', 'calib'], b: '<b>Change '
+      + 'drawing</b> swaps the sheet and keeps everything traced. If the new sheet is a different paper size, '
+      + 'cropped differently or the plan has moved on the page, <b>Align</b> (&#8982; by the zoom): click two '
+      + 'points on the trace, then the same two on the new drawing. The take-off moves, scales and turns onto '
+      + 'it in one step and the scale follows, so every traced length stays as it was. <b>Set the scale '
+      + 'again</b> is different: it re-measures the trace where it lies, so lengths change. A concept moved '
+      + 'on to a drawing asks for the scale, is laid on at true size, then offers Align.' },
     { id: 'concept', t: 'I have no drawing yet \u2014 just a concept', b: '<b>Concept</b> opens a faint grid instead of '
       + 'a sheet. Place plant, loads, headers and the rest the same way, draw the runs between them, then '
       + '<b>type the installed length</b> on each run in the inspector, because there is nothing to measure. '
@@ -12527,6 +12796,21 @@ function applyToolPointer(ev, p) {
     return;
   }
 
+  if (tool === 'align') {
+    // a confirm dismissed with Esc leaves four points; the next click starts over
+    if (!draft || draft.kind !== 'align' || draft.pts.length >= 4) draft = { kind: 'align', pts: [] };
+    const n = draft.pts.length;
+    const q = n < 2 ? alignSnap(p) : { x: p.x, y: p.y };
+    if ((n === 1 || n === 3) && dist(q, draft.pts[n - 1]) < 12 / zoom) {
+      toast('Pick the second point well away from the first'); return;
+    }
+    draft.pts.push({ x: q.x, y: q.y });
+    syncHint();
+    render();
+    if (draft.pts.length === 4) alignConfirm(draft.pts.slice());
+    return;
+  }
+
   if (tool === 'calib') {
     if (!draft) draft = { kind: 'calib', pts: [] };
     draft.pts.push(p);
@@ -12689,7 +12973,7 @@ sc.addEventListener('pointermove', ev => {
   }
   // the trace and valve tools show what a click would do, so they track the
   // cursor whether or not anything is under way
-  if (draft || tool === 'trace' || tool === 'valve' || tool === 'tape') {
+  if (draft || tool === 'trace' || tool === 'valve' || tool === 'tape' || tool === 'align') {
     setOverride(ev.altKey);
     hoverPt = toDwg(ev); scheduleRender();
   }
@@ -12739,6 +13023,7 @@ function zoomInto(ev, factor) {
 
 sc.addEventListener('dblclick', ev => {
   if (!S.img) return;
+  if (tool === 'align') return;          // each click is a point; zoom with Ctrl-wheel or the buttons
   if (draft && finishDraftInPlace()) return;
   const p = toDwg(ev);
   const it = hitItem(p);
@@ -12803,7 +13088,7 @@ document.addEventListener('keydown', ev => {
     if (el('helpPane').classList.contains('on')) { toggleHelp(false); return; }
     // a drag or a lasso that lost its pointerup is dropped here too
     if (drag || panning || pendingPan || marquee) { dropPointerState(); render(); return; }
-    if (draft) { draft = null; shapeFor = null; render(); return; }
+    if (draft) { draft = null; shapeFor = null; syncHint(); render(); return; }
     if (tapFor != null) { tapFor = null; if (sel) openInspector(); render(); return; }
     if (sel) { sel = null; closeInspector(); return; }
     setTool('select'); return;
@@ -13003,6 +13288,7 @@ el('hgtIn').addEventListener('click', ev => ev.stopPropagation());
 el('hgtIn').addEventListener('keydown', ev => ev.stopPropagation());
 
 el('zRot').addEventListener('click', rotateDialog);
+el('zAlign').addEventListener('click', () => startAlign());
 el('zIn').addEventListener('click', () => setZoom(zoom * 1.2));
 el('zOut').addEventListener('click', () => setZoom(zoom / 1.2));
 el('zFit').addEventListener('click', zoomFit);
