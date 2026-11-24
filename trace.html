@@ -870,6 +870,7 @@
         <button id="zLbl" title="Labels">Aa</button>
         <button id="zTxt" title="Size of the writing and valve symbols on the plan">80%</button>
         <button id="zVlv" class="on" title="Valves on the plan">&#8904;#</button>
+        <button id="zFade" title="Fade the drawing under the trace">&#9680;</button>
         <button id="zTrue" class="on" title="Components and pipes at true size at every zoom">1:1</button>
       </div>
 
@@ -1689,6 +1690,10 @@ function defaultSettings() {
     showValves: true,
     /* System frames (S.views) drawn on the plan as a key. */
     showViews: true,
+    /* How strongly the drawing under the trace is shown, 0.25 to 1. Fading
+       it lets the trace and its labels read over the sheet's own text. The
+       PDF plates use the same figure. */
+    sheetFade: 1,
     /* New take-offs use temperature-corrected viscosity. An explicit 'fixed'
        is the legacy 0.00131 Pa.s. Written onto the sizer exchange file. */
     viscosityMode: 'temperature',
@@ -2087,6 +2092,28 @@ function cyclePlanText() {
   refreshTextBtn();
   render();
   toast('Plan writing and symbols at ' + Math.round(S.settings.planText * 100) + '%');
+}
+const SHEET_FADE_STEPS = [1, 0.7, 0.45, 0.25];
+function sheetFade() {
+  const v = parseFloat(S.settings && S.settings.sheetFade);
+  return v > 0 ? clamp(v, 0.1, 1) : 1;
+}
+function cycleSheetFade() {
+  const cur = sheetFade();
+  const i = SHEET_FADE_STEPS.findIndex(x => Math.abs(x - cur) < 0.01);
+  S.settings.sheetFade = SHEET_FADE_STEPS[(i + 1) % SHEET_FADE_STEPS.length];
+  refreshFadeBtn();
+  render();
+  toast(S.settings.sheetFade >= 1 ? 'Drawing shown in full' : 'Drawing faded to ' + Math.round(S.settings.sheetFade * 100) + '% \u2014 here and on the PDF');
+}
+function refreshFadeBtn() {
+  const b = el('zFade');
+  if (!b) return;
+  const f = sheetFade();
+  b.textContent = f >= 1 ? '\u25d0' : '\u25d0 ' + Math.round(f * 100) + '%';
+  b.classList.toggle('on', f < 1);
+  b.title = 'The drawing under the trace at ' + Math.round(f * 100) + '% \u2014 click to fade it, so the trace and '
+    + 'its labels read over the sheet\u2019s own text (' + SHEET_FADE_STEPS.map(x => Math.round(x * 100) + '%').join(', ') + ')';
 }
 function refreshTextBtn() {
   const b = el('zTxt');
@@ -5340,6 +5367,7 @@ function renderInner() {
   ov.style.height = S.img.h + 'px';
 
   solve();
+  el('dwg').style.opacity = sheetFade();
   const k = 1 / zoom;                       // keep strokes and text constant on screen
   const kt = k * planTextScale();           // the writing, at the size chosen for the plan
   const g = document.createDocumentFragment();
@@ -5676,9 +5704,14 @@ function drawHighPoints(g, k) {
    in the PDF, and the `all` label mode, never drop a run: the shortest text
    goes where it overlaps least.
    ========================================================================== */
+/* Boxes may carry an owner (`o`, a run id) and `pipe: true`. A label never
+   minds its own run's pipe, and a leader may cross pipework, so a query can
+   leave either out. */
 function labelGrid(cell) {
   const cells = new Map(), big = [];
-  const ov = (a, b) => a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
+  let own = null, noPipes = false;
+  const ov = (a, b) => a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1
+    && !(own !== null && a.o === own) && !(noPipes && a.pipe);
   const span = b => [Math.floor(b.x1 / cell), Math.floor(b.x2 / cell), Math.floor(b.y1 / cell), Math.floor(b.y2 / cell)];
   const many = r => (r[1] - r[0] + 1) * (r[3] - r[2] + 1) > 256;
   const each = (b, fn) => {
@@ -5690,20 +5723,25 @@ function labelGrid(cell) {
       if (many(span(b))) { big.push(b); return; }
       each(b, key => { let a = cells.get(key); if (!a) cells.set(key, a = []); a.push(b); });
     },
-    hits(b) {
-      if (big.some(o => ov(o, b))) return true;
-      if (many(span(b))) {
-        for (const a of cells.values()) if (a.some(o => ov(o, b))) return true;
-        return false;
-      }
-      let hit = false;
-      each(b, key => { if (!hit) { const a = cells.get(key); if (a && a.some(o => ov(o, b))) hit = true; } });
-      return hit;
+    hits(b, owner, ignorePipes) {
+      own = owner === undefined ? null : owner; noPipes = !!ignorePipes;
+      try {
+        if (big.some(o => ov(o, b))) return true;
+        if (many(span(b))) {
+          for (const a of cells.values()) if (a.some(o => ov(o, b))) return true;
+          return false;
+        }
+        let hit = false;
+        each(b, key => { if (!hit) { const a = cells.get(key); if (a && a.some(o => ov(o, b))) hit = true; } });
+        return hit;
+      } finally { own = null; noPipes = false; }
     },
-    count(b) {
+    count(b, owner) {
+      own = owner === undefined ? null : owner;
       const seen = new Set();
       big.forEach(o => { if (ov(o, b)) seen.add(o); });
       if (!many(span(b))) each(b, key => (cells.get(key) || []).forEach(o => { if (ov(o, b)) seen.add(o); }));
+      own = null;
       return seen.size;
     },
   };
@@ -5720,9 +5758,11 @@ function runLabelTexts(sg) {
   const min = nom || len;
   return [full, short, min].filter((t, i, a) => a.indexOf(t) === i);
 }
-/* Where a run label may go: along the longest legs first, the middle of a
-   leg before its ends, on the pipe before either side of it. A leg nearer
-   vertical than not is written along the pipe, reading upwards. */
+/* Where a run label may go on its pipe: along the longest legs first, the
+   middle of a leg before its ends, on the pipe before either side of it. A
+   leg nearer vertical than not is written along the pipe, reading upwards.
+   Each candidate carries the point on the pipe it belongs to (ax, ay), which
+   is where a leader goes back to if it is moved off. */
 function runLabelCands(sg, k, lh) {
   const pts = sg.pts || [];
   const legs = [];
@@ -5739,20 +5779,123 @@ function runLabelCands(sg, k, lh) {
     const rot = Math.abs(dy) > Math.abs(dx) * 1.5 ? -90 : 0;
     [0.5, 0.3, 0.7, 0.15, 0.85].forEach(t => {
       const x = lg.a.x + dx * t, y = lg.a.y + dy * t;
-      [0, -1, 1].forEach(side => out.push(rot ? { x: x + side * off, y, rot, leg: lg.L }
-                                               : { x, y: y + side * off, rot, leg: lg.L }));
+      [0, -1, 1].forEach(side => out.push(rot ? { x: x + side * off, y, rot, ax: x, ay: y }
+                                               : { x, y: y + side * off, rot, ax: x, ay: y }));
     });
   });
   return out;
 }
+/* The middle of the two longest legs, with the square to each — where a
+   label pulled out to the side is tied back to. */
+function runAnchors(sg) {
+  const pts = sg.pts || [];
+  const legs = [];
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i], L = dist(a, b);
+    if (L > 1e-6) legs.push({ a, b, L });
+  }
+  legs.sort((x, y) => y.L - x.L);
+  return legs.slice(0, 2).map(lg => ({ x: (lg.a.x + lg.b.x) / 2, y: (lg.a.y + lg.b.y) / 2,
+    nx: -(lg.b.y - lg.a.y) / lg.L, ny: (lg.b.x - lg.a.x) / lg.L, tx: (lg.b.x - lg.a.x) / lg.L, ty: (lg.b.y - lg.a.y) / lg.L }));
+}
+/* Spots round a point, near first, square to the pipe first: where a label
+   with no room on its pipe is pulled out to, on a leader. */
+function ringCands(ax, ay, hw, hh, nx, ny, k, far) {
+  const out = [];
+  const dirs = [];
+  for (let i = 0; i < 8; i++) dirs.push(i * Math.PI / 4);
+  const pref = Math.atan2(ny || 1, nx || 0);
+  // how far a direction is from square to the pipe, either side of it
+  const away = a => { const d = ((a - pref) % Math.PI + Math.PI) % Math.PI; return Math.min(d, Math.PI - d); };
+  dirs.sort((a, b) => away(a) - away(b));
+  // a plate that must carry everything looks further out before it lets one overlap
+  (far ? [30, 55, 90, 135, 185, 240] : [30, 55, 90, 135]).forEach(r => dirs.forEach(a => {
+    const dx = Math.cos(a), dy = Math.sin(a);
+    const d = r * k + Math.abs(dx) * hw + Math.abs(dy) * hh;
+    out.push({ x: ax + dx * d, y: ay + dy * d, rot: 0, ax, ay, call: true });
+  }));
+  return out;
+}
+/* What the last on-screen redraw wrote, so a label can be picked up and
+   moved. Never filled by an export. */
+let labelHits = [];
+function hitLabel(p) {
+  const pad = 2 / zoom;
+  for (let i = labelHits.length - 1; i >= 0; i--) {
+    const h = labelHits[i];
+    if (p.x >= h.b.x1 - pad && p.x <= h.b.x2 + pad && p.y >= h.b.y1 - pad && p.y <= h.b.y2 + pad) return h;
+  }
+  return null;
+}
+/* A label moved by hand is held as an offset in metres from a point on its
+   run (`lab`, `pillAt`: { t, dx, dy }) or from its valve (`tagAt`), so it
+   follows the pipework, and comes out the same on a plate at any zoom. */
+function labelOffsetPt(ax, ay, at) {
+  const u = S.pxPerM > 0 ? S.pxPerM : 1;
+  return { x: ax + (parseFloat(at.dx) || 0) * u, y: ay + (parseFloat(at.dy) || 0) * u };
+}
+function hasLabelAt(at) { return !!(at && isFinite(parseFloat(at.dx)) && isFinite(parseFloat(at.dy))); }
+let labelMoveSaid = false;
+let lastLabelClick = null;
+/* Picking a label up: where its box is now, and the point on the pipe (or
+   the valve) it stays tied to while it moves. */
+function beginLabelDrag(lh, p) {
+  const d = { label: lh, ox: p.x, oy: p.y, cx: (lh.b.x1 + lh.b.x2) / 2, cy: (lh.b.y1 + lh.b.y2) / 2,
+              ax: lh.ax, ay: lh.ay, t: null, moved: false };
+  if (lh.kind !== 'tag') {
+    const sg = segById(lh.id);
+    const r = sg ? nearestOnPoly(sg.pts, { x: lh.ax, y: lh.ay }) : null;
+    d.t = r ? polyTOf(sg.pts, r.i, r.t) : 0.5;
+    if (sg) { const a = polyAt(sg.pts, d.t); d.ax = a.x; d.ay = a.y; }
+  }
+  drag = d;
+  select(lh.kind === 'tag' ? 'item' : 'seg', lh.id);
+}
+function moveLabelTo(d, cx, cy) {
+  const u = S.pxPerM > 0 ? S.pxPerM : 1;
+  const at = { dx: +((cx - d.ax) / u).toFixed(3), dy: +((cy - d.ay) / u).toFixed(3) };
+  if (d.label.kind === 'tag') { const it = itemById(d.label.id); if (it) it.tagAt = at; return; }
+  const sg = segById(d.label.id);
+  if (sg) sg[d.label.kind === 'pill' ? 'pillAt' : 'lab'] = Object.assign({ t: +d.t.toFixed(4) }, at);
+}
+function labelKey(kind) { return kind === 'tag' ? 'tagAt' : kind === 'pill' ? 'pillAt' : 'lab'; }
+function putLabelBack(lh) {
+  const o = lh.kind === 'tag' ? itemById(lh.id) : segById(lh.id);
+  const key = labelKey(lh.kind);
+  if (!o || !hasLabelAt(o[key])) return false;
+  pushUndo('put a label back');
+  delete o[key];
+  render();
+  toast('Label put back where the layout wants it');
+  return true;
+}
+function movedLabelCount() {
+  return S.segs.filter(sg => hasLabelAt(sg.lab) || hasLabelAt(sg.pillAt)).length
+    + S.items.filter(it => hasLabelAt(it.tagAt)).length;
+}
+function putAllLabelsBack() {
+  if (!movedLabelCount()) return;
+  pushUndo('put every label back');
+  S.segs.forEach(sg => { delete sg.lab; delete sg.pillAt; });
+  S.items.forEach(it => { delete it.tagAt; });
+  render();
+}
+
 function layoutPlanLabels(g, k, tagReqs, extra) {
   const kt = k * planTextScale();
   const lv = labelLevel();
   const force = exporting ? exportKind !== 'key' : (S.settings.labels === 'all');
+  /* Pulled out on a leader when there is no room on the pipe — not on a
+     zoomed-out screen, where a site would turn into a web of lines; the
+     label waits for the zoom there instead. */
+  const callouts = exporting ? exportKind !== 'key' : (lv >= 2 && S.pxPerM * zoom >= 22);
+  // the widest search, and the least-bad search, are for a plate that must carry everything
+  const farOut = exporting && force;
   const grid = labelGrid(90 * k);
   const crop = exporting ? exportCrop : null;
   const inCrop = b => !crop || (b.x1 >= crop.x && b.y1 >= crop.y && b.x2 <= crop.x + crop.w && b.y2 <= crop.y + crop.h);
   const box = (x1, y1, x2, y2) => ({ x1: Math.min(x1, x2), y1: Math.min(y1, y2), x2: Math.max(x1, x2), y2: Math.max(y1, y2) });
+  const hits = [];
 
   // ---- what is already on the plan ----
   (extra || []).forEach(b => grid.add(b));
@@ -5776,134 +5919,286 @@ function layoutPlanLabels(g, k, tagReqs, extra) {
     const h = r.vs * 9;
     grid.add(box(r.q.x - h, r.q.y - h, r.q.x + h, r.q.y + h));
   });
+  /* The pipework itself: a label sits on its own run, never on someone
+     else's — covering the next pipe is exactly what hid the detail. A square
+     leg is one box in pieces; a slanting one is a chain of small ones. */
+  S.segs.forEach(sg => {
+    const pts = sg.pts || [];
+    if (pts.length < 2) return;
+    const w = (sg.mode === 'single' ? 0 : pairOffsetDraw(sg, k)) + pipeWidthDraw(sg, k) / 2 + 1.5 * k;
+    const piece = 1800 * k;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i];
+      const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy);
+      if (L < 1e-6) continue;
+      const square = Math.abs(dx) < 1e-6 || Math.abs(dy) < 1e-6;
+      const step = square ? piece : 3 * k;
+      const ww = square ? w : Math.max(w * 0.7, 1.5 * k);
+      for (let d = 0; d < L; d += step) {
+        const e = Math.min(L, d + step);
+        const x1 = a.x + dx * d / L, y1 = a.y + dy * d / L, x2 = a.x + dx * e / L, y2 = a.y + dy * e / L;
+        const bx = square ? box(x1 - ww, y1 - ww, x2 + ww, y2 + ww)
+                          : box((x1 + x2) / 2 - ww, (y1 + y2) / 2 - ww, (x1 + x2) / 2 + ww, (y1 + y2) / 2 + ww);
+        bx.o = sg.id; bx.pipe = true;
+        grid.add(bx);
+      }
+    }
+  });
 
-  // ---- run labels: size, flow and length ----
-  const fs = 10 * kt, cw = fs * 0.6, lh = fs * 1.55;
-  const pfs = fs * 1.02, pillH = pfs * 1.6;
+  // ---- leaders: a thin line from the pipe to a label pulled away from it ----
+  const nearestOnBox = (b, x, y) => ({ x: clamp(x, b.x1, b.x2), y: clamp(y, b.y1, b.y2) });
+  /* Leaders are tested and reserved as a close chain of small boxes, so a
+     later line cannot slip between two of them and cross. */
+  const LSTEP = 2.5 * k;
+  const leaderClear = (ax, ay, b, from) => {
+    const e = nearestOnBox(b, ax, ay);
+    const L = Math.hypot(e.x - ax, e.y - ay);
+    for (let d = Math.max(8 * k, from || 0); d < L - 2 * k; d += LSTEP) {
+      const x = ax + (e.x - ax) * d / L, y = ay + (e.y - ay) * d / L;
+      if (grid.hits(box(x - k, y - k, x + k, y + k), null, true)) return false;
+    }
+    return true;
+  };
+  // how much a leader would run through, for choosing the least bad spot
+  const leaderCost = (ax, ay, b, from) => {
+    const e = nearestOnBox(b, ax, ay);
+    const L = Math.hypot(e.x - ax, e.y - ay);
+    let n = 0;
+    for (let d = Math.max(8 * k, from || 0); d < L - 2 * k; d += LSTEP * 2) {
+      const x = ax + (e.x - ax) * d / L, y = ay + (e.y - ay) * d / L;
+      if (grid.hits(box(x - k, y - k, x + k, y + k), null, true)) n++;
+    }
+    return n;
+  };
+  /* `from` starts the line clear of a valve symbol rather than on it; a
+     label on a pipe gets a dot where it is tied on. */
+  const drawLeader = (ax, ay, b, picked, from) => {
+    const e = nearestOnBox(b, ax, ay);
+    const L = Math.hypot(e.x - ax, e.y - ay);
+    const f = Math.min(from || 0, L);
+    if (L - f < 4 * k) return;
+    const ink = picked ? 'var(--measure)' : 'var(--ink-soft)';
+    g.appendChild(mk('line', { x1: ax + (e.x - ax) * f / L, y1: ay + (e.y - ay) * f / L, x2: e.x, y2: e.y,
+      stroke: ink, 'stroke-width': 0.9 * k }));
+    if (!from) g.appendChild(mk('circle', { cx: ax, cy: ay, r: 1.9 * k, fill: ink }));
+    // later labels keep off the line
+    for (let d = Math.max(8 * k, f); d < L - 2 * k; d += LSTEP) {
+      const x = ax + (e.x - ax) * d / L, y = ay + (e.y - ay) * d / L;
+      grid.add(box(x - 1.3 * k, y - 1.3 * k, x + 1.3 * k, y + 1.3 * k));
+    }
+  };
+  // a spot is good when the label is clear, inside the plate, and so is its leader
+  const clearAt = (c, b, own) => inCrop(b) && !grid.hits(b, own) && (!c.call || leaderClear(c.ax, c.ay, b));
+
   const pickedSegs = new Set();
   S.segs.forEach(sg => { if (isSel('seg', sg.id)) pickedSegs.add(sg.id); });
-  const order = (S.pxPerM > 0 ? S.segs : []).filter(sg => sg.pts && sg.pts.length > 1)
-    .sort((a, b) => (pickedSegs.has(b.id) - pickedSegs.has(a.id))
-      || ((b.isIndex ? 1 : 0) - (a.isIndex ? 1 : 0))
-      || ((b.circuit === b.id ? 1 : 0) - (a.circuit === a.id ? 1 : 0))
-      || ((b.lps || 0) - (a.lps || 0)) || ((b.lenM || 0) - (a.lenM || 0)));
-  order.forEach(sg => {
-    const warn = !!(sg.pipe && (sg.pipe.over || sg.pipe.slow));
-    if (lv === 0 && !warn && !pickedSegs.has(sg.id)) return;
+  const segVisible = sg => {
+    if (!(S.pxPerM > 0) || !sg.pts || sg.pts.length < 2) return false;
     if (crop) {
       const xs = sg.pts.map(p => p.x), ys = sg.pts.map(p => p.y);
       if (Math.max.apply(null, xs) < crop.x || Math.min.apply(null, xs) > crop.x + crop.w
-        || Math.max.apply(null, ys) < crop.y || Math.min.apply(null, ys) > crop.y + crop.h) return;
+        || Math.max.apply(null, ys) < crop.y || Math.min.apply(null, ys) > crop.y + crop.h) return false;
     }
-    let texts = runLabelTexts(sg);
-    if (lv === 1 && texts.length > 1) texts = texts.slice(1);
-    const circ = sg.circuit === sg.id ? circuitOf(sg) : null;
-    const pill = circ && circ.name && lv >= 1 ? String(circ.name) : '';
-    const pillW = pill ? pill.length * pfs * 0.62 + 14 * kt : 0;
-    const cands = runLabelCands(sg, k, lh + (pill ? pillH : 0));
-    const geom = (c, txt) => {
-      const W = Math.max(txt.length * cw + 10 * kt, pillW);
-      const up = lh / 2 + (pill ? pillH + kt : 0), dn = lh / 2;
-      const b = c.rot ? box(c.x - up, c.y - W / 2, c.x + dn, c.y + W / 2)
-                      : box(c.x - W / 2, c.y - up, c.x + W / 2, c.y + dn);
-      return { b, W };
-    };
-    let pick = null;
-    for (let ti = 0; ti < texts.length && !pick; ti++) {
-      for (const c of cands) {
-        const gm = geom(c, texts[ti]);
-        if (!inCrop(gm.b) || grid.hits(gm.b)) continue;
-        pick = { c, txt: texts[ti], gm };
-        break;
-      }
+    return true;
+  };
+
+  // ---- circuit names: always level, beside the main or pulled off it ----
+  const pfs = 10.2 * kt, pillH = pfs * 1.6;
+  const drawPill = (sg, name, cx, cy, ax, ay, moved) => {
+    const W = name.length * pfs * 0.62 + 14 * kt;
+    const b = box(cx - W / 2, cy - pillH / 2, cx + W / 2, cy + pillH / 2);
+    if (moved || !(ax >= b.x1 && ax <= b.x2 && ay >= b.y1 && ay <= b.y2)) drawLeader(ax, ay, b, pickedSegs.has(sg.id));
+    g.appendChild(mk('rect', { x: b.x1, y: b.y1, width: W, height: pillH, rx: pillH / 2, fill: 'var(--live)' }));
+    g.appendChild(mk('text', { x: cx, y: cy + pfs * 0.36, 'text-anchor': 'middle',
+      'font-size': pfs, 'font-family': 'Archivo, sans-serif', 'font-weight': 700, fill: '#fff' }, name));
+    grid.add(b);
+    hits.push({ kind: 'pill', id: sg.id, b, ax, ay });
+  };
+  if (lv >= 1) S.segs.forEach(sg => {
+    if (sg.circuit !== sg.id || !segVisible(sg)) return;
+    const circ = circuitOf(sg);
+    const name = circ && circ.name ? String(circ.name) : '';
+    if (!name) return;
+    if (hasLabelAt(sg.pillAt)) {
+      const a = polyAt(sg.pts, parseFloat(sg.pillAt.t) || 0.5);
+      const c = labelOffsetPt(a.x, a.y, sg.pillAt);
+      drawPill(sg, name, c.x, c.y, a.x, a.y, true);
+      return;
     }
-    if (!pick && (force || pickedSegs.has(sg.id) || warn) && cands.length) {
-      const txt = texts[texts.length - 1];
-      let best = null;
-      cands.slice(0, 24).forEach(c => {
-        const gm = geom(c, txt);
-        const sc = grid.count(gm.b) + (inCrop(gm.b) ? 0 : 1000);
-        if (!best || sc < best.sc) best = { c, gm, sc };
+    const W = name.length * pfs * 0.62 + 14 * kt;
+    const off = (sg.mode === 'single' ? 0 : pairOffsetDraw(sg, k)) + pipeWidthDraw(sg, k) / 2 + 3 * k;
+    const cands = [];
+    runAnchors(sg).forEach(an => {
+      [0, -0.25, 0.25].forEach(f => {
+        // slide along the leg a little, then stand off it on either side
+        const L = Math.hypot(an.tx, an.ty) || 1;
+        [1, -1].forEach(sd => {
+          const nx = an.nx * sd, ny = an.ny * sd;
+          const d = off + Math.abs(nx) * W / 2 + Math.abs(ny) * pillH / 2;
+          const bx = an.x + an.tx / L * f * 60 * k, by = an.y + an.ty / L * f * 60 * k;
+          cands.push({ x: bx + nx * d, y: by + ny * d, ax: bx, ay: by });
+        });
       });
-      pick = { c: best.c, txt, gm: best.gm };
-    }
-    if (!pick) return;
-    grid.add(pick.gm.b);
-    const { c, txt, gm } = pick;
+    });
+    if (callouts) runAnchors(sg).forEach(an => ringCands(an.x, an.y, W / 2, pillH / 2, an.nx, an.ny, k, farOut).forEach(c => cands.push(c)));
+    const fit = cands.find(c => clearAt(c, box(c.x - W / 2, c.y - pillH / 2, c.x + W / 2, c.y + pillH / 2), sg.id));
+    const pick = fit || (cands.length && (force || pickedSegs.has(sg.id)) ? cands[0] : null);
+    if (pick) drawPill(sg, name, pick.x, pick.y, pick.ax, pick.ay, !!pick.call);
+  });
+
+  // ---- run labels: size, flow and length ----
+  const fs = 10 * kt, cw = fs * 0.6, lh = fs * 1.55;
+  const drawRunLabel = (sg, c, txt, warn) => {
+    const W = txt.length * cw + 10 * kt;
+    const b = c.rot ? box(c.x - lh / 2, c.y - W / 2, c.x + lh / 2, c.y + W / 2)
+                    : box(c.x - W / 2, c.y - lh / 2, c.x + W / 2, c.y + lh / 2);
+    if (c.call || c.moved) drawLeader(c.ax, c.ay, b, pickedSegs.has(sg.id));
     const blk = mk('g', { transform: 'translate(' + c.x + ' ' + c.y + ')' + (c.rot ? ' rotate(' + c.rot + ')' : '') });
-    blk.appendChild(mk('rect', { x: -gm.W / 2, y: -lh / 2, width: gm.W, height: lh,
+    blk.appendChild(mk('rect', { x: -W / 2, y: -lh / 2, width: W, height: lh,
       rx: 2 * kt, fill: 'rgba(255,255,255,.94)', stroke: sg.isIndex ? 'var(--measure)' : 'var(--rule-2)',
       'stroke-width': (sg.isIndex ? 1.2 : 0.8) * k }));
     blk.appendChild(mk('text', { x: 0, y: fs * 0.36, 'text-anchor': 'middle',
       'font-size': fs, 'font-family': 'Azeret Mono, monospace', 'font-weight': 500,
       fill: warn ? 'var(--alarm)' : 'var(--ink)' }, txt));
-    /* A named circuit carries its name on its main, over the size. */
-    if (pill) {
-      blk.appendChild(mk('rect', { x: -pillW / 2, y: -lh / 2 - pillH - kt, width: pillW, height: pillH,
-        rx: pillH / 2, fill: 'var(--live)' }));
-      blk.appendChild(mk('text', { x: 0, y: -lh / 2 - kt - pillH * 0.3, 'text-anchor': 'middle',
-        'font-size': pfs, 'font-family': 'Archivo, sans-serif', 'font-weight': 700, fill: '#fff' }, pill));
-    }
     g.appendChild(blk);
+    grid.add(b);
+    hits.push({ kind: 'seg', id: sg.id, b, ax: c.ax, ay: c.ay });
+  };
+  const runBox = (c, txt) => {
+    const W = txt.length * cw + 10 * kt;
+    return c.rot ? box(c.x - lh / 2, c.y - W / 2, c.x + lh / 2, c.y + W / 2)
+                 : box(c.x - W / 2, c.y - lh / 2, c.x + W / 2, c.y + lh / 2);
+  };
+  const order = S.segs.filter(segVisible)
+    .sort((a, b) => (pickedSegs.has(b.id) - pickedSegs.has(a.id))
+      || ((b.isIndex ? 1 : 0) - (a.isIndex ? 1 : 0))
+      || ((b.circuit === b.id ? 1 : 0) - (a.circuit === a.id ? 1 : 0))
+      || ((b.lps || 0) - (a.lps || 0)) || ((b.lenM || 0) - (a.lenM || 0)));
+  const shown = sg => {
+    const warn = !!(sg.pipe && (sg.pipe.over || sg.pipe.slow));
+    return { warn, on: !(lv === 0 && !warn && !pickedSegs.has(sg.id)) };
+  };
+  // labels put somewhere by hand go down first, exactly where they were put
+  order.forEach(sg => {
+    if (!hasLabelAt(sg.lab)) return;
+    const s = shown(sg);
+    if (!s.on) return;
+    const a = polyAt(sg.pts, parseFloat(sg.lab.t) || 0.5);
+    const c = labelOffsetPt(a.x, a.y, sg.lab);
+    drawRunLabel(sg, { x: c.x, y: c.y, rot: 0, ax: a.x, ay: a.y, moved: true }, runLabelTexts(sg)[0], s.warn);
+  });
+  order.forEach(sg => {
+    if (hasLabelAt(sg.lab)) return;
+    const s = shown(sg);
+    if (!s.on) return;
+    let texts = runLabelTexts(sg);
+    if (lv === 1 && texts.length > 1) texts = texts.slice(1);
+    const onPipe = runLabelCands(sg, k, lh);
+    /* Full text on the pipe, then the shorter text on the pipe, then pulled
+       out to the side on a leader, then size alone. */
+    const plan = [];
+    texts.forEach((txt, i) => {
+      const last = i === texts.length - 1 && texts.length > 1;
+      if (!last) plan.push({ txt, call: false });
+    });
+    if (callouts) texts.slice(0, Math.max(1, texts.length - 1)).forEach(txt => plan.push({ txt, call: true }));
+    plan.push({ txt: texts[texts.length - 1], call: false });
+    if (callouts) plan.push({ txt: texts[texts.length - 1], call: true });
+    let pick = null;
+    const ringFor = txt => {
+      const W = txt.length * cw + 10 * kt;
+      const out = [];
+      runAnchors(sg).forEach(an => ringCands(an.x, an.y, W / 2, lh / 2, an.nx, an.ny, k, farOut).forEach(c => out.push(c)));
+      return out;
+    };
+    for (const step of plan) {
+      const cands = step.call ? ringFor(step.txt) : onPipe;
+      const c = cands.find(cc => clearAt(cc, runBox(cc, step.txt), sg.id));
+      if (c) { pick = { c, txt: step.txt }; break; }
+    }
+    if (!pick && (force || pickedSegs.has(sg.id) || s.warn) && onPipe.length) {
+      /* Nowhere clear: the shortest text where it covers least, on the pipe
+         or pulled out, the pipe winning a tie. */
+      const txt = texts[texts.length - 1];
+      let best = null;
+      onPipe.slice(0, 24).concat(farOut ? ringFor(txt) : []).forEach(c => {
+        const b = runBox(c, txt);
+        const sc = grid.count(b, sg.id) * 10 + (inCrop(b) ? 0 : 10000) + (c.call ? 1 + leaderCost(c.ax, c.ay, b) * 3 : 0);
+        if (!best || sc < best.sc) best = { c, sc };
+      });
+      pick = { c: best.c, txt };
+    }
+    if (pick) drawRunLabel(sg, pick.c, pick.txt, s.warn);
   });
 
   // ---- valve tags ----
-  /* Each tag starts where it wants to be — flow leg above the pipe, return
-     below — and steps further out until it is clear of everything already
-     written. If it has had to travel it gets a leader back to its valve. A
-     tag with nowhere to go is left off on screen until the zoom makes room;
-     a system plate always carries it. Zoomed out on automatic labels, and
-     on the whole-site plate, the tags wait for the zoom altogether. */
+  /* Each tag starts where it wants to be — out from the pipe, square to it,
+     on the side of the leg the valve is on — and steps further out until it
+     is clear of everything already written, then tries the other side, then
+     a step along the pipe, then pulls out round the valve on a leader. A tag
+     with nowhere to go is left off on screen until the zoom makes room; a
+     system plate always carries it. Zoomed out on automatic labels, and on
+     the whole-site plate, the tags wait for the zoom altogether. */
   const tagsOn = exporting ? exportKind !== 'key' : lv >= 2;
-  if (!tagsOn) return;
-  const tfs = 8 * kt, step = 11 * kt;
-  tagReqs.forEach(r => {
-    if (!r.tag) return;
-    const q = r.q;
-    if (crop && (q.x < crop.x || q.y < crop.y || q.x > crop.x + crop.w || q.y > crop.y + crop.h)) return;
-    /* Out from the pipe, square to it, on the side of the leg the valve is
-       on — the flow side for a flow valve, the return side for a return one —
-       so a tag on a vertical branch stands beside it rather than stacking
-       along it on top of the next valve. The other side is the second
-       choice, a step along the pipe the third. */
-    const ang = q.ang || 0;
-    const nx = -Math.sin(ang), ny = Math.cos(ang);
-    const sign = r.it.leg === 'return' ? 1 : -1;
-    const wPx = r.tag.length * tfs * 0.68 + 8 * kt;
-    const hw = wPx / 2, hh = tfs * 0.69;
-    const clear = r.vs * 11 + 3 * k;
-    const tryAt = (sd, i, along) => {
-      const dx = nx * sd, dy = ny * sd;
-      const reach = Math.abs(dx) * hw + Math.abs(dy) * hh;     // half the tag, measured out from the pipe
-      const dd = clear + reach + i * step;
-      const cx = q.x + dx * dd + Math.cos(ang) * along, cy = q.y + dy * dd + Math.sin(ang) * along;
-      return { cx, cy, dd, reach, sd, b: box(cx - hw, cy - hh, cx + hw, cy + hh) };
+  if (tagsOn) {
+    const tfs = 8 * kt, step = 11 * kt;
+    const drawTag = (r, cx, cy, b, lead) => {
+      if (lead) drawLeader(r.q.x, r.q.y, b, r.picked, r.vs * 9);
+      g.appendChild(mk('rect', { x: b.x1, y: b.y1, width: b.x2 - b.x1, height: b.y2 - b.y1,
+        rx: 1.5 * kt, fill: 'rgba(255,255,255,.92)' }));
+      g.appendChild(mk('text', { x: cx, y: cy + tfs * 0.35, 'text-anchor': 'middle',
+        'font-size': tfs, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+        fill: r.picked ? 'var(--measure)' : 'var(--ink-soft)' }, r.tag));
+      grid.add(b);
+      hits.push({ kind: 'tag', id: r.it.id, b, ax: r.q.x, ay: r.q.y });
     };
-    const cands = [];
-    for (let i = 0; i < 7; i++) cands.push(tryAt(sign, i, 0));
-    for (let i = 0; i < 4; i++) cands.push(tryAt(-sign, i, 0));
-    [1, -1].forEach(a => { for (let i = 0; i < 3; i++) cands.push(tryAt(sign, i, a * (hw * 2 + 3 * kt))); });
-    let pick = cands.find(c => inCrop(c.b) && !grid.hits(c.b));
-    if (!pick) {
-      if (!force && !r.picked) return;
-      pick = cands.reduce((best, c) => {
-        const sc = grid.count(c.b) + (inCrop(c.b) ? 0 : 1000);
-        return (!best || sc < best.sc) ? Object.assign({ sc }, c) : best;
-      }, null);
-    }
-    grid.add(pick.b);
-    // a leader only where the tag has been pushed off its own valve
-    if (pick.cx !== cands[0].cx || pick.cy !== cands[0].cy) {
-      g.appendChild(mk('line', { x1: q.x + nx * pick.sd * clear * 0.8, y1: q.y + ny * pick.sd * clear * 0.8,
-        x2: pick.cx - nx * pick.sd * pick.reach, y2: pick.cy - ny * pick.sd * pick.reach,
-        stroke: 'var(--rule-2)', 'stroke-width': 0.9 * k }));
-    }
-    g.appendChild(mk('rect', { x: pick.cx - hw, y: pick.cy - hh, width: wPx, height: hh * 2,
-      rx: 1.5 * kt, fill: 'rgba(255,255,255,.92)' }));
-    g.appendChild(mk('text', { x: pick.cx, y: pick.cy + tfs * 0.35, 'text-anchor': 'middle',
-      'font-size': tfs, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
-      fill: r.picked ? 'var(--measure)' : 'var(--ink-soft)' }, r.tag));
-  });
+    const reqs = tagReqs.filter(r => r.tag && !(crop && (r.q.x < crop.x || r.q.y < crop.y
+      || r.q.x > crop.x + crop.w || r.q.y > crop.y + crop.h)));
+    const tagSize = r => { const wPx = r.tag.length * tfs * 0.68 + 8 * kt; return { hw: wPx / 2, hh: tfs * 0.69 }; };
+    // by hand first
+    reqs.forEach(r => {
+      if (!hasLabelAt(r.it.tagAt)) return;
+      const { hw, hh } = tagSize(r);
+      const c = labelOffsetPt(r.q.x, r.q.y, r.it.tagAt);
+      drawTag(r, c.x, c.y, box(c.x - hw, c.y - hh, c.x + hw, c.y + hh), true);
+    });
+    reqs.forEach(r => {
+      if (hasLabelAt(r.it.tagAt)) return;
+      const q = r.q;
+      const ang = q.ang || 0;
+      const nx = -Math.sin(ang), ny = Math.cos(ang);
+      const sign = r.it.leg === 'return' ? 1 : -1;
+      const { hw, hh } = tagSize(r);
+      const clear = r.vs * 11 + 3 * k;
+      const tryAt = (sd, i, along) => {
+        const dx = nx * sd, dy = ny * sd;
+        const reach = Math.abs(dx) * hw + Math.abs(dy) * hh;
+        const dd = clear + reach + i * step;
+        const cx = q.x + dx * dd + Math.cos(ang) * along, cy = q.y + dy * dd + Math.sin(ang) * along;
+        return { cx, cy, b: box(cx - hw, cy - hh, cx + hw, cy + hh) };
+      };
+      const cands = [];
+      for (let i = 0; i < 7; i++) cands.push(tryAt(sign, i, 0));
+      for (let i = 0; i < 4; i++) cands.push(tryAt(-sign, i, 0));
+      [1, -1].forEach(a => { for (let i = 0; i < 3; i++) cands.push(tryAt(sign, i, a * (hw * 2 + 3 * kt))); });
+      if (callouts) ringCands(q.x, q.y, hw, hh, nx * sign, ny * sign, k, farOut).forEach(c => {
+        const rc = { cx: c.x, cy: c.y, b: box(c.x - hw, c.y - hh, c.x + hw, c.y + hh), call: true };
+        cands.push(rc);
+      });
+      const own = r.it.seg;
+      let pick = cands.find(c => inCrop(c.b) && !grid.hits(c.b, own) && (!c.call || leaderClear(q.x, q.y, c.b, r.vs * 9)));
+      if (!pick) {
+        if (!force && !r.picked) return;
+        pick = cands.reduce((best, c) => {
+          const sc = grid.count(c.b, own) * 10 + (inCrop(c.b) ? 0 : 10000) + (farOut ? leaderCost(q.x, q.y, c.b, r.vs * 9) * 3 : 0);
+          return (!best || sc < best.sc) ? Object.assign({ sc }, c) : best;
+        }, null);
+      }
+      // a leader only where the tag has been pushed off its own valve
+      drawTag(r, pick.cx, pick.cy, pick.b, pick !== cands[0]);
+    });
+  }
+  if (!exporting) labelHits = hits;
 }
 
 /* ==========================================================================
@@ -6017,6 +6312,8 @@ function systemsDialog(focusId) {
     + '<button class="btn ghost" id="sysAddSel"' + (hasSel ? '' : ' disabled title="Lasso something with Select first"')
     + '>+ Frame the selection</button>'
     + '<button class="btn ghost" id="sysWhole">Whole sheet</button>'
+    + (movedLabelCount() ? '<button class="btn ghost" id="sysLblBack" title="Every label and tag moved by hand goes back to where the layout puts it">'
+      + 'Put ' + movedLabelCount() + ' moved label' + (movedLabelCount() === 1 ? '' : 's') + ' back</button>' : '')
     + '<label style="margin-left:auto;font-size:12.5px"><input type="checkbox" id="sysShow"'
     + (S.settings.showViews === false ? '' : ' checked') + '> Show frames on the plan</label>'
     + '<button class="btn ghost" onclick="closeModal()">Close</button></div>';
@@ -6047,6 +6344,7 @@ function systemsDialog(focusId) {
   el('sysAddScreen').addEventListener('click', () => add(screenRect()));
   el('sysAddSel').addEventListener('click', () => add(selectionRect()));
   el('sysWhole').addEventListener('click', () => { closeModal(); zoomFit(); render(); });
+  if (el('sysLblBack')) el('sysLblBack').addEventListener('click', () => { putAllLabelsBack(); systemsDialog(); });
   el('sysShow').addEventListener('change', e => { S.settings.showViews = e.target.checked; render(); });
   if (focusId != null) {
     const inp = body.querySelector('[data-vname="' + focusId + '"]');
@@ -10350,7 +10648,13 @@ function planImage(opts) {
       over.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
     };
     const base = new Image();
-    base.onload = () => { ctx.drawImage(base, -crop.x * f, -crop.y * f, S.img.w * f, S.img.h * f); drawOver(); };
+    base.onload = () => {
+      // faded on the plate as it is on screen, over white paper
+      ctx.globalAlpha = sheetFade();
+      ctx.drawImage(base, -crop.x * f, -crop.y * f, S.img.w * f, S.img.h * f);
+      ctx.globalAlpha = 1;
+      drawOver();
+    };
     base.onerror = drawOver;
     base.src = S.img.src;
   });
@@ -11793,7 +12097,7 @@ function loadProject(data) {
   closeInspector();
   refreshUndoBtn();
   el('orthoChk').checked = !!S.settings.ortho;   // the file may hold its own answer
-  refreshLabelBtn(); refreshTrueSizeBtn(); refreshTextBtn(); refreshValveBtn();
+  refreshLabelBtn(); refreshTrueSizeBtn(); refreshTextBtn(); refreshValveBtn(); refreshFadeBtn();
   syncConceptUi();
   buildRail(); render();
   toast('Opened ' + (S.ref || 'project') + revLabel(S));
@@ -12182,6 +12486,17 @@ function mapTakeoff(T, s) {
     v.x = Math.min.apply(null, xs); v.y = Math.min.apply(null, ys);
     v.w = Math.max.apply(null, xs) - v.x; v.h = Math.max.apply(null, ys) - v.y;
   });
+  /* A label moved by hand is an offset in metres on the sheet's axes, so it
+     turns with the sheet and is never scaled. */
+  const O2 = T({ x: 0, y: 0 }), X2 = T({ x: 1, y: 0 }), Y2 = T({ x: 0, y: 1 });
+  const turnAt = at => {
+    if (!hasLabelAt(at)) return;
+    const dx = parseFloat(at.dx), dy = parseFloat(at.dy);
+    at.dx = +(((X2.x - O2.x) * dx + (Y2.x - O2.x) * dy) / s).toFixed(3);
+    at.dy = +(((X2.y - O2.y) * dx + (Y2.y - O2.y) * dy) / s).toFixed(3);
+  };
+  S.segs.forEach(sg => { turnAt(sg.lab); turnAt(sg.pillAt); });
+  S.items.forEach(it => turnAt(it.tagAt));
   if (S.calib && S.calib.a && S.calib.b) { S.calib.a = T(S.calib.a); S.calib.b = T(S.calib.b); }
   if (draft && draft.pts) draft.pts = draft.pts.map(T);   // mid-trace and mid-tape survive a rotation
 }
@@ -12687,6 +13002,14 @@ const HELP = [
       + 'writing and the valve symbols smaller or larger (60\u2013125%). The <b>Aa</b> button cycles what is written: '
       + 'automatic (names and size \u00b7 flow only when zoomed out), everything (every run labelled, overlapping if it '
       + 'must), or nothing but the warnings.' },
+    { id: 'movelabel', t: 'A label is in the wrong place \u2014 move it', b: 'With <b>Select</b>, drag any pipe label, '
+      + 'circuit name or valve tag to where it reads best; a thin line goes back to its pipe or valve. It stays there, '
+      + 'moves with the pipework and is used in the PDF. <b>Double-click</b> it to put it back. Where there is no room '
+      + 'on the pipe the tool already pulls a label out to the side on a line of its own. <b>Systems \u2192 Put moved '
+      + 'labels back</b> resets the lot.' },
+    { id: 'fade', t: 'The drawing\u2019s own text fights with the labels', b: 'The <b>&#9680;</b> button by the zoom fades '
+      + 'the drawing under the trace (70%, 45%, 25%) so the trace and its labels stand out. The PDF plates are faded '
+      + 'the same. The tool cannot see text that is part of the drawing, so this is the way round it.' },
     { id: 'hidevalves', t: 'The valves clutter the plan \u2014 hide them', b: 'The valve button by the zoom '
       + '(&#8904;) steps through valves with tags, valves without tags, and no valves. Hidden valves are still in '
       + 'the take-off, the schedules and every kPa; they are only off the plan and the PDF plates. Opening the '
@@ -13775,6 +14098,20 @@ sc.addEventListener('pointerdown', ev => {
   }
 
   if (tool === 'select' && ev.button === 0) {
+    /* A label is on top of everything, so it is what a click on it means:
+       drag it somewhere clearer, or click it to pick its run or valve. */
+    const lh = ev.shiftKey ? null : hitLabel(p);
+    if (lh) {
+      /* Two clicks on the same label put it back. Counted here rather than
+         by the browser's dblclick, which never fires on a label: the first
+         click redraws it, and a click on a new element starts a new count. */
+      const now = Date.now();
+      const again = lastLabelClick && lastLabelClick.kind === lh.kind && lastLabelClick.id === lh.id
+        && now - lastLabelClick.t < 450;
+      lastLabelClick = { kind: lh.kind, id: lh.id, t: now };
+      if (again && putLabelBack(lh)) { lastLabelClick = null; return; }
+      beginLabelDrag(lh, p); sc.setPointerCapture(ev.pointerId); return;
+    }
     const hit = hitAny(p);
     if (ev.shiftKey) {
       if (hit) { toggleInSelection(hit.kind, hit.id); return; }
@@ -13999,6 +14336,15 @@ sc.addEventListener('pointermove', ev => {
     sc.scrollTop  = panning.t - (ev.clientY - panning.sy);
     return;
   }
+  if (drag && drag.label) {
+    const p = toDwg(ev);
+    if (!drag.moved && dist(p, { x: drag.ox, y: drag.oy }) * zoom < 3) return;
+    if (!drag.moved) pushUndo('move a label');
+    drag.moved = true;
+    moveLabelTo(drag, drag.cx + p.x - drag.ox, drag.cy + p.y - drag.oy);
+    scheduleRender();
+    return;
+  }
   if (drag && drag.port) {
     // stays on the component, sliding round its outline to wherever it is led
     const p = toDwg(ev);
@@ -14068,6 +14414,10 @@ function endPointer(ev) {
   }
   if (panning) { panning = null; }
   syncPanCursor();
+  if (drag && drag.label && drag.moved && !labelMoveSaid) {
+    labelMoveSaid = true;
+    toast('Label moved \u2014 it stays there, here and in the PDF. Double-click it to put it back.');
+  }
   if (drag) { if (drag.moved) openInspector(); drag = null; }
   try { sc.releasePointerCapture(ev.pointerId); } catch (e) {}
 }
@@ -14373,8 +14723,9 @@ el('zLbl').addEventListener('click', cycleLabels);
 el('zSys').addEventListener('click', () => systemsDialog());
 el('zTxt').addEventListener('click', cyclePlanText);
 el('zVlv').addEventListener('click', cycleValveView);
+el('zFade').addEventListener('click', cycleSheetFade);
 el('zTrue').addEventListener('click', toggleTrueSize);
-refreshLabelBtn(); refreshTextBtn(); refreshValveBtn();
+refreshLabelBtn(); refreshTextBtn(); refreshValveBtn(); refreshFadeBtn();
 refreshTrueSizeBtn();
 
 el('modal').addEventListener('click', e => { if (e.target === el('modal')) closeModal(); });

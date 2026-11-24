@@ -33,7 +33,7 @@ ok(!/\(sg\.pipe \? sg\.pipe\.nom \+ '  ' : ''\) \+ fmt\(sg\.lenM, 1\) \+ ' m'/.t
   'the old size-and-length label drawn in the run loop is gone');
 
 // ---- the layout ----
-ok(/function labelGrid\(cell\)/.test(trace) && /hits\(b\)/.test(trace) && /count\(b\)/.test(trace),
+ok(/function labelGrid\(cell\)/.test(trace) && /hits\(b, owner, ignorePipes\)/.test(trace) && /count\(b, owner\)/.test(trace),
   'labels are placed against a spatial grid of what is already written');
 ok(/function layoutPlanLabels\(g, k, tagReqs, extra\)/.test(trace)
   && /layoutPlanLabels\(g, k, tagReqs, viewTabs\.concat\(hpTags\)\);/.test(trace),
@@ -89,6 +89,29 @@ ok(/function systemSectionHtml\(sy, i\)/.test(trace) && /systems\.map\(\(sy, i\)
   && /\.sys\{page-break-before:always;break-before:page\}/.test(trace),
   'each system is a sheet of its own with its runs and valves');
 ok(/if \(exporting && exportKind === 'system'\) return out;/.test(trace), 'a system’s own plate does not draw the frames');
+
+// ---- callouts, moving a label, fading the sheet ----
+ok(/bx\.o = sg\.id; bx\.pipe = true;/.test(trace) && /hits\(b, owner, ignorePipes\)/.test(trace),
+  'other runs’ pipework is an obstacle; a label may sit on its own run');
+ok(/function ringCands\(ax, ay, hw, hh, nx, ny, k, far\)/.test(trace) && /function runAnchors\(sg\)/.test(trace)
+  && /const drawLeader = \(ax, ay, b, picked, from\)/.test(trace) && /const leaderClear = \(ax, ay, b, from\)/.test(trace),
+  'a label with no room on its pipe is pulled out on a leader that crosses no label');
+ok(/const callouts = exporting \? exportKind !== 'key' : \(lv >= 2 && S\.pxPerM \* zoom >= 22\);/.test(trace),
+  'pull-outs wait for the zoom on screen');
+ok(/const drawPill = \(sg, name, cx, cy, ax, ay, moved\)/.test(trace), 'circuit names are drawn level, on their own');
+ok(/function hitLabel\(p\)/.test(trace) && /const lh = ev\.shiftKey \? null : hitLabel\(p\);/.test(trace)
+  && /function beginLabelDrag\(lh, p\)/.test(trace) && /function moveLabelTo\(d, cx, cy\)/.test(trace),
+  'a label is picked up and moved with Select');
+ok(/sg\[d\.label\.kind === 'pill' \? 'pillAt' : 'lab'\]/.test(trace) && /it\.tagAt = at;/.test(trace),
+  'a moved label is held on its run or valve');
+ok(/S\.segs\.forEach\(sg => \{ turnAt\(sg\.lab\); turnAt\(sg\.pillAt\); \}\);/.test(trace), 'moved labels turn with the sheet');
+ok(/again && putLabelBack\(lh\)/.test(trace) && /function putAllLabelsBack\(\)/.test(trace),
+  'two clicks put a label back; the Systems list puts them all back');
+ok(/sheetFade: 1,/.test(trace) && /el\('dwg'\)\.style\.opacity = sheetFade\(\);/.test(trace)
+  && /ctx\.globalAlpha = sheetFade\(\);/.test(trace) && /id="zFade"/.test(trace),
+  'the drawing can be faded, on screen and on the plates');
+ok(/id: 'movelabel'/.test(trace) && /id: 'fade'/.test(trace), 'the help says how');
+ok(/A label can be moved by hand/.test(claude) && /The drawing can be faded/.test(claude), 'CLAUDE.md describes them');
 
 // ---- the handover ----
 ok(/### Labels, valve visibility and systems on the plan/.test(claude) && /layoutPlanLabels\(\)/.test(claude)

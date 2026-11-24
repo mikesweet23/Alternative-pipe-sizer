@@ -633,6 +633,41 @@ then a step along the pipe, with a leader when it moved; on automatic labels
 the tags wait for level 2. Tags no longer stack along a vertical branch on
 top of the next valve.
 
+**Pipework is an obstacle too, and a label with no room is pulled out on a
+leader.** Every run's pipe (both legs of a pair) goes into the grid with its
+owner (`o`) and `pipe: true`; a label never minds its own run's pipe but
+never covers another's — covering the next pipe is what hid the detail on a
+site sheet. When nothing fits on the pipe, `ringCands()` tries spots round the
+middle of the two longest legs (`runAnchors()`), square to the pipe first, and
+the label is drawn there with a thin leader and a dot where it is tied on
+(`drawLeader()`). Leaders may cross pipework but not labels, units or other
+leaders (`leaderClear()`), and are reserved as a close chain of small boxes so
+a later one cannot slip through. The order for a run: full text on the pipe,
+size · flow on the pipe, full and size · flow pulled out, size alone. On
+screen the pull-outs only start once zoomed in past about 22 px to the metre
+(below that a site would become a web of lines); a system plate also looks
+further out (`farOut`) and, if it must, puts the shortest text where it covers
+least, counting leader crossings (`leaderCost()`). Circuit names are always
+level now — beside the main or pulled off it — never stood on end.
+
+**A label can be moved by hand.** With Select, `hitLabel()` reads
+`labelHits` (what the last on-screen redraw wrote — never an export) before
+anything else, so a drag picks up the label (`beginLabelDrag()`,
+`moveLabelTo()`) and a click picks its run or valve. The position is an offset
+in metres from a point on the run — `lab` and `pillAt`, `{ t, dx, dy }` — or
+from the valve, `tagAt` `{ dx, dy }`; it follows the pipework, turns with the
+sheet in `mapTakeoff()`, is saved and copied with the run, is in undo, and is
+drawn first, exactly where it was put, on screen and on every plate. Two
+clicks on it within 450 ms put it back (`putLabelBack()`; counted in
+`pointerdown`, because the browser's dblclick never fires on a label the first
+click has just redrawn). *Systems → Put moved labels back* resets every one
+(`putAllLabelsBack()`).
+
+**The drawing can be faded** — `sheetFade` (1, 0.7, 0.45, 0.25, the ◐
+button, `cycleSheetFade()`), the opacity of `#dwg` on screen and the alpha the
+plate draws the sheet at. The tool cannot see the drawing's own text, so
+fading it is how the trace's labels are made to read over it.
+
 **The writing and valve symbols have a size of their own**, `planText`
 (default 0.8, `PLAN_TEXT_STEPS` 60–125%, the % button by the zoom,
 `planTextScale()`). It scales the run labels, tags, component names, vessel
