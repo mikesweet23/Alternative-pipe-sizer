@@ -866,7 +866,10 @@
         <div class="lvl" id="zLvl">100%</div>
         <button id="zIn" title="Zoom in">+</button>
         <button id="zFit" title="Fit the drawing">Fit</button>
+        <button id="zSys" title="Systems &mdash; named areas of the drawing: jump to one, frame a new one; each gets its own plate in the PDF">Systems</button>
         <button id="zLbl" title="Labels">Aa</button>
+        <button id="zTxt" title="Size of the writing and valve symbols on the plan">80%</button>
+        <button id="zVlv" class="on" title="Valves on the plan">&#8904;#</button>
         <button id="zTrue" class="on" title="Components and pipes at true size at every zoom">1:1</button>
       </div>
 
@@ -1606,6 +1609,10 @@ const S = {
   items: [],                 // { id, type, seg, t, leg, tag, kpa?, note? }
   /* Plan-only tape measures. Not a pipe, no rise, not on the schedule. */
   measures: [],              // { id, pts:[{x,y}], name, ref, note }
+  /* Systems: named frames on the sheet. A big site drawing carries several
+     systems; each frame is a view you can jump to and a plate of its own in
+     the PDF. Drawing coordinates, turned and moved with the take-off. */
+  views: [],                 // { id, name, x, y, w, h }
   nextId: 1,
   index: null,               // the critical path, refreshed by every solve
   /* One hydraulic circuit per pump: the primary, and one below each header or
@@ -1672,6 +1679,16 @@ function defaultSettings() {
     /* How much is written on the plan: 'auto' drops duties when zoomed out,
        'all' writes everything at every zoom, 'none' leaves the warnings. */
     labels: 'auto',
+    /* How big the writing and the valve symbols are on the plan, as a
+       fraction of the old fixed size. Smaller means more fits before the
+       layout has to drop a label. One of PLAN_TEXT_STEPS. */
+    planText: 0.8,
+    /* Placed valves drawn on the plan. Off hides the symbols and their tags
+       from the sheet and the plates; they stay in the take-off, the schedule
+       and every figure. The palette shows them again while it is open. */
+    showValves: true,
+    /* System frames (S.views) drawn on the plan as a key. */
+    showViews: true,
     /* New take-offs use temperature-corrected viscosity. An explicit 'fixed'
        is the legacy 0.00131 Pa.s. Written onto the sizer exchange file. */
     viscosityMode: 'temperature',
@@ -1725,7 +1742,7 @@ let undoSuspended = false;
    or stepping back past an unrelated edit would quietly undo a calibration. */
 function undoSnapshot(withScale) {
   return JSON.stringify({
-    nodes: S.nodes, segs: S.segs, items: S.items, measures: S.measures, nextId: S.nextId,
+    nodes: S.nodes, segs: S.segs, items: S.items, measures: S.measures, views: S.views || [], nextId: S.nextId,
     imgRot: imgRot(), imgTok: S.img ? S.img.tok : null,
     scale: withScale ? { pxPerM: S.pxPerM, calib: S.calib } : undefined,
   });
@@ -1755,6 +1772,7 @@ function undo() {
   catch (e) { refreshUndoBtn(); toast('That undo step could not be read and was dropped'); return; }
   S.nodes = d.nodes; S.segs = d.segs; S.items = d.items || [];
   S.measures = d.measures || []; S.nextId = d.nextId;
+  if (Array.isArray(d.views)) S.views = d.views;
   // an alignment moved the take-off and the scale together; both go back
   if (d.scale) {
     S.pxPerM = parseFloat(d.scale.pxPerM) || 0;
@@ -1997,6 +2015,11 @@ const TRUE_SIZE_MIN_PX = 7;
    screen. Exports always get everything — the plate is drawn at a fixed
    zoom. */
 let exporting = false;
+/* What an export is drawing: 'key' is the whole-site plate, where a label
+   that will not fit is left off as it is on screen; 'system' is one system's
+   plate, where every run is labelled. exportCrop keeps the labels of a
+   system plate inside its frame. */
+let exportKind = null, exportCrop = null;
 function labelLevel() {
   if (exporting) return 2;
   const m = S.settings.labels || 'auto';
@@ -2037,6 +2060,66 @@ function toggleTrueSize() {
   render();
   toast(trueSizeOn() ? 'True size \u2014 what you see is the footprint on the drawing'
                      : 'Legible size \u2014 components held at a minimum on screen');
+}
+
+/* ---------- how big the writing is, and whether the valves are shown ----------
+   A whole site on one sheet is where the plan stopped being readable: the
+   labels hold a constant size on screen, so zoomed out over a site they pile
+   up on top of one another and the drawing under them disappears. Three
+   things answer it together:
+   - the writing and the valve symbols are smaller by default and can be
+     stepped (`planText`, the A button by the zoom);
+   - the run labels and valve tags are laid out against everything already
+     written (layoutPlanLabels), and one that cannot find room is dropped on
+     screen until you zoom in, rather than drawn over its neighbour;
+   - the valves can be taken off the plan altogether (`showValves`, the
+     valve button by the zoom). They stay in the take-off, the schedules and
+     every figure; it is a view, not a deletion. */
+const PLAN_TEXT_STEPS = [0.6, 0.8, 1, 1.25];
+function planTextScale() {
+  const v = parseFloat(S.settings && S.settings.planText);
+  return v > 0 ? clamp(v, 0.4, 2) : 0.8;
+}
+function cyclePlanText() {
+  const cur = planTextScale();
+  let i = PLAN_TEXT_STEPS.findIndex(x => Math.abs(x - cur) < 0.01);
+  S.settings.planText = PLAN_TEXT_STEPS[(i + 1) % PLAN_TEXT_STEPS.length];
+  refreshTextBtn();
+  render();
+  toast('Plan writing and symbols at ' + Math.round(S.settings.planText * 100) + '%');
+}
+function refreshTextBtn() {
+  const b = el('zTxt');
+  if (!b) return;
+  b.textContent = Math.round(planTextScale() * 100) + '%';
+  b.title = 'Writing and valve symbols on the plan at ' + Math.round(planTextScale() * 100)
+    + '% — click to step through ' + PLAN_TEXT_STEPS.map(x => Math.round(x * 100) + '%').join(', ');
+}
+/* The palette open means you are placing valves, so they are shown whatever
+   the switch says — placing something you cannot see is not a thing. */
+function valvesShown() { return S.settings.showValves !== false || tool === 'valve'; }
+function valveTagsShown() { return valvesShown() && S.settings.valveTags !== false; }
+/* Three states on one button: symbols and tags, symbols only, none. */
+function cycleValveView() {
+  if (S.settings.showValves === false) { S.settings.showValves = true; S.settings.valveTags = true; }
+  else if (S.settings.valveTags !== false) S.settings.valveTags = false;
+  else S.settings.showValves = false;
+  const vt = el('vpalTags'); if (vt) vt.checked = S.settings.valveTags !== false;
+  refreshValveBtn();
+  render();
+  toast(S.settings.showValves === false ? 'Valves hidden on the plan — still in the schedule and every figure'
+    : S.settings.valveTags === false ? 'Valves shown without their tags' : 'Valves and tags shown');
+}
+function refreshValveBtn() {
+  const b = el('zVlv');
+  if (!b) return;
+  const off = S.settings.showValves === false, noTag = S.settings.valveTags === false;
+  b.classList.toggle('on', !off);
+  b.style.opacity = off ? 0.55 : 1;
+  b.textContent = off ? '⋈̸' : (noTag ? '⋈' : '⋈#');
+  b.title = off ? 'Valves hidden on the plan (click to show them with their tags)'
+    : noTag ? 'Valves shown, tags hidden (click to hide the valves)'
+    : 'Valves and their tags shown (click to hide the tags)';
 }
 
 /* Half the size to draw it at. At true size that is the real half-size with
@@ -4803,6 +4886,9 @@ function setZoom(z, anchor) {
   applyZoom();
   sc.scrollLeft = cx * zoom - (anchor ? anchor.sx : sc.clientWidth / 2);
   sc.scrollTop  = cy * zoom - (anchor ? anchor.sy : sc.clientHeight / 2);
+  /* What fits on the plan depends on the zoom — labels come back as it
+     makes room for them — so a zoom is a redraw. */
+  if (S.img) { try { scheduleRender(); } catch (e) { /* before start-up has finished */ } }
 }
 /* The zoom that would put a sheet of this size on screen whole. Separate from
    zoomFit because rotating asks the question without wanting the answer
@@ -5203,6 +5289,7 @@ function itemPos(it, k) {
   return { x: at.x, y: at.y, ang: at.ang, seg: sg };
 }
 function hitItem(p, tolPx) {
+  if (!valvesShown()) return null;      // hidden valves cannot be clicked on by accident
   // at least as big as the symbol is drawn, so a zoomed-in valve stays easy
   // to grab rather than getting harder the bigger it looks
   const tol = Math.max((tolPx || 13) / zoom, valveDrawScale(1 / zoom) * 9);
@@ -5254,6 +5341,7 @@ function renderInner() {
 
   solve();
   const k = 1 / zoom;                       // keep strokes and text constant on screen
+  const kt = k * planTextScale();           // the writing, at the size chosen for the plan
   const g = document.createDocumentFragment();
 
   // ---- calibration line ----
@@ -5319,34 +5407,8 @@ function renderInner() {
         'stroke-width': 1.4 * k, 'stroke-dasharray': (4 * k) + ' ' + (4 * k) }));
     }
 
-    // label at the midpoint of the longest leg
-    if (S.pxPerM > 0 && sg.pts.length > 1) {
-      let bi = 1, bl = -1;
-      for (let i = 1; i < sg.pts.length; i++) {
-        const L = dist(sg.pts[i - 1], sg.pts[i]);
-        if (L > bl) { bl = L; bi = i; }
-      }
-      const a = sg.pts[bi - 1], b = sg.pts[bi];
-      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-      const txt = (sg.pipe ? sg.pipe.nom + '  ' : '') + fmt(sg.lenM, 1) + ' m'
-        + (single ? '  1-pipe' : '')
-        + (sg.service === 'cool' ? '  C' : (sg.service === 'heat' ? '  H' : ''));
-      const wPx = txt.length * 6.0 + 12;
-      g.appendChild(mk('rect', { x: mx - wPx / 2 * k, y: my - 9 * k, width: wPx * k, height: 16 * k,
-        rx: 2 * k, fill: 'rgba(255,255,255,.93)', stroke: 'var(--rule-2)', 'stroke-width': .8 * k }));
-      g.appendChild(mk('text', { x: mx, y: my + 2.6 * k, 'text-anchor': 'middle',
-        'font-size': 10 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 500,
-        fill: sg.pipe && (sg.pipe.over || sg.pipe.slow) ? 'var(--alarm)' : 'var(--ink)' }, txt));
-      /* A named circuit carries its name on its main, over the size. */
-      const circ = sg.circuit === sg.id ? circuitOf(sg) : null;
-      if (circ && circ.name && (exporting || labelLevel() >= 1)) {
-        const nw = circ.name.length * 6.4 + 18;
-        g.appendChild(mk('rect', { x: mx - nw / 2 * k, y: my - 28 * k, width: nw * k, height: 17 * k,
-          rx: 8.5 * k, fill: 'var(--live)' }));
-        g.appendChild(mk('text', { x: mx, y: my - 16 * k, 'text-anchor': 'middle',
-          'font-size': 10.5 * k, 'font-family': 'Archivo, sans-serif', 'font-weight': 700, fill: '#fff' }, circ.name));
-      }
-    }
+    /* its size, flow and length are written once everything else is down —
+       see layoutPlanLabels() */
 
   });
 
@@ -5363,11 +5425,8 @@ function renderInner() {
      where it wants to be and steps further out until it is clear of all of
      them, and if it has had to travel it gets a leader back to its valve so
      it is still obvious which one it belongs to. */
-  const placedTags = [];
-  const overlaps = (a, b) =>
-    a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
-
-  S.items.slice().sort((a, b) => (a.seg - b.seg) || (a.t - b.t)).forEach(it => {
+  const tagReqs = [];
+  if (valvesShown()) S.items.slice().sort((a, b) => (a.seg - b.seg) || (a.t - b.t)).forEach(it => {
     const q = itemPos(it, k);
     if (!q) return;
     const picked = isSel('item', it.id);
@@ -5384,35 +5443,7 @@ function renderInner() {
     drawValveSymbol(sym, valveDef(it.type), picked);
     g.appendChild(sym);
 
-    if (S.settings.valveTags !== false && it.tag) {
-      const below = it.leg === 'return';
-      const dir = below ? 1 : -1;
-      // clear of the symbol, which grows once the drawing is zoomed right in
-      const clear = valveDrawScale(k) * 16 + 5 * k;
-      const wPx = it.tag.length * 5.4 + 8;
-      const hw = wPx / 2 * k, hh = 5.5 * k;
-      const step = 12 * k;
-      let ty = q.y + dir * (clear + (below ? 9 * k : 0));
-      let box = null;
-      for (let i = 0; i < 14; i++) {
-        box = { x1: q.x - hw, x2: q.x + hw, y1: ty - hh - 2.5 * k, y2: ty + hh };
-        if (!placedTags.some(p => overlaps(box, p))) break;
-        ty += dir * step;
-      }
-      placedTags.push(box);
-
-      // a leader only where the tag has been pushed off its own valve
-      const travelled = Math.abs(ty - (q.y + dir * (clear + (below ? 9 * k : 0))));
-      if (travelled > step * 0.5) {
-        g.appendChild(mk('line', { x1: q.x, y1: q.y + dir * clear * 0.9, x2: q.x, y2: ty - dir * hh,
-          stroke: 'var(--rule-2)', 'stroke-width': 0.9 * k }));
-      }
-      g.appendChild(mk('rect', { x: q.x - hw, y: ty - 8 * k, width: wPx * k, height: 11 * k,
-        rx: 1.5 * k, fill: 'rgba(255,255,255,.92)' }));
-      g.appendChild(mk('text', { x: q.x, y: ty, 'text-anchor': 'middle',
-        'font-size': 8 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
-        fill: picked ? 'var(--measure)' : 'var(--ink-soft)' }, it.tag));
-    }
+    tagReqs.push({ it, q, picked, vs, tag: valveTagsShown() && it.tag ? it.tag : '' });
   });
 
   // ---- where a valve would land ----
@@ -5510,11 +5541,11 @@ function renderInner() {
     /* At true size a small load is a small box, so the writing moves off it:
        name above, duty below, and the duty goes first when zoomed out. */
     const lp = nodeLabelPlan(hf, k);
-    const nameY = lp.inside ? n.y - 2 * k : n.y - (hf.hh + 4 * k);
-    const subY = lp.inside ? n.y + 9 * k : n.y + (hf.hh + 10 * k);
+    const nameY = lp.inside ? n.y - 2 * kt : n.y - (hf.hh + 4 * kt);
+    const subY = lp.inside ? n.y + 9 * kt : n.y + (hf.hh + 10 * kt);
     if (lp.name) {
       g.appendChild(mk('text', { x: n.x, y: nameY, 'text-anchor': 'middle',
-        'font-size': 10 * k, 'font-weight': 600, 'font-family': 'Archivo, sans-serif',
+        'font-size': 10 * kt, 'font-weight': 600, 'font-family': 'Archivo, sans-serif',
         fill: (src && lp.inside) ? 'var(--paper)' : 'var(--ink)' }, String(n.name || '').slice(0, 13)));
     }
     const sub = src
@@ -5524,23 +5555,28 @@ function renderInner() {
         : (fmt(consumerKw(n), 0) + ' kW  ' + fmtVol(consumerFlow(n)));
     if (lp.sub) {
       g.appendChild(mk('text', { x: n.x, y: subY, 'text-anchor': 'middle',
-        'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace',
+        'font-size': 8.5 * kt, 'font-family': 'Azeret Mono, monospace',
         fill: (src && lp.inside) ? '#9aa3b1' : 'var(--ink-soft)' }, sub));
     }
-    const belowY = lp.inside ? n.y + (hf.hh + 8 * k) : subY + (lp.sub ? 9 * k : 0);
+    const belowY = lp.inside ? n.y + (hf.hh + 8 * kt) : subY + (lp.sub ? 9 * kt : 0);
     if (!src && isFourPipe(n) && lp.lv >= 2) {
       g.appendChild(mk('text', { x: n.x, y: belowY, 'text-anchor': 'middle',
-        'font-size': 7.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+        'font-size': 7.5 * kt, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
         fill: 'var(--ink-soft)' }, '4-PIPE'));
     }
     if (!src && !n.reached) {
-      const warnY = lp.inside || !lp.name ? n.y - (hf.hh + 5 * k) : nameY - 10 * k;
+      const warnY = lp.inside || !lp.name ? n.y - (hf.hh + 5 * kt) : nameY - 10 * kt;
       g.appendChild(mk('text', { x: n.x, y: warnY, 'text-anchor': 'middle',
-        'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+        'font-size': 8.5 * kt, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
         fill: 'var(--alarm)' }, 'NOT CONNECTED'));
     }
     drawPorts(g, n, k, picked);
   });
+
+  // ---- the system frames, then every run label and valve tag, on top ----
+  const viewTabs = drawViews(g, k);
+  const hpTags = drawHighPoints(g, k);
+  layoutPlanLabels(g, k, tagReqs, viewTabs.concat(hpTags));
 
   /* ---- a selection of several things gets one frame round the lot, so it
      reads as a group that will move together ---- */
@@ -5567,8 +5603,6 @@ function renderInner() {
       stroke: 'var(--measure)', 'stroke-width': 1.2 * k, 'stroke-dasharray': (5 * k) + ' ' + (3 * k) }));
   }
 
-  // ---- the high point of each water, and what it means for the fill ----
-  drawHighPoints(g, k);
 
   ov.innerHTML = '';
   ov.appendChild(g);
@@ -5586,11 +5620,13 @@ function renderInner() {
    own is an outline, so it is obvious which is a decision and which is a
    reading. Labels in the draft show as soon as they are clicked. */
 function drawHighPoints(g, k) {
+  const out = [];
+  const kt = k * planTextScale();
   const tri = (x, y, solid) => mk('path', {
     d: 'M ' + x + ' ' + (y - 9 * k) + ' L ' + (x + 7 * k) + ' ' + (y + 3 * k) + ' L ' + (x - 7 * k) + ' ' + (y + 3 * k) + ' Z',
     fill: solid ? 'var(--measure)' : 'var(--white)', stroke: '#6b5000', 'stroke-width': 1.4 * k });
   if (draft && draft.kind === 'trace') draft.pts.forEach(p => { if (p.hp) g.appendChild(tri(p.x, p.y, true)); });
-  if (labelLevel() < 1 && !exporting) return;
+  if (labelLevel() < 1 && !exporting) return out;
   (S.waters || []).forEach(w => {
     const hi = w.high;
     if (!hi) return;
@@ -5603,19 +5639,419 @@ function drawHighPoints(g, k) {
     const lw = Math.max(txt.length, two ? sub.length : 0) * 5.7 + 12;
     const bh = two ? 27 : 15;
     const bad = !w.cf.ok;
-    // the tag stands up and to the right on a short leader, clear of the run labels on the pipe
-    const tx = hi.x + 14 * k, ty = hi.y - (22 + bh) * k;
-    g.appendChild(mk('line', { x1: hi.x + 3 * k, y1: hi.y - 7 * k, x2: tx, y2: ty + bh * k,
+    /* The tag stands up and to the right on a short leader. It goes down
+       before the run labels and valve tags, which are then laid out round
+       it rather than under it. */
+    const tx = hi.x + 14 * k, ty = hi.y - (22 * k + bh * kt);
+    g.appendChild(mk('line', { x1: hi.x + 3 * k, y1: hi.y - 7 * k, x2: tx, y2: ty + bh * kt,
       stroke: '#6b5000', 'stroke-width': 1 * k }));
-    g.appendChild(mk('rect', { x: tx, y: ty, width: lw * k, height: bh * k,
-      rx: 2 * k, fill: bad ? 'var(--alarm)' : 'var(--measure)', opacity: 0.95 }));
-    g.appendChild(mk('text', { x: tx + 5 * k, y: ty + 11 * k,
-      'font-size': 9.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 700,
+    g.appendChild(mk('rect', { x: tx, y: ty, width: lw * kt, height: bh * kt,
+      rx: 2 * kt, fill: bad ? 'var(--alarm)' : 'var(--measure)', opacity: 0.95 }));
+    g.appendChild(mk('text', { x: tx + 5 * kt, y: ty + 11 * kt,
+      'font-size': 9.5 * kt, 'font-family': 'Azeret Mono, monospace', 'font-weight': 700,
       fill: bad ? '#ffffff' : '#241a00' }, txt));
-    if (two) g.appendChild(mk('text', { x: tx + 5 * k, y: ty + 22 * k,
-      'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace',
+    if (two) g.appendChild(mk('text', { x: tx + 5 * kt, y: ty + 22 * kt,
+      'font-size': 8.5 * kt, 'font-family': 'Azeret Mono, monospace',
       fill: bad ? '#ffffff' : '#241a00' }, sub));
+    out.push({ x1: tx, y1: ty, x2: tx + lw * kt, y2: ty + bh * kt });
+    out.push({ x1: hi.x - 8 * k, y1: hi.y - 10 * k, x2: hi.x + 8 * k, y2: hi.y + 4 * k });
   });
+  return out;
+}
+
+/* ==========================================================================
+   LAYING THE WRITING OUT
+   Every run label and valve tag is placed against what is already on the
+   plan — the components and their names, the valve symbols, the system
+   frames and every label put down before it — and never on top of any of
+   them. A label that cannot find room is left off on screen (zoom in and it
+   comes back) rather than drawn over its neighbour, which is what made a
+   whole-site sheet unreadable. Mains and the index run go down first, so it
+   is the small branches that wait for the zoom.
+
+   A run label says what a designer needs to draw the P&ID from: size, flow
+   and length, `DN50 · 1.48 l/s · 17.1 m`. It sits on the pipe, along it on a
+   vertical leg, and tries the longest legs first, then either side of the
+   pipe, then a shorter text (size and flow, then size alone). A system plate
+   in the PDF, and the `all` label mode, never drop a run: the shortest text
+   goes where it overlaps least.
+   ========================================================================== */
+function labelGrid(cell) {
+  const cells = new Map(), big = [];
+  const ov = (a, b) => a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
+  const span = b => [Math.floor(b.x1 / cell), Math.floor(b.x2 / cell), Math.floor(b.y1 / cell), Math.floor(b.y2 / cell)];
+  const many = r => (r[1] - r[0] + 1) * (r[3] - r[2] + 1) > 256;
+  const each = (b, fn) => {
+    const r = span(b);
+    for (let i = r[0]; i <= r[1]; i++) for (let j = r[2]; j <= r[3]; j++) fn(i + ',' + j);
+  };
+  return {
+    add(b) {
+      if (many(span(b))) { big.push(b); return; }
+      each(b, key => { let a = cells.get(key); if (!a) cells.set(key, a = []); a.push(b); });
+    },
+    hits(b) {
+      if (big.some(o => ov(o, b))) return true;
+      if (many(span(b))) {
+        for (const a of cells.values()) if (a.some(o => ov(o, b))) return true;
+        return false;
+      }
+      let hit = false;
+      each(b, key => { if (!hit) { const a = cells.get(key); if (a && a.some(o => ov(o, b))) hit = true; } });
+      return hit;
+    },
+    count(b) {
+      const seen = new Set();
+      big.forEach(o => { if (ov(o, b)) seen.add(o); });
+      if (!many(span(b))) each(b, key => (cells.get(key) || []).forEach(o => { if (ov(o, b)) seen.add(o); }));
+      return seen.size;
+    },
+  };
+}
+/* The three texts a run label can be, longest first. */
+function runLabelTexts(sg) {
+  const nom = sg.pipe ? sg.pipe.nom : '';
+  const flow = (sg.lps || 0) > 0 ? fmtVol(sg.lps) : ((sg.sizeLps || 0) > 0 ? 'standby' : '');
+  const len = fmt(sg.lenM, 1) + ' m';
+  const tail = (sg.mode === 'single' ? ' 1-pipe' : '')
+    + (sg.service === 'cool' ? ' C' : (sg.service === 'heat' ? ' H' : ''));
+  const full = [nom, flow, len].filter(Boolean).join(' · ') + tail;
+  const short = [nom, flow].filter(Boolean).join(' · ') || len;
+  const min = nom || len;
+  return [full, short, min].filter((t, i, a) => a.indexOf(t) === i);
+}
+/* Where a run label may go: along the longest legs first, the middle of a
+   leg before its ends, on the pipe before either side of it. A leg nearer
+   vertical than not is written along the pipe, reading upwards. */
+function runLabelCands(sg, k, lh) {
+  const pts = sg.pts || [];
+  const legs = [];
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i], L = dist(a, b);
+    if (L > 1e-6) legs.push({ a, b, L });
+  }
+  legs.sort((x, y) => y.L - x.L);
+  const off = (sg.mode === 'single' ? 0 : pairOffsetDraw(sg, k)) + pipeWidthDraw(sg, k) / 2 + lh / 2 + 2 * k;
+  const out = [];
+  legs.slice(0, 4).forEach((lg, li) => {
+    if (li > 0 && lg.L < 14 * k) return;
+    const dx = lg.b.x - lg.a.x, dy = lg.b.y - lg.a.y;
+    const rot = Math.abs(dy) > Math.abs(dx) * 1.5 ? -90 : 0;
+    [0.5, 0.3, 0.7, 0.15, 0.85].forEach(t => {
+      const x = lg.a.x + dx * t, y = lg.a.y + dy * t;
+      [0, -1, 1].forEach(side => out.push(rot ? { x: x + side * off, y, rot, leg: lg.L }
+                                               : { x, y: y + side * off, rot, leg: lg.L }));
+    });
+  });
+  return out;
+}
+function layoutPlanLabels(g, k, tagReqs, extra) {
+  const kt = k * planTextScale();
+  const lv = labelLevel();
+  const force = exporting ? exportKind !== 'key' : (S.settings.labels === 'all');
+  const grid = labelGrid(90 * k);
+  const crop = exporting ? exportCrop : null;
+  const inCrop = b => !crop || (b.x1 >= crop.x && b.y1 >= crop.y && b.x2 <= crop.x + crop.w && b.y2 <= crop.y + crop.h);
+  const box = (x1, y1, x2, y2) => ({ x1: Math.min(x1, x2), y1: Math.min(y1, y2), x2: Math.max(x1, x2), y2: Math.max(y1, y2) });
+
+  // ---- what is already on the plan ----
+  (extra || []).forEach(b => grid.add(b));
+  S.nodes.forEach(n => {
+    if (n.type === 'junction') { grid.add(box(n.x - 4 * k, n.y - 4 * k, n.x + 4 * k, n.y + 4 * k)); return; }
+    const hf = nodeDrawHalf(n, k);
+    const r = nodeRot(n) * Math.PI / 180, c = Math.abs(Math.cos(r)), sn = Math.abs(Math.sin(r));
+    const hw = c * hf.hw + sn * hf.hh, hh = sn * hf.hw + c * hf.hh;
+    grid.add(box(n.x - hw, n.y - hh, n.x + hw, n.y + hh));
+    // the name above and the duty below, where they are written outside the box
+    const name = String(n.name || '');
+    const tw = Math.max(name.length * 6 * kt, 60 * kt) / 2;
+    const plain = n.type === 'source' || n.type === 'consumer';
+    const lp = plain ? nodeLabelPlan(hf, k) : { inside: false };
+    if (!lp.inside) {
+      grid.add(box(n.x - tw, n.y - hh - (plain ? 15 : 24) * kt, n.x + tw, n.y - hh));
+      grid.add(box(n.x - tw, n.y + hh, n.x + tw, n.y + hh + (plain ? 15 : 34) * kt));
+    }
+  });
+  tagReqs.forEach(r => {
+    const h = r.vs * 9;
+    grid.add(box(r.q.x - h, r.q.y - h, r.q.x + h, r.q.y + h));
+  });
+
+  // ---- run labels: size, flow and length ----
+  const fs = 10 * kt, cw = fs * 0.6, lh = fs * 1.55;
+  const pfs = fs * 1.02, pillH = pfs * 1.6;
+  const pickedSegs = new Set();
+  S.segs.forEach(sg => { if (isSel('seg', sg.id)) pickedSegs.add(sg.id); });
+  const order = (S.pxPerM > 0 ? S.segs : []).filter(sg => sg.pts && sg.pts.length > 1)
+    .sort((a, b) => (pickedSegs.has(b.id) - pickedSegs.has(a.id))
+      || ((b.isIndex ? 1 : 0) - (a.isIndex ? 1 : 0))
+      || ((b.circuit === b.id ? 1 : 0) - (a.circuit === a.id ? 1 : 0))
+      || ((b.lps || 0) - (a.lps || 0)) || ((b.lenM || 0) - (a.lenM || 0)));
+  order.forEach(sg => {
+    const warn = !!(sg.pipe && (sg.pipe.over || sg.pipe.slow));
+    if (lv === 0 && !warn && !pickedSegs.has(sg.id)) return;
+    if (crop) {
+      const xs = sg.pts.map(p => p.x), ys = sg.pts.map(p => p.y);
+      if (Math.max.apply(null, xs) < crop.x || Math.min.apply(null, xs) > crop.x + crop.w
+        || Math.max.apply(null, ys) < crop.y || Math.min.apply(null, ys) > crop.y + crop.h) return;
+    }
+    let texts = runLabelTexts(sg);
+    if (lv === 1 && texts.length > 1) texts = texts.slice(1);
+    const circ = sg.circuit === sg.id ? circuitOf(sg) : null;
+    const pill = circ && circ.name && lv >= 1 ? String(circ.name) : '';
+    const pillW = pill ? pill.length * pfs * 0.62 + 14 * kt : 0;
+    const cands = runLabelCands(sg, k, lh + (pill ? pillH : 0));
+    const geom = (c, txt) => {
+      const W = Math.max(txt.length * cw + 10 * kt, pillW);
+      const up = lh / 2 + (pill ? pillH + kt : 0), dn = lh / 2;
+      const b = c.rot ? box(c.x - up, c.y - W / 2, c.x + dn, c.y + W / 2)
+                      : box(c.x - W / 2, c.y - up, c.x + W / 2, c.y + dn);
+      return { b, W };
+    };
+    let pick = null;
+    for (let ti = 0; ti < texts.length && !pick; ti++) {
+      for (const c of cands) {
+        const gm = geom(c, texts[ti]);
+        if (!inCrop(gm.b) || grid.hits(gm.b)) continue;
+        pick = { c, txt: texts[ti], gm };
+        break;
+      }
+    }
+    if (!pick && (force || pickedSegs.has(sg.id) || warn) && cands.length) {
+      const txt = texts[texts.length - 1];
+      let best = null;
+      cands.slice(0, 24).forEach(c => {
+        const gm = geom(c, txt);
+        const sc = grid.count(gm.b) + (inCrop(gm.b) ? 0 : 1000);
+        if (!best || sc < best.sc) best = { c, gm, sc };
+      });
+      pick = { c: best.c, txt, gm: best.gm };
+    }
+    if (!pick) return;
+    grid.add(pick.gm.b);
+    const { c, txt, gm } = pick;
+    const blk = mk('g', { transform: 'translate(' + c.x + ' ' + c.y + ')' + (c.rot ? ' rotate(' + c.rot + ')' : '') });
+    blk.appendChild(mk('rect', { x: -gm.W / 2, y: -lh / 2, width: gm.W, height: lh,
+      rx: 2 * kt, fill: 'rgba(255,255,255,.94)', stroke: sg.isIndex ? 'var(--measure)' : 'var(--rule-2)',
+      'stroke-width': (sg.isIndex ? 1.2 : 0.8) * k }));
+    blk.appendChild(mk('text', { x: 0, y: fs * 0.36, 'text-anchor': 'middle',
+      'font-size': fs, 'font-family': 'Azeret Mono, monospace', 'font-weight': 500,
+      fill: warn ? 'var(--alarm)' : 'var(--ink)' }, txt));
+    /* A named circuit carries its name on its main, over the size. */
+    if (pill) {
+      blk.appendChild(mk('rect', { x: -pillW / 2, y: -lh / 2 - pillH - kt, width: pillW, height: pillH,
+        rx: pillH / 2, fill: 'var(--live)' }));
+      blk.appendChild(mk('text', { x: 0, y: -lh / 2 - kt - pillH * 0.3, 'text-anchor': 'middle',
+        'font-size': pfs, 'font-family': 'Archivo, sans-serif', 'font-weight': 700, fill: '#fff' }, pill));
+    }
+    g.appendChild(blk);
+  });
+
+  // ---- valve tags ----
+  /* Each tag starts where it wants to be — flow leg above the pipe, return
+     below — and steps further out until it is clear of everything already
+     written. If it has had to travel it gets a leader back to its valve. A
+     tag with nowhere to go is left off on screen until the zoom makes room;
+     a system plate always carries it. Zoomed out on automatic labels, and
+     on the whole-site plate, the tags wait for the zoom altogether. */
+  const tagsOn = exporting ? exportKind !== 'key' : lv >= 2;
+  if (!tagsOn) return;
+  const tfs = 8 * kt, step = 11 * kt;
+  tagReqs.forEach(r => {
+    if (!r.tag) return;
+    const q = r.q;
+    if (crop && (q.x < crop.x || q.y < crop.y || q.x > crop.x + crop.w || q.y > crop.y + crop.h)) return;
+    /* Out from the pipe, square to it, on the side of the leg the valve is
+       on — the flow side for a flow valve, the return side for a return one —
+       so a tag on a vertical branch stands beside it rather than stacking
+       along it on top of the next valve. The other side is the second
+       choice, a step along the pipe the third. */
+    const ang = q.ang || 0;
+    const nx = -Math.sin(ang), ny = Math.cos(ang);
+    const sign = r.it.leg === 'return' ? 1 : -1;
+    const wPx = r.tag.length * tfs * 0.68 + 8 * kt;
+    const hw = wPx / 2, hh = tfs * 0.69;
+    const clear = r.vs * 11 + 3 * k;
+    const tryAt = (sd, i, along) => {
+      const dx = nx * sd, dy = ny * sd;
+      const reach = Math.abs(dx) * hw + Math.abs(dy) * hh;     // half the tag, measured out from the pipe
+      const dd = clear + reach + i * step;
+      const cx = q.x + dx * dd + Math.cos(ang) * along, cy = q.y + dy * dd + Math.sin(ang) * along;
+      return { cx, cy, dd, reach, sd, b: box(cx - hw, cy - hh, cx + hw, cy + hh) };
+    };
+    const cands = [];
+    for (let i = 0; i < 7; i++) cands.push(tryAt(sign, i, 0));
+    for (let i = 0; i < 4; i++) cands.push(tryAt(-sign, i, 0));
+    [1, -1].forEach(a => { for (let i = 0; i < 3; i++) cands.push(tryAt(sign, i, a * (hw * 2 + 3 * kt))); });
+    let pick = cands.find(c => inCrop(c.b) && !grid.hits(c.b));
+    if (!pick) {
+      if (!force && !r.picked) return;
+      pick = cands.reduce((best, c) => {
+        const sc = grid.count(c.b) + (inCrop(c.b) ? 0 : 1000);
+        return (!best || sc < best.sc) ? Object.assign({ sc }, c) : best;
+      }, null);
+    }
+    grid.add(pick.b);
+    // a leader only where the tag has been pushed off its own valve
+    if (pick.cx !== cands[0].cx || pick.cy !== cands[0].cy) {
+      g.appendChild(mk('line', { x1: q.x + nx * pick.sd * clear * 0.8, y1: q.y + ny * pick.sd * clear * 0.8,
+        x2: pick.cx - nx * pick.sd * pick.reach, y2: pick.cy - ny * pick.sd * pick.reach,
+        stroke: 'var(--rule-2)', 'stroke-width': 0.9 * k }));
+    }
+    g.appendChild(mk('rect', { x: pick.cx - hw, y: pick.cy - hh, width: wPx, height: hh * 2,
+      rx: 1.5 * kt, fill: 'rgba(255,255,255,.92)' }));
+    g.appendChild(mk('text', { x: pick.cx, y: pick.cy + tfs * 0.35, 'text-anchor': 'middle',
+      'font-size': tfs, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+      fill: r.picked ? 'var(--measure)' : 'var(--ink-soft)' }, r.tag));
+  });
+}
+
+/* ==========================================================================
+   SYSTEMS
+   A site drawing carries several systems — the process loop in one building,
+   the AHUs in another — and the PDF needs each of them on its own sheet,
+   close enough to read. A system is a named frame on the drawing (S.views):
+   framed from what is on screen or from a lasso, jumped to from the list,
+   and given its own plan plate, run list and valve list in the report. The
+   whole-site plate becomes the key plan, with the frames drawn on it.
+
+   A frame is a view, not a hydraulic boundary: it changes nothing that is
+   calculated. It is held in drawing coordinates and moves with the take-off
+   (mapTakeoff), it is saved with the take-off and it is in undo.
+   ========================================================================== */
+const VIEW_INK = '#6a3fb0';
+function viewById(id) { return (S.views || []).find(v => v.id === id) || null; }
+function nextViewName() {
+  const used = new Set((S.views || []).map(v => String(v.name || '').toLowerCase()));
+  for (let i = 1; ; i++) if (!used.has(('system ' + i))) return 'System ' + i;
+}
+/* Clipped to the sheet, or the frame would ask the plate for paper that is
+   not there. */
+function clipToSheet(r) {
+  if (!S.img) return null;
+  const x0 = clamp(r.x, 0, S.img.w), y0 = clamp(r.y, 0, S.img.h);
+  const x1 = clamp(r.x + r.w, 0, S.img.w), y1 = clamp(r.y + r.h, 0, S.img.h);
+  return (x1 - x0 > 4 && y1 - y0 > 4) ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+}
+/* What is on screen now, in drawing coordinates. */
+function screenRect() {
+  const sc = el('scroller');
+  return clipToSheet({ x: sc.scrollLeft / zoom, y: sc.scrollTop / zoom,
+    w: sc.clientWidth / zoom, h: sc.clientHeight / zoom });
+}
+/* Round a lasso, with room for the labels that hang off it. */
+function selectionRect() {
+  const bx = selectionBox();
+  if (!bx) return null;
+  const pad = Math.max(S.pxPerM > 0 ? S.pxPerM * 1.5 : 0, Math.max(bx.w, bx.h) * 0.08, 30);
+  return clipToSheet({ x: bx.x0 - pad, y: bx.y0 - pad, w: bx.w + 2 * pad, h: bx.h + 2 * pad });
+}
+function addView(r, name) {
+  if (!r) { toast('Nothing to frame'); return null; }
+  pushUndo('add a system');
+  S.views = S.views || [];
+  const v = { id: nid(), name: name || nextViewName(), x: r.x, y: r.y, w: r.w, h: r.h };
+  S.views.push(v);
+  render();
+  return v;
+}
+function zoomToView(v) {
+  if (!v) return;
+  const sc = el('scroller');
+  setZoom(fitZoom(v.w * 1.03, v.h * 1.03));
+  sc.scrollLeft = (v.x + v.w / 2) * zoom - sc.clientWidth / 2;
+  sc.scrollTop = (v.y + v.h / 2) * zoom - sc.clientHeight / 2;
+  render();
+}
+/* Which runs and valves a system shows: a run whose middle is inside the
+   frame, a valve that sits inside it. */
+function inView(v, p) { return !!p && p.x >= v.x && p.y >= v.y && p.x <= v.x + v.w && p.y <= v.y + v.h; }
+function viewSegs(v) { return S.segs.filter(sg => sg.pts && sg.pts.length > 1 && inView(v, polyAt(sg.pts, 0.5))); }
+function viewItems(v) { return S.items.filter(it => inView(v, itemPos(it, 1))); }
+
+/* The frames on the plan: a dashed box and its name on a tab. Left off a
+   system's own plate — the plate is the frame. */
+function drawViews(g, k) {
+  const out = [];
+  if (exporting && exportKind === 'system') return out;
+  if (!exporting && S.settings.showViews === false) return out;
+  const kt = k * planTextScale();
+  (S.views || []).forEach(v => {
+    g.appendChild(mk('rect', { x: v.x, y: v.y, width: v.w, height: v.h, fill: 'none',
+      stroke: VIEW_INK, 'stroke-width': 2 * k, 'stroke-dasharray': (10 * k) + ' ' + (5 * k), opacity: 0.85 }));
+    const name = String(v.name || 'System');
+    const fs = 11 * kt, w = name.length * fs * 0.62 + 14 * kt, h = fs * 1.7;
+    g.appendChild(mk('rect', { x: v.x, y: v.y, width: w, height: h, fill: VIEW_INK }));
+    g.appendChild(mk('text', { x: v.x + 7 * kt, y: v.y + h * 0.7, 'font-size': fs,
+      'font-family': 'Archivo, sans-serif', 'font-weight': 700, fill: '#fff' }, name));
+    out.push({ x1: v.x, y1: v.y, x2: v.x + w, y2: v.y + h });
+  });
+  return out;
+}
+
+function systemsDialog(focusId) {
+  const vs = S.views || [];
+  const m = S.pxPerM > 0 ? S.pxPerM : 0;
+  const hasSel = !!(sel && (sel.kind === 'multi' || sel.kind === 'node' || sel.kind === 'seg'));
+  const rows = vs.map(v => {
+    const segs = viewSegs(v);
+    return '<tr>'
+      + '<td><input type="text" data-vname="' + v.id + '" value="' + esc(v.name || '') + '" style="width:100%;min-width:200px"></td>'
+      + '<td class="n" style="white-space:nowrap">' + (m ? fmt(v.w / m, 0) + ' × ' + fmt(v.h / m, 0) + ' m' : '—') + '</td>'
+      + '<td class="n">' + segs.length + '</td>'
+      + '<td style="white-space:nowrap">'
+      + '<button class="btn sm" data-vgo="' + v.id + '">Zoom to</button> '
+      + '<button class="btn ghost sm" data-vre="' + v.id + '" title="Make this frame what is on screen now">Reframe</button> '
+      + '<button class="btn ghost sm" data-vdel="' + v.id + '" style="color:var(--alarm)">Delete</button></td></tr>';
+  }).join('');
+  const html = '<p style="margin-top:0">A <b>system</b> is a named frame on the drawing. Zoom to one from '
+    + 'here; in the <b>PDF</b> each gets its own plan, close enough to read, with its runs and valves '
+    + 'listed under it, and the whole sheet becomes the key plan. Frames change nothing that is calculated.</p>'
+    + (vs.length
+      ? '<table class="sched" style="width:100%;margin-bottom:12px"><thead><tr><th>Name</th><th class="n">Size</th>'
+        + '<th class="n">Runs</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>'
+      : '<p style="color:var(--muted)">No systems yet. Zoom in on one system and frame what is on screen, '
+        + 'or lasso it with Select and frame the selection.</p>')
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+    + '<button class="btn" id="sysAddScreen">+ Frame what is on screen</button>'
+    + '<button class="btn ghost" id="sysAddSel"' + (hasSel ? '' : ' disabled title="Lasso something with Select first"')
+    + '>+ Frame the selection</button>'
+    + '<button class="btn ghost" id="sysWhole">Whole sheet</button>'
+    + '<label style="margin-left:auto;font-size:12.5px"><input type="checkbox" id="sysShow"'
+    + (S.settings.showViews === false ? '' : ' checked') + '> Show frames on the plan</label>'
+    + '<button class="btn ghost" onclick="closeModal()">Close</button></div>';
+  modal('Systems', html);
+  const body = el('modBody');
+  body.querySelectorAll('[data-vname]').forEach(inp => inp.addEventListener('input', () => {
+    const v = viewById(+inp.dataset.vname);
+    if (v) { v.name = inp.value; render(); }
+  }));
+  body.querySelectorAll('[data-vgo]').forEach(b => b.addEventListener('click', () => {
+    closeModal(); zoomToView(viewById(+b.dataset.vgo));
+  }));
+  body.querySelectorAll('[data-vre]').forEach(b => b.addEventListener('click', () => {
+    const v = viewById(+b.dataset.vre), r = screenRect();
+    if (!v || !r) return;
+    pushUndo('reframe ' + (v.name || 'a system'));
+    Object.assign(v, r);
+    render(); systemsDialog(v.id);
+  }));
+  body.querySelectorAll('[data-vdel]').forEach(b => b.addEventListener('click', () => {
+    const v = viewById(+b.dataset.vdel);
+    if (!v) return;
+    pushUndo('delete ' + (v.name || 'a system'));
+    S.views = S.views.filter(x => x !== v);
+    render(); systemsDialog();
+  }));
+  const add = r => { const v = addView(r); if (v) systemsDialog(v.id); };
+  el('sysAddScreen').addEventListener('click', () => add(screenRect()));
+  el('sysAddSel').addEventListener('click', () => add(selectionRect()));
+  el('sysWhole').addEventListener('click', () => { closeModal(); zoomFit(); render(); });
+  el('sysShow').addEventListener('change', e => { S.settings.showViews = e.target.checked; render(); });
+  if (focusId != null) {
+    const inp = body.querySelector('[data-vname="' + focusId + '"]');
+    if (inp) { inp.focus(); inp.select(); }
+  }
 }
 
 /* A 3-way joint reads as a T, not only a circle. Two-way stays a circle
@@ -5664,7 +6100,7 @@ const VALVE_REAL_M = 0.30;
    zoom — which is what makes zooming in show you what is in a set rather
    than the same small glyphs further apart. */
 function valveDrawScale(k) {
-  const onScreen = k * VALVE_SCALE;
+  const onScreen = k * VALVE_SCALE * planTextScale();
   if (!(S.pxPerM > 0)) return onScreen;
   const real = (VALVE_REAL_M * S.pxPerM) / VALVE_BODY_UNITS;
   return Math.max(onScreen, real);
@@ -5810,6 +6246,7 @@ function drawPorts(g, n, k, picked) {
 }
 
 function drawInline(g, n, k, picked) {
+  const kt = k * planTextScale();   // the writing, at the plan's text size
   const pump = n.type === 'pump';
   const rot = nodeRot(n);
   const hf = nodeDrawHalf(n, k);
@@ -5843,7 +6280,7 @@ function drawInline(g, n, k, picked) {
   drawPorts(g, n, k, picked);
   const lv = labelLevel();
   if (lv >= 1) g.appendChild(mk('text', { x: n.x, y: y - 6 * k, 'text-anchor': 'middle',
-    'font-size': 10 * k, 'font-weight': 700, 'font-family': 'Archivo, sans-serif',
+    'font-size': 10 * kt, 'font-weight': 700, 'font-family': 'Archivo, sans-serif',
     fill: 'var(--ink)' }, String(n.name || '').slice(0, 14)));
   const th = pump ? pumpThrough(n) : null;
   const sub = pump
@@ -5852,11 +6289,11 @@ function drawInline(g, n, k, picked) {
         ? fmt(n.rejectKw, 0) + ' kW rejected'
         : (n.leaveTemp != null && n.leaveTemp !== '' ? 'leaves ' + fmt(n.leaveTemp, 0) + ' °C' : 'dry cooler'));
   if (lv >= 2) g.appendChild(mk('text', { x: n.x, y: n.y + hf.hh + 12 * k, 'text-anchor': 'middle',
-    'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace',
+    'font-size': 8.5 * kt, 'font-family': 'Azeret Mono, monospace',
     fill: 'var(--ink-soft)' }, sub));
   if (!n.reached) {
     g.appendChild(mk('text', { x: n.x, y: y - 16 * k, 'text-anchor': 'middle',
-      'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+      'font-size': 8.5 * kt, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
       fill: 'var(--alarm)' }, 'NOT CONNECTED'));
   }
 }
@@ -5864,6 +6301,7 @@ function drawInline(g, n, k, picked) {
 /* A secondary tap on a header: a dot on the shell and its name and duty,
    standing off to the side the line does not run along. */
 function drawTaps(g, n, k) {
+  const kt = k * planTextScale();   // the writing, at the plan's text size
   if (!(S.pxPerM > 0)) return;
   const lv = labelLevel();
   llhTaps(n).forEach(t => {
@@ -5885,7 +6323,7 @@ function drawTaps(g, n, k) {
       ? { x: at.x + out * off, y: at.y + 3 * k, 'text-anchor': out > 0 ? 'start' : 'end' }
       : { x: at.x, y: at.y + out * off + (out > 0 ? 6 * k : 0), 'text-anchor': 'middle' }, txt));
     const lab = g.lastChild;
-    lab.setAttribute('font-size', 8.5 * k);
+    lab.setAttribute('font-size', 8.5 * kt);
     lab.setAttribute('font-family', 'Azeret Mono, monospace');
     lab.setAttribute('font-weight', picked ? 700 : 500);
     lab.setAttribute('fill', 'var(--ink-soft)');
@@ -5893,6 +6331,7 @@ function drawTaps(g, n, k) {
 }
 
 function drawVessel(g, n, k, picked) {
+  const kt = k * planTextScale();   // the writing, at the plan's text size
   const llh = n.type === 'llh';
   const hx = n.type === 'hx';
   const rot = nodeRot(n);
@@ -5959,7 +6398,7 @@ function drawVessel(g, n, k, picked) {
   // a header with taps keeps its own writing clear of theirs
   const ex = (llh && llhTaps(n).length) ? 16 : 0;
   if (lv >= 1) g.appendChild(mk('text', { x: n.x, y: y - (6 + ex) * k, 'text-anchor': 'middle',
-    'font-size': 10 * k, 'font-weight': 700, 'font-family': 'Archivo, sans-serif',
+    'font-size': 10 * kt, 'font-weight': 700, 'font-family': 'Archivo, sans-serif',
     fill: 'var(--ink)' }, label));
   const sub = hx
     ? ((hxKind(n) === 'shell' ? 'S&T' : 'plate') + '  '
@@ -5970,23 +6409,23 @@ function drawVessel(g, n, k, picked) {
     : (fmt(parseFloat(n.litres) || 0, 0) + ' L' + (n.ports === 4 ? '  4-port'
         : n.multiIn ? '  several in, one out' : '  in ' + (n.leg || 'return')));
   if (lv >= 2) g.appendChild(mk('text', { x: n.x, y: y + (h + 15 + ex) * k, 'text-anchor': 'middle',
-    'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace',
+    'font-size': 8.5 * kt, 'font-family': 'Azeret Mono, monospace',
     fill: 'var(--ink-soft)' }, sub));
   if (sep && lv >= 2) {
     g.appendChild(mk('text', { x: n.x, y: y + (h + 25 + ex) * k, 'text-anchor': 'middle',
-      'font-size': 8 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+      'font-size': 8 * kt, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
       fill: 'var(--measure-ink, #8a5d00)' }, hxIsSource(n) ? 'SOURCE \u2014 primary not drawn'
         : hx ? 'SEPARATES \u2014 two waters' : 'SEPARATES'));
   }
   if (!n.reached) {
     g.appendChild(mk('text', { x: n.x, y: y - (16 + ex) * k, 'text-anchor': 'middle',
-      'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+      'font-size': 8.5 * kt, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
       fill: 'var(--alarm)' }, 'NOT CONNECTED'));
   }
   // the fault worth seeing without opening anything: the primary is short
   if (llh && n.shell && n.shell.reversed) {
     g.appendChild(mk('text', { x: n.x, y: y + (h + 35 + ex) * k, 'text-anchor': 'middle',
-      'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 700,
+      'font-size': 8.5 * kt, 'font-family': 'Azeret Mono, monospace', 'font-weight': 700,
       fill: 'var(--alarm)' }, 'PRIMARY < SECONDARY'));
   }
 }
@@ -8531,6 +8970,7 @@ function multiForm(m) {
   html += '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
     + '<button class="btn ghost sm" id="insMultiDup" title="Set a copy down beside these (Ctrl+D)">Duplicate</button>'
     + '<button class="btn ghost sm" id="insMultiCopy" title="Copy to the clipboard, in metres (Ctrl+C)">Copy</button>'
+    + '<button class="btn ghost sm" id="insMultiSys" title="Frame these as a named system: its own view and its own plate in the PDF">Make a system</button>'
     + '<button class="btn ghost sm" id="insDel" style="color:var(--alarm)">Delete</button></div>';
   return html;
 }
@@ -8557,6 +8997,8 @@ function wireMultiForm() {
   if (dup) dup.addEventListener('click', duplicateSelection);
   const cp = el('insMultiCopy');
   if (cp) cp.addEventListener('click', copySelection);
+  const sy = el('insMultiSys');
+  if (sy) sy.addEventListener('click', () => { const v = addView(selectionRect()); if (v) systemsDialog(v.id); });
   const del = el('insDel');
   if (del) del.addEventListener('click', deleteSelected);
 }
@@ -9840,17 +10282,29 @@ function planCrop() {
   return { x: x0, y: y0, w, h };
 }
 
-function planImage() {
+/* opts.kind is 'key' — the whole take-off, where a label with no room is
+   left off as it is on screen and the system frames are drawn as a key — or
+   'system', one frame at a size you can read, where every run and valve in
+   it is labelled. */
+function planImage(opts) {
+  opts = opts || {};
   return new Promise((resolve, reject) => {
     if (!S.img) { reject(new Error('no drawing')); return; }
     /* Re-drawn at a fixed scale rather than whatever the screen is at, so
        the labels come out the same size on the sheet however far the drawing
-       happened to be zoomed when the report was asked for. */
-    const crop = planCrop();
+       happened to be zoomed when the report was asked for. The writing is
+       sized against the plate, not the sheet: a plate of a small system is
+       drawn closer in, so its labels have room. */
+    const kind = opts.kind === 'system' ? 'system' : 'key';
+    const crop = (opts.crop && clipToSheet(opts.crop)) || planCrop();
+    const outW0 = 2000;
+    const outW = Math.max(600, Math.round(Math.min(outW0, 2600 * crop.w / crop.h)));
     const savedZoom = zoom, savedSel = sel, savedHover = hoverPt, savedMarquee = marquee;
     sel = null; hoverPt = null; marquee = null;
-    zoom = clamp(1500 / Math.max(crop.w, crop.h), 0.15, 2);
-    exporting = true;
+    // output pixels per on-screen pixel: what the writing is sized against
+    const perScreenPx = outW / (kind === 'system' ? 760 : 1000);
+    zoom = clamp((outW / crop.w) / perScreenPx, 0.04, 60);
+    exporting = true; exportKind = kind; exportCrop = kind === 'system' ? crop : null;
     let svg;
     try {
       renderInner();
@@ -9866,19 +10320,18 @@ function planImage() {
       clone.insertBefore(st, clone.firstChild);
       svg = new XMLSerializer().serializeToString(clone);
     } catch (e) {
-      exporting = false;
+      exporting = false; exportKind = null; exportCrop = null;
       zoom = savedZoom; sel = savedSel; hoverPt = savedHover; marquee = savedMarquee;
       applyZoom(); render();
       reject(e);
       return;
     }
-    exporting = false;
+    exporting = false; exportKind = null; exportCrop = null;
     zoom = savedZoom; sel = savedSel; hoverPt = savedHover; marquee = savedMarquee;
     applyZoom(); render();
 
     /* The plate is drawn at a fixed pixel width so a big sheet does not make
        a hundred-megapixel PNG and a small one is not a thumbnail. */
-    const outW = clamp(Math.round(crop.w), 600, 2400);
     const f = outW / crop.w;
     const outH = Math.max(1, Math.round(crop.h * f));
     const cv = document.createElement('canvas');
@@ -9913,9 +10366,16 @@ async function exportTracePDFReport() {
     + '<p style="font-family:sans-serif;padding:24px;color:#5c6069">Building the report\u2026</p>');
   toast('Building the report\u2026');
   let plan = null;
-  try { plan = await planImage(); } catch (e) { console.error('plan plate', e); plan = null; }
+  try { plan = await planImage({ kind: 'key' }); } catch (e) { console.error('plan plate', e); plan = null; }
+  /* One plate per system frame, each close enough to read. */
+  const systems = [];
+  for (const v of (S.views || [])) {
+    let img = null;
+    try { img = await planImage({ kind: 'system', crop: v }); } catch (e) { console.error('system plate', e); }
+    systems.push({ v, img });
+  }
   let html;
-  try { html = buildTraceReportHtml(plan); }
+  try { html = buildTraceReportHtml(plan, systems); }
   catch (e) {
     console.error('report', e);
     win.close();
@@ -9928,7 +10388,67 @@ async function exportTracePDFReport() {
   toast('Report ready \u2014 Save as PDF in the print dialog');
 }
 
-function buildTraceReportHtml(plan) {
+/* One system's sheet in the report: its plate, then the runs and valves in
+   its frame — size, flow and length of every run, every tag — which is what
+   someone drawing the P&ID for that system works from. */
+function systemSectionHtml(sy, i) {
+  const v = sy.v, img = sy.img;
+  const name = String(v.name || 'System ' + (i + 1));
+  const segs = viewSegs(v);
+  const ids = new Set(segs.map(sg => sg.id));
+  const rows = pipeScheduleRows().filter(r => ids.has(r.sg.id));
+  const itemIds = new Set(viewItems(v).map(it => it.id));
+  const vRows = valveSchedule().filter(r => itemIds.has(r.id));
+  const tagsOn = {};
+  vRows.forEach(r => { (tagsOn[r.seg] = tagsOn[r.seg] || []).push(r.tag || r.label); });
+  const kw = rows.reduce((a, r) => a + (r.isCons && r.down ? (r.sg.kw || 0) : 0), 0);
+  const pipeM = segs.reduce((a, sg) => a + (sg.hydM || 0), 0);
+  const runRows = rows.map(r => {
+    const sg = r.sg, p = sg.pipe;
+    return '<tr' + (sg.isIndex ? ' class="idx"' : '') + '><td>' + esc(sg.ref)
+      + (r.isCons && r.down ? ' <span class="dim">→ ' + esc(r.down.name) + '</span>' : '') + '</td>'
+      + '<td class="n">' + (p ? p.nom : '—') + '</td>'
+      + '<td class="n">' + fmt(sg.lps, 2) + '</td>'
+      + '<td class="n">' + fmt(sg.kw, 1) + '</td>'
+      + '<td class="n">' + fmt(sg.runM, 1) + '</td>'
+      + '<td class="n">' + fmt(sg.hydM, 1) + '</td>'
+      + '<td class="n">' + (p ? fmt(p.v, 2) : '—') + '</td>'
+      + '<td class="n">' + (p ? fmt(p.paPerM, 0) : '—') + '</td>'
+      + '<td class="n">' + fmt(sg.dropKpa, 2) + '</td>'
+      + '<td>' + esc((tagsOn[sg.id] || []).join(', ')) + '</td></tr>';
+  }).join('');
+  const valveRows = vRows.map(r => '<tr><td>' + esc(r.tag) + '</td><td>' + esc(r.label)
+    + (r.assumed ? ' <span class="tag">assumed</span>' : '') + '</td><td>' + esc(r.run) + '</td>'
+    + '<td class="n">' + (r.size || '—') + '</td><td>' + esc(r.leg) + '</td>'
+    + '<td class="n">' + r.qty + '</td><td class="n">' + (r.branch ? '—' : fmt(r.eachKpa, 2)) + '</td></tr>').join('');
+  return '<div class="sys"><h2>2.' + (i + 1) + ' System — ' + esc(name) + '</h2>'
+    + (img && img.url
+      ? '<div class="view3"><img src="' + img.url + '" alt="Plan of ' + esc(name) + '">'
+        + '<div class="leg"><span class="sw" style="background:#c0392b;margin-left:0"></span>Flow'
+        + '<span class="sw" style="background:#2471a3"></span>Return'
+        + (S.pxPerM > 0 ? ' &nbsp;·&nbsp; ' + fmt(img.crop.w / S.pxPerM, 1) + ' m × ' + fmt(img.crop.h / S.pxPerM, 1) + ' m' : '')
+        + ' &nbsp;·&nbsp; runs labelled size · ' + volLabel() + ' · length'
+        + (S.settings.showValves === false ? ' &nbsp;·&nbsp; valves hidden on the plan; listed below' : '')
+        + '</div></div>'
+      : '<div class="view3"><p>This system’s plan could not be drawn.</p></div>')
+    + '<p>' + segs.length + ' run' + (segs.length === 1 ? '' : 's') + ' in this frame, '
+    + fmt(pipeM, 1) + ' m of pipe installed'
+    + (kw > 0 ? ', ' + fmt(kw, 1) + ' kW of load at the terminals' : '')
+    + ', ' + vRows.length + ' valve' + (vRows.length === 1 ? '' : 's') + ' placed. A run is in the frame when its middle is.</p>'
+    + (runRows
+      ? '<table class="rpt"><thead><tr><th>Run</th><th class="n">Size</th><th class="n">l/s</th><th class="n">kW</th>'
+        + '<th class="n">Route m</th><th class="n">Pipe m</th><th class="n">m/s</th><th class="n">Pa/m</th>'
+        + '<th class="n">Run kPa</th><th>Valves on the run</th></tr></thead><tbody>' + runRows + '</tbody></table>'
+      : '<p>No runs in this frame.</p>')
+    + (valveRows
+      ? '<table class="rpt"><thead><tr><th>Tag</th><th>Item</th><th>Run</th><th class="n">Size</th><th>Leg</th>'
+        + '<th class="n">Qty</th><th class="n">kPa each</th></tr></thead><tbody>' + valveRows + '</tbody></table>'
+      : '')
+    + '</div>';
+}
+
+function buildTraceReportHtml(plan, systems) {
+  systems = systems || [];
   solve();
   const t = totals();
   const project = S.ref || 'Untitled';
@@ -10085,6 +10605,8 @@ function buildTraceReportHtml(plan) {
     + '.view3{border:1px solid #d9d5cc;background:#f6f4ef;padding:8px;margin-bottom:10px}'
     + '.view3 img{width:100%;height:auto;display:block}'
     + '.leg{font-size:8.5pt;color:#5c6069;margin:6px 0 0}'
+    + '.sys{page-break-before:always;break-before:page}'
+    + '.sys h2{border-bottom-color:' + VIEW_INK + '}'
     + '.sw{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle;margin:0 4px 0 10px}'
     + '.disc{margin-top:18px;padding-top:10px;border-top:1px solid #bfb9ac;font-size:8pt;color:#8a8e97}'
     + '.pbar{position:fixed;top:0;left:0;right:0;background:#1c1f26;color:#fbfaf7;padding:10px 18px;display:flex;justify-content:space-between;align-items:center;z-index:9}'
@@ -10139,8 +10661,13 @@ function buildTraceReportHtml(plan) {
             : 'components held at a legible minimum')
         + (S.pxPerM > 0 && plan.crop ? ' &nbsp;\u00b7&nbsp; ' + fmt(plan.crop.w / S.pxPerM, 1) + ' m \u00d7 '
             + fmt(plan.crop.h / S.pxPerM, 1) + ' m shown' : '')
+        + (systems.length ? ' &nbsp;\u00b7&nbsp; <span class="sw" style="background:' + VIEW_INK
+            + ';margin-left:0"></span>system frames, each on its own sheet below' : '')
+        + ' &nbsp;\u00b7&nbsp; a label with no room is left off here'
+        + (systems.length ? ' and carried on its system\u2019s sheet' : '; every run is in the schedule')
         + '</div></div>'
       : '<div class="view3"><p>The plan could not be drawn.</p></div>')
+    + systems.map((sy, i) => systemSectionHtml(sy, i)).join('')
     + '<h2>3. 3D view</h2>'
     + '<div class="view3">'
     + (png ? '<img src="' + png + '" alt="Isometric 3D of the take-off">'
@@ -10952,6 +11479,7 @@ function projectBundle(withImg) {
     img: withImg ? imgForSave() : null, pxPerM: S.pxPerM, calib: S.calib,
     concept: !!S.concept,
     nodes: S.nodes, segs: S.segs, items: S.items, measures: S.measures || [],
+    views: S.views || [],
     nextId: S.nextId, settings: S.settings,
   }));
   out.nodes.forEach(n => {
@@ -11001,7 +11529,7 @@ function repairProject() {
       seen.add(o.id);
     });
   };
-  dedupe(S.nodes); dedupe(S.segs); dedupe(S.items); dedupe(S.measures);
+  dedupe(S.nodes); dedupe(S.segs); dedupe(S.items); dedupe(S.measures); dedupe(S.views);
   say(dups, 'id that was used twice was renumbered', 'ids that were used twice were renumbered');
 
   // 2. runs that cannot be drawn
@@ -11220,13 +11748,17 @@ function loadProject(data) {
   const unknownValves = rawItems.filter(it => !VALVE_LIB[it.type]);
   S.items = rawItems.filter(it => VALVE_LIB[it.type]);
   S.measures = (Array.isArray(data.measures) ? data.measures : []).filter(m => m && m.pts && m.pts.length >= 2);
+  /* A system frame without four finite numbers would throw on the first
+     render; it is dropped rather than guessed at. */
+  S.views = (Array.isArray(data.views) ? data.views : []).filter(v => v && typeof v === 'object'
+    && [v.x, v.y, v.w, v.h].every(q => isFinite(parseFloat(q))) && v.w > 0 && v.h > 0);
   S.nodes.forEach(n => {
     if (n.type !== 'consumer') return;
     n.valve = migrateValveType(n.valve);
     if (n.cool) n.cool.valve = migrateValveType(n.cool.valve);
   });
   /* Never below one past the highest id in the file — see nextIdFrom(). */
-  S.nextId = nextIdFrom(data.nextId, S.nodes, S.segs, S.items, S.measures);
+  S.nextId = nextIdFrom(data.nextId, S.nodes, S.segs, S.items, S.measures, S.views);
   const repairs = repairProject();
   if (unknownValves.length) {
     const kinds = [...new Set(unknownValves.map(it => String(it.type)))];
@@ -11261,7 +11793,7 @@ function loadProject(data) {
   closeInspector();
   refreshUndoBtn();
   el('orthoChk').checked = !!S.settings.ortho;   // the file may hold its own answer
-  refreshLabelBtn(); refreshTrueSizeBtn();
+  refreshLabelBtn(); refreshTrueSizeBtn(); refreshTextBtn(); refreshValveBtn();
   syncConceptUi();
   buildRail(); render();
   toast('Opened ' + (S.ref || 'project') + revLabel(S));
@@ -11642,6 +12174,14 @@ function mapTakeoff(T, s) {
   });
   S.segs.forEach(sg => { if (sg.pts) sg.pts = sg.pts.map(T); });
   (S.measures || []).forEach(m => { if (m.pts) m.pts = m.pts.map(T); });
+  /* A system frame is a box, so it is carried as the box round its four
+     turned corners — exact for a quarter turn, a little generous off square. */
+  (S.views || []).forEach(v => {
+    const c = [T({ x: v.x, y: v.y }), T({ x: v.x + v.w, y: v.y }), T({ x: v.x, y: v.y + v.h }), T({ x: v.x + v.w, y: v.y + v.h })];
+    const xs = c.map(q => q.x), ys = c.map(q => q.y);
+    v.x = Math.min.apply(null, xs); v.y = Math.min.apply(null, ys);
+    v.w = Math.max.apply(null, xs) - v.x; v.h = Math.max.apply(null, ys) - v.y;
+  });
   if (S.calib && S.calib.a && S.calib.b) { S.calib.a = T(S.calib.a); S.calib.b = T(S.calib.b); }
   if (draft && draft.pts) draft.pts = draft.pts.map(T);   // mid-trace and mid-tape survive a rotation
 }
@@ -12141,9 +12681,22 @@ const HELP = [
       + 'every component and pipe is the size it is on the drawing at every zoom, in 3D and on the PDF \u2014 an FCU '
       + 'is a small box when a whole floor is on screen. If someone has turned it off, the <b>1:1</b> button by the '
       + 'zoom, or Pipe &amp; basis, turns it back on.' },
-    { id: 'labels', t: 'The plan is unreadable zoomed out', b: 'The <b>Aa</b> button beside the zoom cycles what is '
-      + 'written on the plan: automatic (names only when zoomed out past about 22 px to the metre), everything, or '
-      + 'nothing but the warnings. Reports always carry everything.' },
+    { id: 'labels', t: 'The plan is unreadable zoomed out \u2014 the labels pile up', b: 'Run labels and valve tags '
+      + 'are laid out so none lands on another; one with no room is left off until you zoom in, mains and the index '
+      + 'run first. Each run reads <b>size \u00b7 flow \u00b7 length</b>. The <b>%</b> button by the zoom steps the '
+      + 'writing and the valve symbols smaller or larger (60\u2013125%). The <b>Aa</b> button cycles what is written: '
+      + 'automatic (names and size \u00b7 flow only when zoomed out), everything (every run labelled, overlapping if it '
+      + 'must), or nothing but the warnings.' },
+    { id: 'hidevalves', t: 'The valves clutter the plan \u2014 hide them', b: 'The valve button by the zoom '
+      + '(&#8904;) steps through valves with tags, valves without tags, and no valves. Hidden valves are still in '
+      + 'the take-off, the schedules and every kPa; they are only off the plan and the PDF plates. Opening the '
+      + 'Valves palette shows them again while you place.' },
+    { id: 'systems', t: 'I have several systems on one site drawing \u2014 a PDF sheet for each', b: '<b>Systems</b> '
+      + 'by the zoom: zoom in on one system and <b>Frame what is on screen</b>, or lasso it with Select and '
+      + '<b>Make a system</b>. Name it. <b>Zoom to</b> jumps back to it. In the <b>PDF</b> each system gets its own '
+      + 'sheet \u2014 its plan drawn close enough to read, every run labelled, and its runs and valves listed under '
+      + 'it \u2014 and the whole drawing becomes a key plan with the frames on it. A frame changes no figure.',
+      done: () => (S.views || []).length > 0 },
     { id: '3d', t: 'I want to check the heights', b: '<b>3D check</b> lifts the network off the sheet: plant, mains '
       + 'and drops at their real heights and real footprints, flow red and return blue, a staff to read heights off. '
       + 'Drag to orbit, exaggerate the vertical to read small differences. Read-only \u2014 come back to the plan to '
@@ -13817,8 +14370,11 @@ el('zIn').addEventListener('click', () => setZoom(zoom * 1.2));
 el('zOut').addEventListener('click', () => setZoom(zoom / 1.2));
 el('zFit').addEventListener('click', zoomFit);
 el('zLbl').addEventListener('click', cycleLabels);
+el('zSys').addEventListener('click', () => systemsDialog());
+el('zTxt').addEventListener('click', cyclePlanText);
+el('zVlv').addEventListener('click', cycleValveView);
 el('zTrue').addEventListener('click', toggleTrueSize);
-refreshLabelBtn();
+refreshLabelBtn(); refreshTextBtn(); refreshValveBtn();
 refreshTrueSizeBtn();
 
 el('modal').addEventListener('click', e => { if (e.target === el('modal')) closeModal(); });

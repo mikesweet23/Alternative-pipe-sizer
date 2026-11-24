@@ -601,6 +601,73 @@ rise is not added on top of it.
 This is a take-off, not the sizer calculation. The disclaimer says so and
 points at Send to Sizer for the full hydraulics.
 
+### Labels, valve visibility and systems on the plan
+
+A whole site on one sheet is where the plan stopped being readable: labels
+hold a constant size on screen, so zoomed out they piled on top of one
+another, and a terminal set's tags landed on the next set's. Three things
+answer it together, and they have to stay together.
+
+**Every run label reads size · flow · length** — `DN50 · 1.48 l/s · 17.1 m`
+(`runLabelTexts()`; flow through `fmtVol()`, so m³/h when that is chosen; a
+standby feed reads *standby*). That is what a designer drawing the P&ID needs
+off each section.
+
+**`layoutPlanLabels()` lays out every run label and valve tag** after the
+components are drawn, against a spatial grid (`labelGrid()`) of what is
+already on the plan — component boxes and the writing above and below them,
+valve symbols, the system frame tabs and the high-point tag
+(`drawHighPoints()` now returns its boxes) — and never on top of any of it.
+Runs go down in order: the picked run, the index run, circuit heads, then by
+flow. Each tries `runLabelCands()` — the longest legs first, the middle of a
+leg before its ends, on the pipe before either side of it, written along the
+pipe on a leg nearer vertical than not — with the full text, then size ·
+flow, then size alone. A run with no room is **left off on screen** until a
+zoom makes room (`setZoom()` now redraws), and on the PDF key plan. It is
+**forced** — the shortest text where it overlaps least — on a system plate,
+in the `all` label mode, when picked and when it is over the limit. Level 1
+(automatic, zoomed out) starts at size · flow; level 0 writes only warnings
+and the picked run. A valve tag stands out **square to its pipe** on the side
+of its leg (flow side, return side), steps further out, tries the other side,
+then a step along the pipe, with a leader when it moved; on automatic labels
+the tags wait for level 2. Tags no longer stack along a vertical branch on
+top of the next valve.
+
+**The writing and valve symbols have a size of their own**, `planText`
+(default 0.8, `PLAN_TEXT_STEPS` 60–125%, the % button by the zoom,
+`planTextScale()`). It scales the run labels, tags, component names, vessel
+and inline writing and the on-screen size of a valve symbol
+(`valveDrawScale()`); the real-size lock when zoomed in is unchanged.
+
+**Valves can be taken off the plan** — `showValves` and `valveTags`, one
+button by the zoom (`cycleValveView()`: valves and tags → valves only →
+none). Hidden valves are not drawn and cannot be clicked (`hitItem()`), but
+stay in the take-off, every schedule, every kPa and the export. Arming the
+Valves palette shows them (`valvesShown()`), because placing what you cannot
+see is not a thing. The PDF plates follow the switch and say so.
+
+**Systems are named frames on the drawing**, `S.views` (`{ id, name, x, y,
+w, h }` in drawing coordinates). *Systems* by the zoom opens the list
+(`systemsDialog()`): **Frame what is on screen** (`screenRect()`), **Frame the
+selection** (`selectionRect()`, also *Make a system* on a lasso), rename,
+*Zoom to* (`zoomToView()`), *Reframe*, delete, and whether the frames are drawn
+(`showViews`). A frame is a view, not a hydraulic boundary — it changes no
+figure. It is saved in the trace file, in undo, counted by `nextIdFrom()`,
+deduped on load and carried through `mapTakeoff()` as the box round its four
+turned corners, so a sheet rotation or Align keeps it on its system. A run is
+in a system when its middle is (`viewSegs()`); a valve when it sits inside
+(`viewItems()`).
+
+**The PDF draws a plate per system.** `planImage({ kind, crop })`: `key` is
+the whole take-off with the frames drawn and labels culled as on screen;
+`system` is one frame (`exportCrop`) drawn close enough to read, every run and
+tag forced, labels kept inside the frame, frames not drawn. The writing is
+sized against the plate (`perScreenPx`), not the sheet, so a small system's
+plate is drawn closer in. `systemSectionHtml()` puts each on its own page as
+section 2.1, 2.2… with its run table (size, l/s, kW, route and pipe metres,
+m/s, Pa/m, run kPa and the tags on each run) and its valve list.
+`tests/trace-labels-systems-test.mjs` checks the pieces.
+
 ### Tracing: two pipes or one, dots on a run, edge rings
 
 Arming **Trace** opens Two pipes / Single pipe (flow) / Single pipe (return)
@@ -1043,8 +1110,8 @@ carries `savedAt` and `lastEdited`; the trace file carries `savedAt` and
 project say which trace revision it was cut from and when.
 
 Pipe Trace has its own separate save format, `app: 'adi-pipe-trace'`, holding
-the drawing, the scale, the traced geometry and any tape measures
-(`measures`). That never goes to the sizer.
+the drawing, the scale, the traced geometry, any tape measures
+(`measures`) and the system frames (`views`). That never goes to the sizer.
 
 ---
 
@@ -1172,7 +1239,9 @@ the drawing, the scale, the traced geometry and any tape measures
     `none`, cycled by the `Aa` button (`LABEL_MODES`, `cycleLabels()`).
     `nodeLabelPlan()` puts the writing inside the box only when it fits and
     above and below it otherwise — a duty across a 9 px dot is a smudge.
-    `exporting` forces level 2, so a plate always carries every label.
+    `exporting` forces level 2. Whether a label then fits is
+    `layoutPlanLabels()`'s question — see *Labels, valve visibility and
+    systems* in section 2.
   - **3D draws the footprint.** `build3D()` asks `node3DFoot()` for each
     component's real width, depth and rotation (`cuboid3D()` takes the
     angle) and `node3DHeight()` for a nominal height by type; pipes carry
@@ -1290,10 +1359,12 @@ the drawing, the scale, the traced geometry and any tape measures
 - **Zoom goes to 60×.** It was 8×, which is not close enough to place a valve
   against the fitting next to it — the symbols are life size long before that
   and there was nowhere further to go.
-- **Valve tags are placed against the tags already down.** Each one starts
-  where it wants to be — flow leg above the pipe, return leg below — and steps
-  further out until it is clear of every tag already placed, anywhere on the
-  drawing. If it has had to travel it gets a leader line back to its valve.
+- **Valve tags are placed against everything already written.** Each one
+  starts where it wants to be — out from the pipe, square to it, on its own
+  leg's side — and steps further out until it is clear of every label, tag,
+  component and symbol already down, anywhere on the drawing
+  (`layoutPlanLabels()`). If it has had to travel it gets a leader line back
+  to its valve.
   The old rule stepped every other tag out by a fixed amount, which was enough
   for two valves and not enough for a set, and it never saw the tags on the
   run next to it at all — so tags landed on top of one another exactly where a
@@ -1934,6 +2005,16 @@ the browser:
     `marquee` by hand and fire `blur` on the window: both are `null`. Call
     `autosave()` twice: `autosavedImg` does not change and the drawing is not
     re-serialised.
+26. **Labels and systems.** `node tests/trace-labels-systems-test.mjs`. On a
+    site-sized job, Fit: no label touches another, mains are labelled
+    `DN · l/s · m`, short branches are left off; zoom in and they appear,
+    written along vertical branches. The % button shrinks the writing and
+    symbols; the valve button hides the tags, then the valves (a click where
+    a valve was picks the pipe). Frame two systems, rename them, *Zoom to*
+    each, rotate the sheet a quarter turn: the frames turn with it. Save and
+    reopen: they are there. PDF: section 2 is the key plan with the frames,
+    then a sheet per system with every run and tag labelled and none
+    overlapping, its run table and its valves.
 
 ---
 

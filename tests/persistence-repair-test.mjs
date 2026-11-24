@@ -31,7 +31,7 @@ function extractFunction(text, name) {
 /* ---- Pipe Trace ---- */
 ok(/function defaultSettings\(/.test(trace) && /S\.settings = Object\.assign\(defaultSettings\(\), st\)/.test(trace),
   'Trace: loadProject starts from defaultSettings(), not the last project\u2019s settings');
-ok(/S\.nextId = nextIdFrom\(data\.nextId, S\.nodes, S\.segs, S\.items, S\.measures\)/.test(trace),
+ok(/S\.nextId = nextIdFrom\(data\.nextId, S\.nodes, S\.segs, S\.items, S\.measures(, S\.views)?\)/.test(trace),
   'Trace: nextId on open is never below one past the highest id in the file');
 ok(/undoStack\.length = 0;/.test(trace) && /function loadProject/.test(trace),
   'Trace: the undo stack is cleared when a file is opened');

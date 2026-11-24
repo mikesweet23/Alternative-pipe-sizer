@@ -29,6 +29,7 @@ node tests/pressurisation-test.mjs
 node tests/plantroom-header-test.mjs
 node tests/change-drawing-align-test.mjs
 node tests/trace-circuits-test.mjs
+node tests/trace-labels-systems-test.mjs
 ```
 
 `chain-consistency-test` evaluates the blocks that exist as copies in more than one file — `waterMu` / `waterRho` / `waterCp`, `FITTING_TYPES`, the authority rule, the brand bar, the handoff keys — and fails if any copy has drifted. Run it after touching any of them. `viscosity-basis-test` is the acceptance set for `viscosityMode`, the Al-Shemmeri `waterMu`, the calculation-basis panel and the straight-pipe check. `persistence-repair-test` covers what happens when a file that has been through several hands is opened: the id counter, the repairs, the settings reset, the revision stamp. `pressurisation-test` covers the static head and cold fill (the high point off the trace or a labelled point, the override on the plant, `coldFill()` to BS EN 12828), the system volume per water (counted parts, what is not on the trace, a typed total) and `vesselSizing()` — the larger of the water-reserve and fill-pressure requirements, never their sum — plus the simulator's pressure panel. `trace-multiselect-truesize-help-test` covers the lasso and group editing, true size on the plan / 3D / PDF, the help pane and the long-session guards (`scheduleRender`, `dropPointerState`, the autosave image cache, `asOneUndo`).
@@ -48,5 +49,7 @@ A plant room with no plant drawn works: a PHE whose primary is off the sheet is 
 A two-port buffer is in the line: click the edge ring to finish, then start again from the far side. The load past it still sits on that pipe. A second run onto the same load (return, or flow through the buffer) is the other leg, not a loop.
 
 A dry cooler with one run is an off-loader (3-port on the return). The branch sizes from reject kW, or from the circuit if that box is empty. It is not another plant load and Check must not say "no load".
+
+Run labels read size · flow · length and are laid out so none lands on another; a label with no room waits for the zoom. By the zoom: **%** sizes the writing and valve symbols, the valve button hides tags then valves (still in every figure), **Systems** frames named areas of a site drawing — each gets its own sheet in the PDF. `trace-labels-systems-test` covers it.
 
 **PDF** on the Trace bar (Concept too) opens a printable report: 3D isometric, pipework schedule, metres by material and size, counted fittings, placed valves, index run. Same print-window pattern as the sizer.
